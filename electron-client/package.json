@@ -1,0 +1,49 @@
+{
+  "name": "electron-client",
+  "version": "1.0.0",
+  "description": "Impress Bike",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder"
+  },
+  "build": {
+    "appId": "com.impress.bike",
+    "productName": "Impress Bike",
+    "icon": "build/icon.png",
+    "win": { "target": "nsis", "icon": "build/icon.png" },
+"nsis": { "oneClick": false, "allowToChangeInstallationDirectory": true },
+    "afterPack": "afterPack.js",
+    "files": [
+      "main.js",
+      "preload.js",
+      "config.json",
+      "build/icon.png"
+    ],
+    "extraResources": [
+      {
+        "from": "../impress-inv/.next/standalone",
+        "to": "frontend"
+      },
+      {
+        "from": "../impress-inv/.next/static",
+        "to": "frontend/.next/static"
+      },
+      {
+        "from": "../impress-inv/public",
+        "to": "frontend/public"
+      }
+    ]
+ 
+  },
+  "keywords": [],
+  "author": "Impress",
+  "license": "ISC",
+  "type": "commonjs",
+  "devDependencies": {
+    "concurrently": "^10.0.6",
+    "electron": "^44.9.1",
+    "electron-builder": "^26.15.3",
+    "wait-on": "^9.5.1"
+  }
+}
