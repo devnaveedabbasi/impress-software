@@ -1,0 +1,379 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id       Int     @id @default(autoincrement())
+  name     String
+  email    String  @unique
+  password String
+  token    String?
+
+  roleId      Int
+  role        Role             @relation(fields: [roleId], references: [id])
+  permissions UserPermission[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Role {
+  id    Int    @id @default(autoincrement())
+  name  String @unique
+  users User[]
+
+  permissions RolePermission[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Permission {
+  id        Int              @id @default(autoincrement())
+  name      String
+  operation String
+  roles     RolePermission[]
+  users     UserPermission[]
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+
+  @@unique([operation, name])
+}
+
+model RolePermission {
+  roleId       Int
+  permissionId Int
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+}
+
+model UserPermission {
+  userId       Int
+  permissionId Int
+
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([userId, permissionId])
+}
+
+// Opreation
+// 01- Account code management
+
+enum AccountCodeGroup {
+  expenses
+  currentassets
+  liabilities
+  capital
+  revenue
+  purchases
+  otherIncomeAndExpense
+  Expense
+}
+
+model AccountCode {
+  id       Int              @id @default(autoincrement())
+  headName String
+  group    AccountCodeGroup
+
+  code           String[]
+  name           String[]
+  address        String[]
+  contactNo      String[]
+  saleTaxNo      String[]
+  openingBalance Int[]
+
+  createdById Int?
+  updatedById Int?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// Operation
+// 02 - Province Management
+
+model Province {
+  id          Int      @id @default(autoincrement())
+  name        String   @unique
+  createdById Int?
+  updatedById Int?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  cities      City[]
+  dealers     Dealer[]
+  vendors     Vendor[]
+}
+
+// 03 - City Management
+
+model City {
+  id          Int      @id @default(autoincrement())
+  name        String   @unique
+  province    Province @relation(fields: [provinceId], references: [id], onDelete: Cascade)
+  provinceId  Int
+  createdById Int?
+  updatedById Int?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  dealers     Dealer[]
+  vendors     Vendor[]
+}
+
+enum DealerType {
+  single
+  dealar
+}
+
+// 04 Dealer Management
+model Dealer {
+  id             Int    @id @default(autoincrement())
+  // Delar Info
+  dealarShipName String
+  contactNo      String
+  address        String
+  saleTaxNo      String
+  NTNNo          String
+
+  // info
+  name            String
+  provinceId      Int
+  cityId          Int
+  province        Province   @relation(fields: [provinceId], references: [id])
+  city            City       @relation(fields: [cityId], references: [id])
+  mobileNo        String
+  opeaningBalance Int
+  dealarType      DealerType
+  NICNo           String
+
+  createdById Int
+  updatedById Int
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// 05 Vendor Manegment
+model Vendor {
+  id         Int      @id @default(autoincrement())
+  vendorName String
+  address    String
+  saleTaxNo  String
+  cityId     Int
+  provinceId Int
+  province   Province @relation(fields: [provinceId], references: [id])
+  city       City     @relation(fields: [cityId], references: [id])
+  contactNo  String
+
+  // Info
+  NICNo          String
+  mobileNo       String
+  daysLimit      Int
+  NTNNo          String
+  CNICNo         String
+  amoutLimit     Int
+  openingBalance Int
+
+  createdById    Int
+  updatedById    Int
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  quotations     Quotation[]
+  purchaseOrders PurchaseOrder[]
+}
+
+// 07 Category Manegment
+model Category {
+  id          Int         @id @default(autoincrement())
+  name        String      @unique
+  createdById Int?
+  updatedById Int?
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+  inventories Inventory[]
+}
+
+// 08 Department Manegment
+model Department {
+  id          Int         @id @default(autoincrement())
+  name        String      @unique
+  createdById Int?
+  updatedById Int?
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+  inventories Inventory[]
+}
+
+// 09 Station Manegment
+model Station {
+  id          Int      @id @default(autoincrement())
+  name        String   @unique
+  createdById Int?
+  updatedById Int?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// 06 Inventory  Manegment
+model Inventory {
+  id         Int      @id @default(autoincrement())
+  itemName   String
+  pack       Int
+  rate       Int
+  categoryId Int
+  category   Category @relation(fields: [categoryId], references: [id])
+
+  departmentId Int
+  department   Department @relation(fields: [departmentId], references: [id])
+
+  stationIds Int[]
+
+  color       String[]
+  qty         Int[]
+  unitPerBike Int
+
+  createdById    Int?
+  updatedById    Int?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+  saleGatePasses SaleGatePass[]
+}
+
+model Quotation {
+  id       Int      @id @default(autoincrement())
+  date     DateTime
+  vendorId Int
+  vendor   Vendor   @relation(fields: [vendorId], references: [id])
+  remarks  String
+
+  itemName     String[]
+  oldRate      Int[]
+  proposedRate Int[]
+  approvedRate Int[]
+
+  createdById    Int?
+  updatedById    Int?
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  purchaseOrders PurchaseOrder[]
+  inwards        Inward[]
+}
+
+model PurchaseOrder {
+  id          Int       @id @default(autoincrement())
+  date        DateTime
+  vendorId    Int
+  vendor      Vendor    @relation(fields: [vendorId], references: [id])
+  validity    String
+  instruction String
+  quotationId Int
+  quotation   Quotation @relation(fields: [quotationId], references: [id])
+
+  code     Int[]
+  itemName String[]
+  unit     Int[]
+  quantity Int[]
+  rate     Int[]
+  amount   Int[]
+
+  total              Int
+  saleTaxPercent     Int
+  totalWithSaleTax   Int
+  withHoldingPercent Int
+  withHoldingAmount  Int
+  grandTotal         Int
+
+  createdById Int?
+  updatedById Int?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  inwards     Inward[]
+}
+
+enum InwardType {
+  againstSimple
+  againstPO
+  againstDealarRejection
+}
+
+// 10 Inward/Quality Controll
+model Inward {
+  id              Int            @id @default(autoincrement())
+  date            DateTime
+  Type            InwardType
+  purchaseOrderId Int?
+  purchaseOrder   PurchaseOrder? @relation(fields: [purchaseOrderId], references: [id])
+  quotationId     Int?
+  quotation       Quotation?     @relation(fields: [quotationId], references: [id])
+  GRIRNo          Int
+  DCNo            Int
+  billNO          Int?
+  detail          String
+
+  code          Int[]
+  itemName      String[]
+  poBalQty      Int[]
+  recQty        Int[]
+  rejQty        Int[]
+  okQty         Int[]
+  packingDetail String[]
+
+  createdById Int?
+  updatedById Int?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// 11 Sale GatePass
+
+model SaleGatePass {
+  id          Int      @id @default(autoincrement())
+  date        DateTime
+  accountName String
+  billNO      Int
+  throughBy   String
+  remarks     String
+  vehicleNo   String
+
+  code        Int[]
+  itemName    String[]
+  unit        Int[]
+  stockInHand Int[]
+  qty         Int[]
+
+  createdById Int?
+  updatedById Int?
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+  inventory   Inventory? @relation(fields: [inventoryId], references: [id])
+  inventoryId Int?
+}
+
+// 12 RejectionReturnTo Vendor
+model RejectionReturnToVendor {
+  id          Int      @id @default(autoincrement())
+  claimNoteId Int
+  date        DateTime
+  vendorName  String
+  address     String
+  contactNo   String
+  saleTaxNo   String
+  transport   String
+  builtyNo    String
+  bookNo      String
+  receivedBy  String
+
+  itemName    String[]
+  rej         Int[]
+  report      String[]
+  createdById Int?
+  updatedById Int?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
