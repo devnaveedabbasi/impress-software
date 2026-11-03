@@ -28,8 +28,10 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       className={`${geistSans.variable} ${geistMono.variable} antialiased`}
     >
       <body className="min-h-screen flex flex-col">
-        <TitleBar />
-        <Providers>{children}</Providers>
+        <Providers>
+          <TitleBar />
+          {children}
+        </Providers>
         <Toaster position="top-right" />
       </body>
     </html>

@@ -73,6 +73,43 @@ export default function DataSyncPage() {
     }
   }, [isSoftware]);
 
+  // 3. Trigger Full Sync
+  const handleExecuteSync = async () => {
+    setSyncing(true);
+    try {
+      const { data } = await api.post(SYNC_EXECUTE);
+      if (data.success) {
+        toast.success("Safe records synchronized successfully!");
+        setSyncData(data.data.currentStatus);
+      }
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || "Sync execution failed");
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  // 4. Resolve Conflict
+  const handleResolve = async (
+    modelName: string,
+    id: number,
+    action: "overwrite_cloud" | "overwrite_local" | "save_as_new"
+  ) => {
+    const key = `${modelName}-${id}-${action}`;
+    setResolvingId(key);
+    try {
+      const { data } = await api.post(SYNC_RESOLVE, { modelName, id, action });
+      if (data.success) {
+        toast.success(data.data.message || "Conflict resolved!");
+        await fetchStatus();
+      }
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || "Failed to resolve conflict");
+    } finally {
+      setResolvingId(null);
+    }
+  };
+
   if (!isSoftware) {
     return null;
   }
