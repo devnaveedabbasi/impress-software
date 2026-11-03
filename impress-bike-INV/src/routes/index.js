@@ -17,12 +17,14 @@ import quotationRoutes from "./quotation.routes.js";
 import purchaseOrderRoutes from "./purchase-order.routes.js";
 import saleGatePassRoutes from "./sale-gate-pass.routes.js";
 import rejectionReturnRoutes from "./rejection-return-to-vendor.routes.js";
+import syncRoutes from "./sync.routes.js";
+
 const router = Router();
 
 router.use("/auth", authRoutes);
 router.use("/roles", roleRoutes);
 router.use("/users", userRoutes);
-router.use("/permissions", permissionRoutes)
+router.use("/permissions", permissionRoutes);
 router.use("/account-codes", accountCodeRoutes);
 router.use("/cities", cityRoutes);
 router.use("/provinces", provinceRoutes);
@@ -37,4 +39,6 @@ router.use("/quotations", quotationRoutes);
 router.use("/purchase-orders", purchaseOrderRoutes);
 router.use("/sale-gate-passes", saleGatePassRoutes);
 router.use("/rejection-returns-to-vendor", rejectionReturnRoutes);
+router.use("/sync", syncRoutes);
+
 export default router;

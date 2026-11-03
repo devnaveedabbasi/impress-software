@@ -2,31 +2,37 @@
 
 import { useEffect, useState } from "react";
 import Image from "next/image";
+import Link from "next/link";
 import { Icon } from "@iconify/react";
 import { Images } from "@/utlis/images";
+import { useAppSelector } from "@/hooks/redux";
 
 export function TitleBar() {
-  const [isElectron, setIsElectron] = useState(false);
+  const { isSoftware } = useAppSelector((state) => state.app);
   const [isMaximized, setIsMaximized] = useState(false);
 
   useEffect(() => {
-    if (typeof window !== "undefined" && (window as any).appConfig) {
-      setIsElectron(true);
+    if (isSoftware && typeof window !== "undefined") {
       const appConfig = (window as any).appConfig;
 
-      if (typeof appConfig.isMaximized === "function") {
+      if (typeof appConfig?.isMaximized === "function") {
         appConfig.isMaximized().then((max: boolean) => {
           setIsMaximized(max);
         });
       }
 
-      if (typeof appConfig.onWindowStateChange === "function") {
+      if (typeof appConfig?.onWindowStateChange === "function") {
         appConfig.onWindowStateChange((max: boolean) => {
           setIsMaximized(max);
         });
       }
     }
-  }, []);
+  }, [isSoftware]);
+
+  // When loaded in regular Web browser, completely hide the TitleBar
+  if (!isSoftware) {
+    return null;
+  }
 
   const handleAction = (action: "back" | "forward" | "reload" | "minimize" | "maximize" | "close") => {
     if (typeof window !== "undefined") {
@@ -43,7 +49,7 @@ export function TitleBar() {
 
   return (
     <div
-      className="flex h-9 w-full select-none items-center justify-between border-b border-zinc-300 bg-zinc-900 px-2 text-zinc-100"
+      className="flex h-9 w-full select-none items-center justify-between border-b border-zinc-800 bg-zinc-900 px-2 text-zinc-100"
       style={{ WebkitAppRegion: "drag" } as any}
     >
       {/* Left side: Navigation & App branding */}
@@ -89,14 +95,24 @@ export function TitleBar() {
             className="h-4 w-4 object-contain brightness-200"
           />
           <span className="text-xs font-semibold tracking-wide text-zinc-200">
-            Impress-Bike Inventory
+            Impress-Bike Software
           </span>
         </div>
+
+        {/* Sync Page Shortcut Button inside Electron TitleBar */}
+        <Link
+          href="/data-sync"
+          title="Cloud Data Sync"
+          className="ml-2 flex items-center gap-1 rounded bg-zinc-800 px-2 py-0.5 text-[11px] font-medium text-emerald-400 hover:bg-zinc-700 hover:text-emerald-300 transition-colors"
+        >
+          <Icon icon="mdi:cloud-sync" className="h-3.5 w-3.5" />
+          <span>Sync Hub</span>
+        </Link>
       </div>
 
       {/* Center: Draggable area placeholder */}
       <div className="flex-1 text-center text-[11px] text-zinc-400 font-medium truncate px-4 pointer-events-none">
-        Inventory Management Software
+        Inventory Management System
       </div>
 
       {/* Right side: Window controls (Minimize, Maximize, Close) */}
@@ -137,4 +153,3 @@ export function TitleBar() {
     </div>
   );
 }
-
