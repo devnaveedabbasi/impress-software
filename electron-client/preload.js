@@ -1,9 +1,15 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
-let apiUrl = 'http://127.0.0.1:5000';
+let apiUrl = 'http://192.168.1.210:5000';
 try {
-  const config = require('./config.json');
-  if (config && config.apiUrl) apiUrl = config.apiUrl;
+  const fs = require('fs');
+  const path = require('path');
+  const configPath = path.join(__dirname, 'config.json');
+  if (fs.existsSync(configPath)) {
+    const raw = fs.readFileSync(configPath, 'utf8');
+    const parsed = JSON.parse(raw);
+    if (parsed && parsed.apiUrl) apiUrl = parsed.apiUrl;
+  }
 } catch (err) {
   console.warn('Could not read config.json in preload:', err);
 }

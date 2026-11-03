@@ -53,6 +53,7 @@ function createWindow() {
   const win = new BrowserWindow({
     width: 1280,
     height: 800,
+    show: false,
     frame: false,
     titleBarStyle: 'hidden',
     icon: path.join(__dirname, 'build', 'icon.png'),
@@ -63,6 +64,9 @@ function createWindow() {
       devTools: true,
     },
   });
+
+  win.maximize();
+  win.show();
 
   win.setMenuBarVisibility(false);
 

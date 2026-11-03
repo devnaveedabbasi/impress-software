@@ -1,6 +1,9 @@
 import axios from "axios";
 const axiosInstance = axios.create({
-  baseURL: (process.env.NEXT_PUBLIC_API_BASE_URL || "https://impress-bike-inv.onrender.com") + "/api",
+  baseURL:
+    (typeof window !== "undefined" && (window as any).appConfig?.apiUrl
+      ? (window as any).appConfig.apiUrl
+      : process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:5000") + "/api",
   headers: {
     "Content-Type": "application/json",
   },

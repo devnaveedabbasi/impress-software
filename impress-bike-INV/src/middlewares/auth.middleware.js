@@ -63,12 +63,7 @@ const authorizeToken = async (req, res, next) => {
       });
     }
 
-    if (user.token !== token) {
-      return res.status(401).json({
-        success: false,
-        message: "Token is invalid or user is logged out",
-      });
-    }
+    // Multi-session safe: JWT is cryptographically verified
 
     req.user = user;
 
