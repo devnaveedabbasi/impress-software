@@ -12,7 +12,7 @@ async function startServer() {
     try {
         await prisma.$connect();
 
-        console.log("Database connected successfully");
+        console.log("Primary database connected successfully");
 
         const localIp = getLocalIp();
 
@@ -23,6 +23,9 @@ async function startServer() {
         });
     } catch (error) {
         console.error("Database connection failed:", error.message);
+        console.error(
+            "Check Render DATABASE_URL: it must be the PostgreSQL connection string, not the frontend/API URL."
+        );
         process.exit(1);
     }
 }
