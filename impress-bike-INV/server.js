@@ -4,6 +4,7 @@ import app from "./src/app.js";
 import config from "./src/config/index.js";
 import prisma  from "./src/config/prisma.js";
 import { getLocalIp } from "./src/utils/getLocalIp.js";
+import { startAutoSync } from "./src/services/sync.service.js";
 
 const PORT = config.port;
 
@@ -18,6 +19,7 @@ async function startServer() {
         app.listen(PORT, "0.0.0.0", () => {
             console.log(`Server running on port ${PORT}`);
             console.log(`Network: http://${localIp}:${PORT}`);
+            startAutoSync();
         });
     } catch (error) {
         console.error("Database connection failed:", error.message);

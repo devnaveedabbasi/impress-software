@@ -9,7 +9,7 @@ import { SYNC_STATUS, SYNC_EXECUTE, SYNC_RESOLVE } from "@/utlis/apiRoutes";
 import { useAppSelector } from "@/hooks/redux";
 
 interface ConflictItem {
-  id: number;
+  id: number | string;
   modelName: string;
   local: any;
   cloud: any;
@@ -27,6 +27,9 @@ interface ModelStatus {
 
 interface SyncData {
   isOnline: boolean;
+  localConnected: boolean;
+  cloudConnected: boolean;
+  lastSyncAt: string | null;
   message?: string;
   models: ModelStatus[];
   totalConflicts: number;
@@ -70,6 +73,8 @@ export default function DataSyncPage() {
   useEffect(() => {
     if (isSoftware) {
       fetchStatus();
+      const interval = window.setInterval(fetchStatus, 30000);
+      return () => window.clearInterval(interval);
     }
   }, [isSoftware]);
 
@@ -92,7 +97,7 @@ export default function DataSyncPage() {
   // 4. Resolve Conflict
   const handleResolve = async (
     modelName: string,
-    id: number,
+    id: number | string,
     action: "overwrite_cloud" | "overwrite_local" | "save_as_new"
   ) => {
     const key = `${modelName}-${id}-${action}`;
@@ -128,7 +133,8 @@ export default function DataSyncPage() {
             Data Synchronization Hub
           </h1>
           <p className="text-xs text-zinc-500 mt-1">
-            Seamlessly mirror data between your Local Computer and Cloud Database.
+            Two-way sync: Local Computer ↔ Live Cloud Database. New and changed records
+            are synchronized automatically every 5 minutes.
           </p>
         </div>
 
@@ -146,7 +152,7 @@ export default function DataSyncPage() {
                 syncData?.isOnline ? "bg-emerald-500 animate-pulse" : "bg-red-500"
               }`}
             />
-            {syncData?.isOnline ? "Cloud Online" : "Cloud Offline"}
+            {syncData?.isOnline ? "Live DB Connected" : "Live DB Offline"}
           </div>
 
           <button
@@ -174,6 +180,29 @@ export default function DataSyncPage() {
             />
             <span>{syncing ? "Syncing..." : "Sync Now"}</span>
           </button>
+        </div>
+      </div>
+
+      <div className="mt-4 grid grid-cols-1 gap-3 text-xs sm:grid-cols-3">
+        <div className="rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2">
+          <span className="font-semibold text-zinc-700">Local DB:</span>{" "}
+          <span className="text-emerald-700">
+            {syncData?.localConnected ? "Connected" : "Disconnected"}
+          </span>
+        </div>
+        <div className="rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2">
+          <span className="font-semibold text-zinc-700">Live DB:</span>{" "}
+          <span className={syncData?.cloudConnected ? "text-emerald-700" : "text-red-700"}>
+            {syncData?.cloudConnected ? "Connected" : "Disconnected"}
+          </span>
+        </div>
+        <div className="rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2">
+          <span className="font-semibold text-zinc-700">Last sync:</span>{" "}
+          <span className="text-zinc-600">
+            {syncData?.lastSyncAt
+              ? new Date(syncData.lastSyncAt).toLocaleString()
+              : "Not synced yet"}
+          </span>
         </div>
       </div>
 
@@ -208,10 +237,10 @@ export default function DataSyncPage() {
             Cloud Connection
           </div>
           <div className="mt-1 text-sm font-semibold text-emerald-900 truncate">
-            {syncData?.isOnline ? "Render PostgreSQL Active" : "No Internet / Unreachable"}
+            {syncData?.isOnline ? "Live PostgreSQL Active" : "No Internet / Unreachable"}
           </div>
           <div className="mt-1 text-[11px] text-emerald-600">
-            Automatic background safety active
+            Two-way automatic sync is active; use Sync Now for a manual sync.
           </div>
         </div>
       </div>
@@ -354,4 +383,3 @@ export default function DataSyncPage() {
     </div>
   );
 }
-

@@ -20,7 +20,7 @@ app.use(express.urlencoded({ extended: true }));
 app.get("/", (req, res) => {
   res.json({
     success: true,
-    message: "Inventory Management API is running",
+    message: "Inventorys Management API is running",
   });
 });
 

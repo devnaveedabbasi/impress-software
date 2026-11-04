@@ -54,7 +54,7 @@ export function TitleBar() {
     >
       {/* Left side: Navigation & App branding */}
       <div
-        className="flex items-center gap-1"
+        className="flex min-w-0 shrink-0 items-center gap-1"
         style={{ WebkitAppRegion: "no-drag" } as any}
       >
         <button
@@ -103,7 +103,7 @@ export function TitleBar() {
         <Link
           href="/data-sync"
           title="Cloud Data Sync"
-          className="ml-2 flex items-center gap-1 rounded bg-zinc-800 px-2 py-0.5 text-[11px] font-medium text-emerald-400 hover:bg-zinc-700 hover:text-emerald-300 transition-colors"
+          className="ml-2 flex shrink-0 items-center gap-1 rounded bg-emerald-900/60 px-2 py-0.5 text-[11px] font-semibold text-emerald-300 hover:bg-emerald-800 hover:text-white transition-colors"
         >
           <Icon icon="mdi:cloud-sync" className="h-3.5 w-3.5" />
           <span>Sync Hub</span>
