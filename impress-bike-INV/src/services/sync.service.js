@@ -228,7 +228,7 @@ export function getLastSyncAt() {
   return lastSyncAt;
 }
 
-export function startAutoSync(intervalMs = 5 * 60 * 1000) {
+export function startAutoSync(intervalMs = 2 * 60 * 1000) {
   if (autoSyncTimer) return;
   setTimeout(async () => {
     try {

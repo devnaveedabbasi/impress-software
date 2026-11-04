@@ -7,6 +7,7 @@ import { Icon } from "@iconify/react";
 import { NAV_ITEMS, type NavItem } from "./nav-items";
 import { ProfileDropdown } from "./ProfileDropdown";
 import { usePermissions } from "@/hooks/usePermissions";
+import { useAppSelector } from "@/hooks/redux";
 
 const MENU_WIDTH = 224;
 
@@ -86,6 +87,7 @@ export function Navbar() {
   const [menuSide, setMenuSide] = useState<"left" | "right">("left");
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const { hasPermission } = usePermissions();
+  const { isSoftware } = useAppSelector((state) => state.app);
   const pathname = usePathname();
 
   useEffect(() => {
@@ -182,14 +184,16 @@ export function Navbar() {
           )}
         </div>
 
-        <Link
-          href="/data-sync"
-          className="flex shrink-0 items-center gap-1 rounded px-2 py-2 text-xs font-semibold text-emerald-700 hover:bg-emerald-50 hover:text-emerald-800"
-          title="Open Local and Live Database Sync"
-        >
-          <Icon icon="mdi:cloud-sync" className="h-4 w-4" />
-          Sync
-        </Link>
+        {isSoftware && (
+          <Link
+            href="/data-sync"
+            className="flex shrink-0 items-center gap-1 rounded px-2 py-2 text-xs font-semibold text-emerald-700 hover:bg-emerald-50 hover:text-emerald-800"
+            title="Open Local and Live Database Sync"
+          >
+            <Icon icon="mdi:cloud-sync" className="h-4 w-4" />
+            Sync
+          </Link>
+        )}
 
         {/* Right side Profile Dropdown */}
         <ProfileDropdown isOpen={isProfileOpen} setIsOpen={setIsProfileOpen} />

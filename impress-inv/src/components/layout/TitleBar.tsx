@@ -99,7 +99,6 @@ export function TitleBar() {
           </span>
         </div>
 
-        {/* Sync Page Shortcut Button inside Electron TitleBar */}
         <Link
           href="/data-sync"
           title="Cloud Data Sync"
