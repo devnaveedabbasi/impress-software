@@ -2,17 +2,35 @@ import "dotenv/config";
 
 import app from "./src/app.js";
 import config from "./src/config/index.js";
-import prisma  from "./src/config/prisma.js";
+import {
+    getActiveDatabaseName,
+    prismaLocal,
+    startDatabaseMonitor,
+} from "./src/config/prisma.js";
 import { getLocalIp } from "./src/utils/getLocalIp.js";
 import { startAutoSync } from "./src/services/sync.service.js";
 
 const PORT = config.port;
 
+function describeDatabase(connectionString) {
+    if (!connectionString) return "not configured";
+
+    try {
+        const url = new URL(connectionString);
+        return `${url.protocol}//${url.hostname}:${url.port || "default"}${url.pathname}`;
+    } catch {
+        return "configured (invalid connection string format)";
+    }
+}
+
 async function startServer() {
     try {
-        await prisma.$connect();
+        console.log(`[Database] Local target: ${describeDatabase(process.env.DATABASE_URL)}`);
+        console.log(`[Database] Cloud target: ${describeDatabase(process.env.CLOUD_DATABASE_URL)}`);
+        await prismaLocal.$connect();
+        await startDatabaseMonitor();
 
-        console.log("Database connected successfully");
+        console.log(`[Database] Active database: ${getActiveDatabaseName().toUpperCase()}`);
 
         const localIp = getLocalIp();
 

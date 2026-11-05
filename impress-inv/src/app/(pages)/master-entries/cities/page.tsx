@@ -41,6 +41,7 @@ export default function CityPage() {
     const [isProvincesLoading, setIsProvincesLoading] = useState(true);
     const [isViewAllOpen, setIsViewAllOpen] = useState(false);
     const [cities, setCities] = useState<CityRow[]>([]);
+    const [hasLoadedCities, setHasLoadedCities] = useState(false);
     const [isCitiesLoading, setIsCitiesLoading] = useState(false);
     const [citiesError, setCitiesError] = useState("");
 
@@ -80,8 +81,10 @@ export default function CityPage() {
         }
     };
 
-    const fetchAllCities = async () => {
-        setIsViewAllOpen(true);
+    const fetchAllCities = async (openModal = true, force = false) => {
+        if (openModal) setIsViewAllOpen(true);
+        if (hasLoadedCities && !force) return;
+
         setIsCitiesLoading(true);
         setCitiesError("");
         try {
@@ -91,6 +94,7 @@ export default function CityPage() {
                 ...city,
                 provinceName: provinceNames.get(String(city.provinceId)) || `Province #${city.provinceId}`,
             })));
+            setHasLoadedCities(true);
         } catch (error: any) {
             setCitiesError(error.response?.data?.message || "Failed to fetch cities");
         } finally {
@@ -123,6 +127,10 @@ export default function CityPage() {
                     const response = await api.put(`${CITIES}/${data.id}`, { name: data.name, provinceId: Number(data.provinceId) });
                     toast.success(response.data.message || "City updated successfully");
                 }
+                if (hasLoadedCities) {
+                    setHasLoadedCities(false);
+                    await fetchAllCities(false, true);
+                }
                 fetchNextId();
             } catch (error: any) {
                 toast.error(error.response?.data?.message || "Failed to save city");
@@ -144,6 +152,13 @@ export default function CityPage() {
         const fetchDebouncedId = async () => {
         if (!debouncedId) return;
 
+        if (Number(debouncedId) < 1) {
+            setValues({ ...initialValues, id: nextId });
+            setIsNewMode(true);
+            setIsEditing(true);
+            return;
+        }
+
         if (debouncedId === String(nextId)) {
             setValues({ ...initialValues, id: nextId });
             setIsNewMode(true);
@@ -161,16 +176,17 @@ export default function CityPage() {
 
         setIsIdLoading(true);
         try {
-            const { data } = await api.get(`${CITIES}/${debouncedId}`);
-            if (data.data) {
+            const cachedCity = cities.find((city) => String(city.id) === debouncedId);
+            const city = cachedCity || (await api.get(`${CITIES}/${debouncedId}`)).data.data;
+
+            if (city) {
                 setValues({ 
-                    id: String(data.data.id), 
-                    name: data.data.name,
-                    provinceId: String(data.data.provinceId)
+                    id: String(city.id),
+                    name: city.name,
+                    provinceId: String(city.provinceId)
                 });
                 setIsNewMode(false);
                 setIsEditing(false);
-                toast.success("City found");
             } else {
                 toast.error("City not found");
                 // Clear fields but keep the ID they typed
@@ -190,7 +206,7 @@ export default function CityPage() {
         }
     }
         fetchDebouncedId();
-    }, [debouncedId]);;
+    }, [debouncedId, nextId, canView, cities]);;
 
     return (
         <section className="mx-auto mt-10 w-full max-w-110 bg-form-bg p-6 shadow-xl sm:p-8">
@@ -201,7 +217,15 @@ export default function CityPage() {
                     type={isIdLoading ? "text" : "number"}
                     label="City ID"
                     value={isIdLoading ? "Loading..." : values.id || ""}
-                    onChange={handleInputChange("id")}
+                    onChange={(event) => {
+                        if (event.target.value.startsWith("-")) return;
+                        handleInputChange("id")(event);
+                    }}
+                    onKeyDown={(event) => {
+                        if (["-", "e", "E", "+"].includes(event.key)) {
+                            event.preventDefault();
+                        }
+                    }}
                     error={errors.id}
                     disabled={isIdLoading}
                 min={1}
@@ -239,7 +263,7 @@ export default function CityPage() {
                         type="button"
                         variant="secondary"
                         shape="rounded"
-                        onClick={fetchAllCities}
+                        onClick={() => fetchAllCities()}
                         disabled={isSubmitting || !canView}
                         className="border border-zinc-400 bg-white px-6 hover:bg-zinc-50"
                     >
@@ -290,4 +314,3 @@ export default function CityPage() {
         </section>
     );
 }
-
