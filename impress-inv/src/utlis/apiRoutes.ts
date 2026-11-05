@@ -26,5 +26,6 @@ export const REJECTION_RETURN_TO_VENDOR = "/rejection-returns-to-vendor";
 
 // Sync APIs (Offline <-> Online)
 export const SYNC_STATUS = "/sync/status";
+export const SYNC_HEALTH = "/sync/health";
 export const SYNC_EXECUTE = "/sync/execute";
 export const SYNC_RESOLVE = "/sync/resolve";

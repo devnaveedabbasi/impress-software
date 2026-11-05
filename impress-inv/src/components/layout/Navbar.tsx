@@ -87,7 +87,6 @@ export function Navbar() {
   const [menuSide, setMenuSide] = useState<"left" | "right">("left");
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const { hasPermission } = usePermissions();
-  const { isSoftware } = useAppSelector((state) => state.app);
   const pathname = usePathname();
 
   useEffect(() => {

@@ -29,6 +29,7 @@ const COMPOSITE_KEYS = {
 
 let lastSyncAt = null;
 let autoSyncTimer = null;
+let syncInProgress = null;
 
 function getKey(modelName, item) {
   const fields = COMPOSITE_KEYS[modelName];
@@ -175,6 +176,17 @@ async function updateRecord(client, modelName, item) {
 }
 
 export async function syncSafeRecords() {
+  if (syncInProgress) return syncInProgress;
+
+  syncInProgress = syncSafeRecordsInternal();
+  try {
+    return await syncInProgress;
+  } finally {
+    syncInProgress = null;
+  }
+}
+
+async function syncSafeRecordsInternal() {
   if (!(await checkCloudHealth())) {
     throw new Error("Cloud database is offline. Cannot sync.");
   }

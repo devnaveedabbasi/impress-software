@@ -1,4 +1,4 @@
-import prisma from "../config/prisma.js";
+import prisma, { getActiveDatabaseClient } from "../config/prisma.js";
 import asyncHandler from "../utils/asyncHandler.js";
 import { ApiResponse } from "../utils/apiResponse.js";
 import { ApiError } from "../utils/apiError.js";
@@ -8,6 +8,17 @@ const createCity = asyncHandler(async (req, res) => {
     if (!name || !provinceId) {
         throw new ApiError(400, "Name and provinceId are required")
     }
+
+    // Sync can copy explicit IDs, leaving PostgreSQL's auto-increment sequence behind.
+    await getActiveDatabaseClient().$executeRawUnsafe(`
+        SELECT setval(
+            pg_get_serial_sequence('"City"', 'id'),
+            COALESCE(MAX(id), 1),
+            MAX(id) IS NOT NULL
+        )
+        FROM "City"
+    `);
+
     const city = await prisma.city.create({
         data: {
             name,

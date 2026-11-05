@@ -1,8 +1,17 @@
 import {
+  checkCloudHealth,
   getFullSyncStatus,
   syncSafeRecords,
   resolveConflict,
 } from "../services/sync.service.js";
+
+export const getSyncHealth = async (req, res) => {
+  const connected = await checkCloudHealth();
+  return res.status(200).json({
+    success: true,
+    data: { connected },
+  });
+};
 
 export const getSyncStatus = async (req, res) => {
   try {
