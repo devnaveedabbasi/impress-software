@@ -7,7 +7,6 @@ import { Icon } from "@iconify/react";
 import { NAV_ITEMS, type NavItem } from "./nav-items";
 import { ProfileDropdown } from "./ProfileDropdown";
 import { usePermissions } from "@/hooks/usePermissions";
-import { useAppSelector } from "@/hooks/redux";
 
 const MENU_WIDTH = 224;
 
