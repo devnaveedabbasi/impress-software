@@ -183,16 +183,7 @@ export function Navbar() {
           )}
         </div>
 
-        {isSoftware && (
-          <Link
-            href="/data-sync"
-            className="flex shrink-0 items-center gap-1 rounded px-2 py-2 text-xs font-semibold text-emerald-700 hover:bg-emerald-50 hover:text-emerald-800"
-            title="Open Local and Live Database Sync"
-          >
-            <Icon icon="mdi:cloud-sync" className="h-4 w-4" />
-            Sync
-          </Link>
-        )}
+   
 
         {/* Right side Profile Dropdown */}
         <ProfileDropdown isOpen={isProfileOpen} setIsOpen={setIsProfileOpen} />
