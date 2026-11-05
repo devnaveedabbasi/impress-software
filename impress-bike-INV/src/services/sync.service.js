@@ -1,4 +1,10 @@
-import { prismaLocal, prismaCloud } from "../config/prisma.js";
+import {
+  checkCloudHealth,
+  prismaLocal,
+  prismaCloud,
+} from "../config/prisma.js";
+
+export { checkCloudHealth };
 
 export const SYNC_MODELS = [
   "role",
@@ -69,17 +75,6 @@ function comparable(item) {
 
 function updatedAt(item) {
   return item.updatedAt ? new Date(item.updatedAt).getTime() : 0;
-}
-
-export async function checkCloudHealth() {
-  if (!prismaCloud) return false;
-  try {
-    await prismaCloud.$queryRaw`SELECT 1`;
-    return true;
-  } catch (error) {
-    console.error("Cloud database health check failed:", error.message);
-    return false;
-  }
 }
 
 export async function getModelComparison(modelName) {
@@ -188,7 +183,10 @@ export async function syncSafeRecords() {
 
 async function syncSafeRecordsInternal() {
   if (!(await checkCloudHealth())) {
-    throw new Error("Cloud database is offline. Cannot sync.");
+    return {
+      skipped: true,
+      reason: "Cloud database is offline; local mode remains active.",
+    };
   }
 
   const results = {};

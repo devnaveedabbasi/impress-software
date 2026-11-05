@@ -1,6 +1,6 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
-let apiUrl = 'http://192.168.1.210:5000';
+let apiUrl = 'http://192.168.1.240:5000';
 try {
   const fs = require('fs');
   const path = require('path');

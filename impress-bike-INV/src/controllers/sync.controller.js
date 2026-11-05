@@ -28,7 +28,7 @@ export const runSync = async (req, res) => {
     const updatedStatus = await getFullSyncStatus();
     return res.status(200).json({
       success: true,
-      message: "Sync completed successfully",
+      message: results.skipped ? results.reason : "Sync completed successfully",
       data: { results, currentStatus: updatedStatus },
     });
   } catch (error) {

@@ -25,12 +25,12 @@ function describeDatabase(connectionString) {
 
 async function startServer() {
     try {
-        console.log(`[Database] Local target: ${describeDatabase(process.env.DATABASE_URL)}`);
+        console.log(`[Database] Local target: ${describeDatabase(process.env.LOCAL_DATABASE_URL || process.env.DATABASE_URL)}`);
         console.log(`[Database] Cloud target: ${describeDatabase(process.env.CLOUD_DATABASE_URL)}`);
         await prismaLocal.$connect();
         await startDatabaseMonitor();
 
-        console.log("Database connected successfully");
+        console.log("Local database connected successfully");
 
         const localIp = getLocalIp();
 
@@ -41,9 +41,7 @@ async function startServer() {
         });
     } catch (error) {
         console.error("Database connection failed:", error.message);
-        console.error(
-            "Check Render DATABASE_URL: it must be the PostgreSQL connection string, not the frontend/API URL."
-        );
+        console.error("Set LOCAL_DATABASE_URL or DATABASE_URL to the local PostgreSQL database.");
         process.exit(1);
     }
 }

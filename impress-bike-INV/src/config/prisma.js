@@ -22,17 +22,13 @@ function createPool(connectionString, name) {
   });
 }
 
-// The primary database is local in desktop mode and the live database on Render.
-// CLOUD_DATABASE_URL remains available for two-way sync when both databases exist.
-const isProduction = process.env.NODE_ENV === "production";
-const primaryDatabaseUrl = isProduction
-  ? process.env.CLOUD_DATABASE_URL || process.env.DATABASE_URL
-  : process.env.DATABASE_URL || process.env.CLOUD_DATABASE_URL;
+// DATABASE_URL (or LOCAL_DATABASE_URL) is the local database; cloud is only a sync target.
+const primaryDatabaseUrl = process.env.LOCAL_DATABASE_URL || process.env.DATABASE_URL;
 const localPool = createPool(primaryDatabaseUrl, "Primary");
 const localAdapter = new PrismaPg(localPool);
 export const prismaLocal = new PrismaClient({ adapter: localAdapter });
 
-// Cloud client is optional when the API itself is running against the live DB.
+// Cloud client is optional and must be separate from the local database.
 let prismaCloud = null;
 if (process.env.CLOUD_DATABASE_URL && process.env.CLOUD_DATABASE_URL !== primaryDatabaseUrl) {
   const cloudPool = createPool(process.env.CLOUD_DATABASE_URL, "Cloud");
@@ -45,9 +41,12 @@ export { prismaCloud };
 let activeClient = prismaLocal;
 let activeDatabase = "local";
 let databaseMonitor;
+let cloudHealthCache = null;
+let cloudHealthCheckedAt = 0;
+let cloudHealthCheck = null;
 
 function isConnectionError(error) {
-  return [
+  const connectionCodes = [
     "ECONNREFUSED",
     "ECONNRESET",
     "ETIMEDOUT",
@@ -55,21 +54,41 @@ function isConnectionError(error) {
     "EHOSTUNREACH",
     "P1001",
     "P1002",
-  ].includes(error?.code);
+  ];
+  const connectionMessage = /can't reach database server|connection (terminated|timeout|timed out|refused|reset)|could not connect|econn(refused|reset)|etimedout/i;
+
+  for (let current = error; current; current = current.cause) {
+    if (connectionCodes.includes(current.code) || connectionMessage.test(current.message || "")) {
+      return true;
+    }
+  }
+  return false;
 }
 
 export async function checkCloudHealth() {
   if (!prismaCloud) return false;
-
-  try {
-    await prismaCloud.$queryRaw`SELECT 1`;
-    return true;
-  } catch (error) {
-    if (!isConnectionError(error)) {
-      console.error("[Database] Live DB health check failed:", error.message);
-    }
-    return false;
+  if (cloudHealthCache !== null && Date.now() - cloudHealthCheckedAt < 60000) {
+    return cloudHealthCache;
   }
+  if (cloudHealthCheck) return cloudHealthCheck;
+
+  cloudHealthCheck = (async () => {
+    try {
+      await prismaCloud.$queryRaw`SELECT 1`;
+      cloudHealthCache = true;
+    } catch (error) {
+      cloudHealthCache = false;
+      if (!isConnectionError(error)) {
+        console.error("[Database] Cloud health check failed:", error.message);
+      }
+    } finally {
+      cloudHealthCheckedAt = Date.now();
+      cloudHealthCheck = null;
+    }
+    return cloudHealthCache;
+  })();
+
+  return cloudHealthCheck;
 }
 
 export async function refreshActiveDatabase() {
@@ -94,7 +113,7 @@ export function getActiveDatabaseName() {
   return activeDatabase;
 }
 
-export async function startDatabaseMonitor(intervalMs = 10000) {
+export async function startDatabaseMonitor(intervalMs = 60000) {
   await refreshActiveDatabase();
   if (databaseMonitor || !prismaCloud) return;
 
