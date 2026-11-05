@@ -11,8 +11,8 @@ import { useAppSelector } from "@/hooks/redux";
 interface ConflictItem {
   id: number | string;
   modelName: string;
-  local: any;
-  cloud: any;
+  local: Record<string, unknown>;
+  cloud: Record<string, unknown>;
 }
 
 interface ModelStatus {
@@ -20,8 +20,8 @@ interface ModelStatus {
   localCount: number;
   cloudCount: number;
   syncedCount: number;
-  onlyLocal: any[];
-  onlyCloud: any[];
+  onlyLocal: Record<string, unknown>[];
+  onlyCloud: Record<string, unknown>[];
   conflicts: ConflictItem[];
 }
 
@@ -56,8 +56,8 @@ export default function DataSyncPage() {
   }, [router]);
 
   // 2. Fetch Sync Status
-  const fetchStatus = async () => {
-    setLoading(true);
+  const fetchStatus = async (showLoading = true) => {
+    if (showLoading) setLoading(true);
     try {
       const { data } = await api.get(SYNC_STATUS);
       if (data.success) {
@@ -106,7 +106,7 @@ export default function DataSyncPage() {
       const { data } = await api.post(SYNC_RESOLVE, { modelName, id, action });
       if (data.success) {
         toast.success(data.data.message || "Conflict resolved!");
-        await fetchStatus();
+        await fetchStatus(false);
       }
     } catch (err: any) {
       toast.error(err.response?.data?.message || "Failed to resolve conflict");
@@ -157,7 +157,7 @@ export default function DataSyncPage() {
 
           <button
             type="button"
-            onClick={fetchStatus}
+            onClick={() => fetchStatus()}
             disabled={loading || syncing}
             title="Refresh Status"
             className="flex h-9 w-9 items-center justify-center rounded-lg border border-zinc-200 hover:bg-zinc-100 text-zinc-600 transition"
@@ -261,60 +261,94 @@ export default function DataSyncPage() {
           <div className="mt-4 space-y-4">
             {allConflicts.map((conf) => {
               const overwriteKey = `${conf.modelName}-${conf.id}-overwrite_cloud`;
+              const overwriteLocalKey = `${conf.modelName}-${conf.id}-overwrite_local`;
               const saveNewKey = `${conf.modelName}-${conf.id}-save_as_new`;
+              const isResolving = resolvingId !== null;
 
               return (
                 <div
                   key={`${conf.modelName}-${conf.id}`}
-                  className="rounded-xl border border-amber-300 bg-white p-5 shadow-sm"
+                  className="overflow-hidden rounded-xl border border-amber-200 bg-white shadow-sm"
                 >
-                  <div className="flex flex-wrap items-center justify-between border-b border-zinc-200 pb-3 gap-2">
-                    <span className="rounded bg-amber-100 px-2 py-0.5 text-xs font-bold text-amber-900 uppercase">
-                      Table: {conf.modelName} &nbsp;|&nbsp; ID: #{conf.id}
-                    </span>
+                  <div className="flex flex-wrap items-center justify-between gap-3 border-b border-amber-100 bg-amber-50/60 px-4 py-3">
+                    <div>
+                      <p className="text-xs font-bold uppercase tracking-wide text-amber-900">
+                        {conf.modelName}
+                      </p>
+                      <p className="mt-0.5 text-[11px] text-amber-700">
+                        Record ID: <span className="font-semibold">#{conf.id}</span>
+                      </p>
+                    </div>
 
-                    {/* Action Buttons */}
-                    <div className="flex flex-wrap items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2" aria-label="Conflict actions">
                       <button
                         type="button"
                         onClick={() =>
                           handleResolve(conf.modelName, conf.id, "overwrite_cloud")
                         }
-                        disabled={resolvingId !== null}
-                        className="rounded bg-zinc-800 px-3 py-1.5 text-xs font-semibold text-white hover:bg-zinc-700 disabled:opacity-50 transition"
+                        disabled={isResolving}
+                        className="inline-flex items-center gap-1.5 rounded-lg bg-zinc-800 px-3 py-2 text-xs font-semibold text-white transition hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-50"
                       >
-                        {resolvingId === overwriteKey ? "Updating..." : "Overwrite Cloud"}
+                        {resolvingId === overwriteKey && (
+                          <span className="h-3 w-3 animate-spin rounded-full border-2 border-white/40 border-t-white" />
+                        )}
+                        {resolvingId === overwriteKey ? "Updating" : "Use Local"}
+                        <span className="hidden sm:inline">→ Cloud</span>
                       </button>
 
                       <button
                         type="button"
-                        onClick={() =>
-                          handleResolve(conf.modelName, conf.id, "save_as_new")
-                        }
-                        disabled={resolvingId !== null}
-                        className="rounded bg-primary-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-primary-700 disabled:opacity-50 transition"
+                        onClick={() => handleResolve(conf.modelName, conf.id, "overwrite_local")}
+                        disabled={isResolving}
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-blue-200 bg-white px-3 py-2 text-xs font-semibold text-blue-700 transition hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50"
                       >
-                        {resolvingId === saveNewKey ? "Saving..." : "Save As New Entry"}
+                        {resolvingId === overwriteLocalKey && (
+                          <span className="h-3 w-3 animate-spin rounded-full border-2 border-blue-300 border-t-blue-700" />
+                        )}
+                        {resolvingId === overwriteLocalKey ? "Updating" : "Use Cloud"}
+                        <span className="hidden sm:inline">→ Local</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handleResolve(conf.modelName, conf.id, "save_as_new")}
+                        disabled={isResolving}
+                        className="inline-flex items-center gap-1.5 rounded-lg bg-primary-600 px-3 py-2 text-xs font-semibold text-white transition hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {resolvingId === saveNewKey && (
+                          <span className="h-3 w-3 animate-spin rounded-full border-2 border-white/40 border-t-white" />
+                        )}
+                        {resolvingId === saveNewKey ? "Saving" : "Save As New"}
                       </button>
                     </div>
                   </div>
 
                   {/* Side-by-side comparison */}
-                  <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
-                    <div className="rounded-lg bg-zinc-50 p-3 border border-zinc-200">
-                      <div className="text-xs font-bold text-zinc-700 mb-1">
-                        💻 Local Computer Data
+                  <div className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-2">
+                    <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-3">
+                      <div className="mb-2 flex items-center justify-between">
+                        <div className="text-xs font-bold text-zinc-700">
+                          Local Computer
+                        </div>
+                        <span className="rounded-full bg-zinc-200 px-2 py-0.5 text-[10px] font-semibold text-zinc-600">
+                          Source A
+                        </span>
                       </div>
-                      <pre className="text-[11px] text-zinc-600 overflow-x-auto font-mono bg-white p-2 rounded border border-zinc-200">
+                      <pre className="max-h-64 overflow-auto rounded border border-zinc-200 bg-white p-2 text-[11px] text-zinc-600 font-mono">
                         {JSON.stringify(conf.local, null, 2)}
                       </pre>
                     </div>
 
-                    <div className="rounded-lg bg-blue-50/50 p-3 border border-blue-200">
-                      <div className="text-xs font-bold text-blue-900 mb-1">
-                        ☁️ Cloud Database Data
+                    <div className="rounded-lg border border-blue-200 bg-blue-50/50 p-3">
+                      <div className="mb-2 flex items-center justify-between">
+                        <div className="text-xs font-bold text-blue-900">
+                          Live Cloud Database
+                        </div>
+                        <span className="rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-semibold text-blue-700">
+                          Source B
+                        </span>
                       </div>
-                      <pre className="text-[11px] text-zinc-600 overflow-x-auto font-mono bg-white p-2 rounded border border-zinc-200">
+                      <pre className="max-h-64 overflow-auto rounded border border-blue-200 bg-white p-2 text-[11px] text-zinc-600 font-mono">
                         {JSON.stringify(conf.cloud, null, 2)}
                       </pre>
                     </div>
