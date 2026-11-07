@@ -15,7 +15,8 @@ export const getSyncHealth = async (req, res) => {
 
 export const getSyncStatus = async (req, res) => {
   try {
-    const status = await getFullSyncStatus();
+    const fullScan = req.query.mode === "full";
+    const status = await getFullSyncStatus({ fullScan });
     return res.status(200).json({ success: true, data: status });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
@@ -24,8 +25,9 @@ export const getSyncStatus = async (req, res) => {
 
 export const runSync = async (req, res) => {
   try {
-    const results = await syncSafeRecords();
-    const updatedStatus = await getFullSyncStatus();
+    const fullScan = req.body?.mode === "full";
+    const results = await syncSafeRecords({ fullScan });
+    const updatedStatus = await getFullSyncStatus({ fullScan });
     return res.status(200).json({
       success: true,
       message: results.skipped ? results.reason : "Sync completed successfully",

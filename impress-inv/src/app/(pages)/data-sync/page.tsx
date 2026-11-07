@@ -35,6 +35,7 @@ interface SyncData {
   models: ModelStatus[];
   totalConflicts: number;
   totalPending: number;
+  isIncremental?: boolean;
 }
 
 interface PendingItem {
@@ -76,10 +77,10 @@ export default function DataSyncPage() {
   const [selectedItemDetails, setSelectedItemDetails] = useState<PendingItem | null>(null);
 
   // Fetch Sync Status
-  const fetchStatus = async (showLoading = true) => {
+  const fetchStatus = async (showLoading = true, mode: "delta" | "full" = "delta") => {
     if (showLoading) setLoading(true);
     try {
-      const { data } = await api.get(SYNC_STATUS);
+      const { data } = await api.get(SYNC_STATUS, { params: { mode } });
       if (data.success) {
         setSyncData(data.data);
         console.log("[Sync] Status fetched successfully:", data.data);
@@ -101,14 +102,18 @@ export default function DataSyncPage() {
     return () => window.clearInterval(interval);
   }, []);
 
-  // Trigger Full Two-Way Sync
-  const handleExecuteSync = async () => {
+  // Trigger Two-Way Sync (Delta or Full Scan)
+  const handleExecuteSync = async (mode: "delta" | "full" = "delta") => {
     setSyncing(true);
     try {
-      console.log("[Sync] Executing bidirectional synchronization...");
-      const { data } = await api.post(SYNC_EXECUTE);
+      console.log(`[Sync] Executing ${mode} synchronization...`);
+      const { data } = await api.post(SYNC_EXECUTE, { mode });
       if (data.success) {
-        toast.success("Safe records synchronized successfully!");
+        toast.success(
+          mode === "full"
+            ? "Full parity scan and synchronization complete!"
+            : "High-speed delta synchronization complete!"
+        );
         setSyncData(data.data.currentStatus);
         console.log("[Sync] Execute sync completed:", data.data);
       }
@@ -227,7 +232,7 @@ export default function DataSyncPage() {
           </div>
 
           {/* Action Buttons & Status Badge */}
-          <div className="flex flex-wrap items-center gap-3">
+          <div className="flex flex-wrap items-center gap-2 sm:gap-3">
             {loading && !syncData ? (
               <div className="flex items-center gap-1.5 rounded-full bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-700 border border-blue-200">
                 <Icon icon="mdi:loading" className="h-3.5 w-3.5 animate-spin" />
@@ -245,6 +250,24 @@ export default function DataSyncPage() {
               </div>
             )}
 
+            {syncData?.isIncremental && (
+              <span className="hidden md:inline-flex items-center gap-1 rounded-full bg-purple-50 px-2.5 py-1 text-[11px] font-semibold text-purple-700 border border-purple-200">
+                <Icon icon="mdi:lightning-bolt" className="h-3.5 w-3.5 text-purple-600" />
+                Incremental Delta Active
+              </span>
+            )}
+
+            <button
+              type="button"
+              onClick={() => fetchStatus(true, "full")}
+              disabled={loading || syncing}
+              title="Full Historical Scan across all tables"
+              className="hidden sm:inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-xs font-semibold text-zinc-700 hover:bg-zinc-50 disabled:opacity-50 transition shadow-sm"
+            >
+              <Icon icon="mdi:database-search-outline" className="h-4 w-4 text-zinc-500" />
+              <span>Full Scan</span>
+            </button>
+
             <button
               type="button"
               onClick={() => fetchStatus()}
@@ -260,7 +283,7 @@ export default function DataSyncPage() {
 
             <button
               type="button"
-              onClick={handleExecuteSync}
+              onClick={() => handleExecuteSync("delta")}
               disabled={!syncData?.isOnline || syncing || loading}
               className="flex items-center gap-2 rounded-lg bg-primary-600 px-5 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50"
             >
@@ -268,7 +291,7 @@ export default function DataSyncPage() {
                 icon="mdi:sync"
                 className={`h-4 w-4 ${syncing ? "animate-spin" : ""}`}
               />
-              <span>{syncing ? "Syncing Both Ways..." : "Sync Now"}</span>
+              <span>{syncing ? "Syncing..." : "Sync Now"}</span>
             </button>
           </div>
         </div>

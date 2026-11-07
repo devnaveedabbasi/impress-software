@@ -1,3 +1,6 @@
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
 import {
   checkCloudHealth,
   prismaLocal,
@@ -6,6 +9,34 @@ import {
 } from "../config/prisma.js";
 
 export { checkCloudHealth };
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const META_FILE = path.join(__dirname, "../../sync_meta.json");
+
+function loadSyncMeta() {
+  try {
+    if (fs.existsSync(META_FILE)) {
+      const data = JSON.parse(fs.readFileSync(META_FILE, "utf8"));
+      return data;
+    }
+  } catch (err) {
+    console.warn("[Sync] Could not read sync_meta.json:", err.message);
+  }
+  return { lastSyncAt: null, lastFullScanAt: null };
+}
+
+function saveSyncMeta(meta) {
+  try {
+    fs.writeFileSync(META_FILE, JSON.stringify(meta, null, 2), "utf8");
+  } catch (err) {
+    console.warn("[Sync] Could not save sync_meta.json:", err.message);
+  }
+}
+
+const syncMeta = loadSyncMeta();
+let lastSyncAt = syncMeta.lastSyncAt;
+let autoSyncTimer = null;
+let syncInProgress = null;
 
 export const SYNC_MODELS = [
   "role",
@@ -33,10 +64,6 @@ const COMPOSITE_KEYS = {
   rolePermission: ["roleId", "permissionId"],
   userPermission: ["userId", "permissionId"],
 };
-
-let lastSyncAt = null;
-let autoSyncTimer = null;
-let syncInProgress = null;
 
 function getKey(modelName, item) {
   const fields = COMPOSITE_KEYS[modelName];
@@ -78,9 +105,66 @@ function updatedAt(item) {
   return item.updatedAt ? new Date(item.updatedAt).getTime() : 0;
 }
 
-export async function getModelComparison(modelName) {
-  const localItems = await prismaLocal[modelName].findMany();
-  const cloudItems = await prismaCloud[modelName].findMany();
+// Repair Postgres sequence so auto-increment IDs stay synchronized
+async function repairSequence(client, modelName) {
+  if (COMPOSITE_KEYS[modelName]) return;
+  const capitalized = modelName.charAt(0).toUpperCase() + modelName.slice(1);
+  try {
+    await client.$executeRawUnsafe(`
+      SELECT setval(
+        pg_get_serial_sequence('"${capitalized}"', 'id'),
+        COALESCE((SELECT MAX(id) FROM "${capitalized}"), 1),
+        EXISTS(SELECT 1 FROM "${capitalized}")
+      )
+    `);
+  } catch {
+    // Ignore non-serial tables
+  }
+}
+
+// Model comparison: Supports Incremental (Delta) Sync & Full Deep Scan
+export async function getModelComparison(modelName, options = { fullScan: false }) {
+  const hasUpdatedAt = !COMPOSITE_KEYS[modelName];
+  const isIncremental = !options.fullScan && Boolean(lastSyncAt) && hasUpdatedAt;
+
+  // Ultra-fast counts without loading full tables into RAM
+  let localCount = 0;
+  let cloudCount = 0;
+  try {
+    localCount = await prismaLocal[modelName].count();
+  } catch (err) {
+    console.error(`[Sync] Failed to count local ${modelName}:`, err.message);
+  }
+
+  try {
+    cloudCount = await prismaCloud[modelName].count();
+  } catch (err) {
+    console.error(`[Sync] Failed to count cloud ${modelName}:`, err.message);
+  }
+
+  let localItems = [];
+  let cloudItems = [];
+
+  if (isIncremental) {
+    // Overlap buffer: 1 minute clock drift margin
+    const sinceDate = new Date(new Date(lastSyncAt).getTime() - 60000);
+    try {
+      localItems = await prismaLocal[modelName].findMany({
+        where: { updatedAt: { gte: sinceDate } },
+      });
+      cloudItems = await prismaCloud[modelName].findMany({
+        where: { updatedAt: { gte: sinceDate } },
+      });
+    } catch (err) {
+      console.warn(`[Sync] Incremental lookup failed on ${modelName}, falling back to full scan:`, err.message);
+      localItems = await prismaLocal[modelName].findMany();
+      cloudItems = await prismaCloud[modelName].findMany();
+    }
+  } else {
+    localItems = await prismaLocal[modelName].findMany();
+    cloudItems = await prismaCloud[modelName].findMany();
+  }
+
   const cloudMap = new Map(cloudItems.map((item) => [getKey(modelName, item), item]));
   const localMap = new Map(localItems.map((item) => [getKey(modelName, item), item]));
   const conflicts = [];
@@ -91,6 +175,27 @@ export async function getModelComparison(modelName) {
   for (const [key, localItem] of localMap) {
     const cloudItem = cloudMap.get(key);
     if (!cloudItem) {
+      // In incremental mode, check if item already exists on cloud to avoid false "onlyLocal"
+      if (isIncremental) {
+        const existsInCloud = await prismaCloud[modelName].findUnique({
+          where: getWhere(modelName, localItem),
+        });
+        if (existsInCloud) {
+          if (comparable(localItem) === comparable(existsInCloud)) {
+            syncedCount++;
+          } else {
+            conflicts.push({
+              id: COMPOSITE_KEYS[modelName] ? key : localItem.id,
+              modelName,
+              local: localItem,
+              cloud: existsInCloud,
+              localUpdatedAt: localItem.updatedAt || null,
+              cloudUpdatedAt: existsInCloud.updatedAt || null,
+            });
+          }
+          continue;
+        }
+      }
       onlyLocal.push(localItem);
       continue;
     }
@@ -110,21 +215,30 @@ export async function getModelComparison(modelName) {
   }
 
   for (const [key, cloudItem] of cloudMap) {
-    if (!localMap.has(key)) onlyCloud.push(cloudItem);
+    if (!localMap.has(key)) {
+      if (isIncremental) {
+        const existsInLocal = await prismaLocal[modelName].findUnique({
+          where: getWhere(modelName, cloudItem),
+        });
+        if (existsInLocal) continue;
+      }
+      onlyCloud.push(cloudItem);
+    }
   }
 
   return {
     modelName,
-    localCount: localItems.length,
-    cloudCount: cloudItems.length,
+    localCount,
+    cloudCount,
     syncedCount,
     onlyLocal,
     onlyCloud,
     conflicts,
+    isIncremental,
   };
 }
 
-export async function getFullSyncStatus() {
+export async function getFullSyncStatus(options = { fullScan: false }) {
   const isOnline = await checkCloudHealth();
   const activeDatabase = getActiveDatabaseName();
   if (!isOnline) {
@@ -145,7 +259,7 @@ export async function getFullSyncStatus() {
   let totalConflicts = 0;
   let totalPending = 0;
   for (const model of SYNC_MODELS) {
-    const comparison = await getModelComparison(model);
+    const comparison = await getModelComparison(model, options);
     modelsStatus.push(comparison);
     totalConflicts += comparison.conflicts.length;
     totalPending += comparison.onlyLocal.length + comparison.onlyCloud.length;
@@ -160,24 +274,54 @@ export async function getFullSyncStatus() {
     models: modelsStatus,
     totalConflicts,
     totalPending,
+    isIncremental: !options.fullScan && Boolean(lastSyncAt),
   };
 }
 
 async function createIfMissing(client, modelName, item) {
-  await client[modelName].create({ data: item });
+  try {
+    await client[modelName].create({ data: item });
+  } catch (err) {
+    // If already exists with unique constraint, try update
+    if (err?.code === "P2002") {
+      try {
+        await client[modelName].update({
+          where: getWhere(modelName, item),
+          data: withoutIdentityAndDates(modelName, item),
+        });
+      } catch (updateErr) {
+        console.error(`[Sync] Upsert error on ${modelName}:`, updateErr.message);
+      }
+    } else {
+      console.error(`[Sync] Create error on ${modelName}:`, err.message);
+    }
+  }
 }
 
 async function updateRecord(client, modelName, item) {
-  await client[modelName].update({
-    where: getWhere(modelName, item),
-    data: withoutIdentityAndDates(modelName, item),
-  });
+  try {
+    await client[modelName].update({
+      where: getWhere(modelName, item),
+      data: withoutIdentityAndDates(modelName, item),
+    });
+  } catch (err) {
+    console.error(`[Sync] Update error on ${modelName}:`, err.message);
+  }
 }
 
-export async function syncSafeRecords() {
+// Chunk helper for batch processing
+function chunkArray(array, size) {
+  const chunks = [];
+  for (let i = 0; i < array.length; i += size) {
+    chunks.push(array.slice(i, i + size));
+  }
+  return chunks;
+}
+
+export async function syncSafeRecords(options = { fullScan: false }) {
   if (syncInProgress) return syncInProgress;
 
-  syncInProgress = syncSafeRecordsInternal();
+  syncInProgress = syncSafeRecordsInternal(options);
   try {
     return await syncInProgress;
   } finally {
@@ -185,7 +329,7 @@ export async function syncSafeRecords() {
   }
 }
 
-async function syncSafeRecordsInternal() {
+async function syncSafeRecordsInternal(options = { fullScan: false }) {
   if (!(await checkCloudHealth())) {
     return {
       skipped: true,
@@ -195,20 +339,32 @@ async function syncSafeRecordsInternal() {
 
   const results = {};
   for (const model of SYNC_MODELS) {
-    const comparison = await getModelComparison(model);
+    const comparison = await getModelComparison(model, options);
     let pushedToCloud = 0;
     let pulledToLocal = 0;
     let updatedInCloud = 0;
     let updatedInLocal = 0;
 
-    for (const item of comparison.onlyLocal) {
-      await createIfMissing(prismaCloud, model, item);
-      pushedToCloud++;
+    // Batch chunking: process 50 records at a time
+    const localChunks = chunkArray(comparison.onlyLocal, 50);
+    for (const chunk of localChunks) {
+      for (const item of chunk) {
+        await createIfMissing(prismaCloud, model, item);
+        pushedToCloud++;
+      }
     }
-    for (const item of comparison.onlyCloud) {
-      await createIfMissing(prismaLocal, model, item);
-      pulledToLocal++;
+
+    const cloudChunks = chunkArray(comparison.onlyCloud, 50);
+    for (const chunk of cloudChunks) {
+      for (const item of chunk) {
+        await createIfMissing(prismaLocal, model, item);
+        pulledToLocal++;
+      }
     }
+
+    // Sequence repair on both clients after inserts
+    if (pushedToCloud > 0) await repairSequence(prismaCloud, model);
+    if (pulledToLocal > 0) await repairSequence(prismaLocal, model);
 
     for (const conflict of comparison.conflicts) {
       const localTime = updatedAt(conflict.local);
@@ -234,7 +390,12 @@ async function syncSafeRecordsInternal() {
   }
 
   lastSyncAt = new Date().toISOString();
-  console.info(`[Sync] Completed at ${lastSyncAt}`);
+  saveSyncMeta({
+    lastSyncAt,
+    lastFullScanAt: options.fullScan ? lastSyncAt : syncMeta.lastFullScanAt,
+  });
+
+  console.info(`[Sync] Delta sync completed successfully at ${lastSyncAt}`);
   return results;
 }
 
@@ -246,20 +407,21 @@ export function startAutoSync(intervalMs = 2 * 60 * 1000) {
   if (autoSyncTimer) return;
   setTimeout(async () => {
     try {
-      await syncSafeRecords();
+      await syncSafeRecords({ fullScan: false });
     } catch (error) {
-      console.error("[Sync] Initial automatic sync failed:", error.message);
+      console.error("[Sync] Initial automatic delta sync failed:", error.message);
     }
   }, 10000).unref?.();
+
   autoSyncTimer = setInterval(async () => {
     try {
-      await syncSafeRecords();
+      await syncSafeRecords({ fullScan: false });
     } catch (error) {
-      console.error("[Sync] Automatic sync failed:", error.message);
+      console.error("[Sync] Automatic delta sync failed:", error.message);
     }
   }, intervalMs);
   autoSyncTimer.unref?.();
-  console.info(`[Sync] Automatic two-way sync enabled every ${intervalMs / 60000} minutes`);
+  console.info(`[Sync] Automatic high-speed delta sync enabled every ${intervalMs / 60000} minutes`);
 }
 
 export async function resolveConflict({ modelName, id, action }) {
@@ -293,10 +455,14 @@ export async function resolveConflict({ modelName, id, action }) {
     }
     const newItem = { ...withoutIdentityAndDates(modelName, localItem) };
     const createdInCloud = await prismaCloud[modelName].create({ data: newItem });
+    await repairSequence(prismaCloud, modelName);
+
     await prismaLocal[modelName].update({
       where: { id: localItem.id },
       data: { ...newItem, id: createdInCloud.id },
     });
+    await repairSequence(prismaLocal, modelName);
+
     return {
       success: true,
       message: `Local entry saved as new in Cloud with ID ${createdInCloud.id}.`,
