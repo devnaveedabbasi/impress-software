@@ -2,6 +2,7 @@ import {
   checkCloudHealth,
   prismaLocal,
   prismaCloud,
+  getActiveDatabaseName,
 } from "../config/prisma.js";
 
 export { checkCloudHealth };
@@ -125,11 +126,13 @@ export async function getModelComparison(modelName) {
 
 export async function getFullSyncStatus() {
   const isOnline = await checkCloudHealth();
+  const activeDatabase = getActiveDatabaseName();
   if (!isOnline) {
     return {
       isOnline: false,
       localConnected: true,
       cloudConnected: false,
+      activeDatabase,
       lastSyncAt,
       message: "Cloud database offline or unreachable",
       models: [],
@@ -152,6 +155,7 @@ export async function getFullSyncStatus() {
     isOnline: true,
     localConnected: true,
     cloudConnected: true,
+    activeDatabase,
     lastSyncAt,
     models: modelsStatus,
     totalConflicts,

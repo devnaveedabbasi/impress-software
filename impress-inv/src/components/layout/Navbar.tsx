@@ -182,10 +182,20 @@ export function Navbar() {
           )}
         </div>
 
-   
 
-        {/* Right side Profile Dropdown */}
-        <ProfileDropdown isOpen={isProfileOpen} setIsOpen={setIsProfileOpen} />
+
+        {/* Right side Actions + Profile Dropdown */}
+        <div className="flex items-center gap-2">
+          {/* <Link
+            href="/data-sync"
+            className="flex items-center gap-1.5 rounded-md border border-primary-200 bg-primary-50 px-2.5 py-1 text-xs font-semibold text-primary-700 hover:bg-primary-100 transition shadow-sm"
+            title="Data Synchronization Hub"
+          >
+            <Icon icon="mdi:cloud-sync" className="h-4 w-4 text-primary-600" />
+            <span className="hidden sm:inline">Data Sync</span>
+          </Link> */}
+          <ProfileDropdown isOpen={isProfileOpen} setIsOpen={setIsProfileOpen} />
+        </div>
       </nav>
     </header>
   );

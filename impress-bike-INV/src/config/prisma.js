@@ -15,7 +15,7 @@ function createPool(connectionString, name) {
   return new pg.Pool({
     connectionString,
     ssl: isLocal ? undefined : { rejectUnauthorized: false },
-    connectionTimeoutMillis: 10000,
+    connectionTimeoutMillis: isLocal ? 10000 : 30000,
     idleTimeoutMillis: 30000,
     keepAlive: true,
     max: 10,
@@ -67,7 +67,8 @@ function isConnectionError(error) {
 
 export async function checkCloudHealth() {
   if (!prismaCloud) return false;
-  if (cloudHealthCache !== null && Date.now() - cloudHealthCheckedAt < 60000) {
+  const cacheTtl = cloudHealthCache === true ? 30000 : 5000;
+  if (cloudHealthCache !== null && Date.now() - cloudHealthCheckedAt < cacheTtl) {
     return cloudHealthCache;
   }
   if (cloudHealthCheck) return cloudHealthCheck;
