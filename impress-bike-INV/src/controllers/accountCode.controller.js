@@ -1,9 +1,12 @@
 import { ApiError } from "../utils/apiError.js";
 import { ApiResponse } from "../utils/apiResponse.js";
 import asyncHandler from "../utils/asyncHandler.js";
-import prisma from "../config/prisma.js";
+import prisma, {
+    getActiveDatabaseClient,
+    getActiveDatabaseName,
+} from "../config/prisma.js";
 
-const accountCodeGroup = ['expenses', 'currentassets', 'liabilities', 'capital', 'revenue', 'purchases', 'otherIncomeAndExpense', 'Expense']
+const accountCodeGroup = ['expenses', 'currentassets', 'liabilities', 'capital', 'revenue', 'purchases', 'otherIncomeAndExpense', 'Expense'];
 
 const createAccountCode = asyncHandler(async (req, res) => {
     const { headName, group, items } = req.body;
@@ -14,6 +17,19 @@ const createAccountCode = asyncHandler(async (req, res) => {
     if (!accountCodeGroup.includes(group)) {
         throw new ApiError(400, "Invalid account code group");
     }
+
+    console.log(
+        `[AccountCode] Creating "${headName}" in ${getActiveDatabaseName().toUpperCase()} database`
+    );
+
+    // Sync PostgreSQL auto-increment sequence
+    await getActiveDatabaseClient().$executeRaw`
+        SELECT setval(
+            pg_get_serial_sequence('"AccountCode"', 'id'),
+            COALESCE((SELECT MAX(id) FROM "AccountCode"), 1),
+            EXISTS(SELECT 1 FROM "AccountCode")
+        )
+    `;
 
     const codeArr = items?.map(item => item.code || "") || [];
     const nameArr = items?.map(item => item.name || "") || [];
@@ -43,11 +59,12 @@ const createAccountCode = asyncHandler(async (req, res) => {
             "Account form created successfully"
         )
     );
-})
-
+});
 
 const getAllAccountCodes = asyncHandler(async (req, res) => {
-    const accountCodes = await prisma.accountCode.findMany();
+    const accountCodes = await prisma.accountCode.findMany({
+        orderBy: { id: "asc" }
+    });
     return res.status(200).json(
         new ApiResponse(
             200,
@@ -55,7 +72,7 @@ const getAllAccountCodes = asyncHandler(async (req, res) => {
             "Account codes fetched successfully"
         )
     );
-})
+});
 
 const getByIdAccountCode = asyncHandler(async (req, res) => {
     const { id } = req.params;
@@ -94,7 +111,7 @@ const getByIdAccountCode = asyncHandler(async (req, res) => {
             "Account form fetched successfully"
         )
     );
-})
+});
 
 const updateAccountCode = asyncHandler(async (req, res) => {
     const { id } = req.params;
@@ -142,7 +159,7 @@ const updateAccountCode = asyncHandler(async (req, res) => {
             "Account form updated successfully"
         )
     );
-})
+});
 
 const deleteAccountCode = asyncHandler(async (req, res) => {
     const { id } = req.params;
@@ -169,13 +186,19 @@ const deleteAccountCode = asyncHandler(async (req, res) => {
             "Account code deleted successfully"
         )
     );
-})
+});
 
 const getNextId = asyncHandler(async (req, res) => {
-    const lastRecord = await prisma.accountCode.findFirst({
-        orderBy: { id: 'desc' }
+    const { _max } = await prisma.accountCode.aggregate({
+        _max: { id: true }
     });
-    const nextId = lastRecord ? lastRecord.id + 1 : 1;
+    const nextId = (_max.id || 0) + 1;
+
+    console.log(
+        `[AccountCode] Next ID ${nextId} from ${getActiveDatabaseName().toUpperCase()} database`
+    );
+
+    res.set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
     return res.status(200).json(
         new ApiResponse(200, { nextId }, "Next Account Code ID fetched successfully")
     );
@@ -188,4 +211,4 @@ export default {
     updateAccountCode,
     deleteAccountCode,
     getNextId
-}
+};

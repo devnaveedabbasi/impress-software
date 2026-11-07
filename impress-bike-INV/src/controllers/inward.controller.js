@@ -1,12 +1,15 @@
 import { ApiError } from "../utils/apiError.js";
 import { ApiResponse } from "../utils/apiResponse.js";
 import asyncHandler from "../utils/asyncHandler.js";
-import prisma from "../config/prisma.js";
+import prisma, {
+    getActiveDatabaseClient,
+    getActiveDatabaseName,
+} from "../config/prisma.js";
 
 const getAllInwards = asyncHandler(async (req, res) => {
     const inwards = await prisma.inward.findMany({
         include: { purchaseOrder: { include: { vendor: true } }, quotation: true },
-        orderBy: { id: "desc" }
+        orderBy: { id: "asc" }
     });
     return res.status(200).json(new ApiResponse(200, inwards, "Inwards fetched successfully"));
 });
@@ -26,6 +29,19 @@ const getByIdInward = asyncHandler(async (req, res) => {
 
 const createInward = asyncHandler(async (req, res) => {
     const { date, Type, purchaseOrderId, quotationId, GRIRNo, DCNo, billNO, detail, code, itemName, poBalQty, recQty, rejQty, okQty, packingDetail } = req.body;
+
+    console.log(
+        `[Inward] Creating Inward GRIR "${GRIRNo}" in ${getActiveDatabaseName().toUpperCase()} database`
+    );
+
+    // Sync PostgreSQL auto-increment sequence
+    await getActiveDatabaseClient().$executeRaw`
+        SELECT setval(
+            pg_get_serial_sequence('"Inward"', 'id'),
+            COALESCE((SELECT MAX(id) FROM "Inward"), 1),
+            EXISTS(SELECT 1 FROM "Inward")
+        )
+    `;
 
     const inward = await prisma.inward.create({
         data: {
@@ -103,12 +119,16 @@ const deleteInward = asyncHandler(async (req, res) => {
 });
 
 const getNextIdInward = asyncHandler(async (req, res) => {
-    const lastInward = await prisma.inward.findFirst({
-        orderBy: { id: 'desc' }
+    const { _max } = await prisma.inward.aggregate({
+        _max: { id: true }
     });
+    const nextId = (_max.id || 0) + 1;
 
-    const nextId = lastInward ? lastInward.id + 1 : 1;
+    console.log(
+        `[Inward] Next ID ${nextId} from ${getActiveDatabaseName().toUpperCase()} database`
+    );
 
+    res.set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
     return res.status(200).json(
         new ApiResponse(200, { nextId }, "Next Inward ID fetched successfully")
     );
@@ -144,7 +164,6 @@ const getInwardReport = asyncHandler(async (req, res) => {
     for (const inward of inwards) {
         const vendor = inward.purchaseOrder?.vendor || inward.quotation?.vendor || null;
 
-        // Ensure itemName exists and is an array before iterating
         if (!inward.itemName || !Array.isArray(inward.itemName)) continue;
 
         for (let i = 0; i < inward.itemName.length; i++) {
@@ -153,10 +172,8 @@ const getInwardReport = asyncHandler(async (req, res) => {
             const rowRejQty = inward.rejQty?.[i] || 0;
             const rowOkQty = inward.okQty?.[i] || 0;
 
-            // Filter by a specific item, once an item is picked from the master list
             if (itemName && rowItemName !== itemName) continue;
 
-            // Filter by row status: only-rejected rows or only-ok rows
             if (status === "rejected" && rowRejQty <= 0) continue;
             if (status === "ok" && rowOkQty <= 0) continue;
 

@@ -1,26 +1,58 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useForm } from "react-hook-form";
 import api from "@/lib/axios";
 import { accountCodeSchema, type AccountCodeFormValues } from "@/lib/validations/master";
-import { useForm } from "@/hooks/useForm";
+import useDebounce from "@/hooks/useDebounce";
 import toast from "react-hot-toast";
 import { usePermissions } from "@/hooks/usePermissions";
 import { ACCOUNT_CODES } from "@/utlis/apiRoutes";
-import { ViewAllResource, type ViewAllColumn } from "@/components/ui/ViewAllModal";
+import { ViewAllModal, type ViewAllColumn } from "@/components/ui/ViewAllModal";
+import { Button } from "@/components/ui/Button";
 
-type ViewAllRow = { id: number; [key: string]: unknown };
+type AccountCodeRow = {
+    id: number;
+    headName: string;
+    group: string;
+    code?: string[];
+    name?: string[];
+    address?: string[];
+    contactNo?: string[];
+    saleTaxNo?: string[];
+    openingBalance?: number[];
+    items?: Array<{
+        code: string;
+        name: string;
+        address: string;
+        contactNo: string;
+        saleTaxNo: string;
+        openingBalance: string | number;
+    }>;
+    [key: string]: unknown;
+};
+
+type ApiError = {
+    response?: {
+        status?: number;
+        data?: { message?: string };
+    };
+};
+
+const defaultItemRow = () => ({
+    code: "",
+    name: "",
+    address: "",
+    contactNo: "",
+    saleTaxNo: "",
+    openingBalance: "",
+});
 
 const initialValues: AccountCodeFormValues = {
     id: "",
     headName: "",
     group: "",
-    items: [
-        { code: "", name: "", address: "", contactNo: "", saleTaxNo: "", openingBalance: "" },
-        { code: "", name: "", address: "", contactNo: "", saleTaxNo: "", openingBalance: "" },
-        { code: "", name: "", address: "", contactNo: "", saleTaxNo: "", openingBalance: "" },
-        { code: "", name: "", address: "", contactNo: "", saleTaxNo: "", openingBalance: "" }
-    ],
+    items: Array.from({ length: 4 }, defaultItemRow),
 };
 
 const groupOptions = [
@@ -42,175 +74,313 @@ export default function AccountCodePage() {
     const canCreate = hasPermission("account_code", "create");
     const canUpdate = hasPermission("account_code", "update");
     const canView = hasPermission("account_code", "view");
-    const accountCodeColumns: ViewAllColumn<ViewAllRow>[] = [
+
+    const [isIdLoading, setIsIdLoading] = useState(true);
+    const [nextId, setNextId] = useState("");
+    const [isViewAllOpen, setIsViewAllOpen] = useState(false);
+    const [accountCodes, setAccountCodes] = useState<AccountCodeRow[]>([]);
+    const [hasLoadedAccountCodes, setHasLoadedAccountCodes] = useState(false);
+    const [isAccountCodesLoading, setIsAccountCodesLoading] = useState(false);
+    const [accountCodesError, setAccountCodesError] = useState("");
+    const skipNextIdLookup = useRef(false);
+    const refreshNextIdAfterSubmit = useRef(false);
+
+    const {
+        handleSubmit,
+        reset,
+        setError,
+        clearErrors,
+        setValue,
+        watch,
+        formState: { errors, isSubmitting },
+    } = useForm<AccountCodeFormValues>({ defaultValues: initialValues });
+    const values = watch();
+
+    const fetchNextId = async () => {
+        setIsIdLoading(true);
+        try {
+            const { data } = await api.get(`${ACCOUNT_CODES}/next-id`, {
+                params: { _ts: Date.now() },
+            });
+            const fetchedNextId = String(data.data.nextId);
+            setNextId(fetchedNextId);
+            skipNextIdLookup.current = true;
+            reset({
+                ...initialValues,
+                id: fetchedNextId,
+                items: Array.from({ length: 4 }, defaultItemRow),
+            });
+            setIsNewMode(true);
+            setIsEditing(true);
+        } catch (error) {
+            console.error("Failed to fetch next account code ID", error);
+        } finally {
+            setIsIdLoading(false);
+        }
+    };
+
+    const mapAccountCodeToForm = (ac: any): AccountCodeFormValues => {
+        let fetchedItems: any[] = [];
+        if (ac.items && ac.items.length > 0) {
+            fetchedItems = ac.items.map((it: any) => ({
+                code: it.code || "",
+                name: it.name || "",
+                address: it.address || "",
+                contactNo: it.contactNo || "",
+                saleTaxNo: it.saleTaxNo || "",
+                openingBalance: it.openingBalance !== null && it.openingBalance !== undefined ? String(it.openingBalance) : "",
+            }));
+        } else if (Array.isArray(ac.code)) {
+            fetchedItems = ac.code.map((c: string, i: number) => ({
+                code: c || "",
+                name: ac.name?.[i] || "",
+                address: ac.address?.[i] || "",
+                contactNo: ac.contactNo?.[i] || "",
+                saleTaxNo: ac.saleTaxNo?.[i] || "",
+                openingBalance: ac.openingBalance?.[i] !== null && ac.openingBalance?.[i] !== undefined ? String(ac.openingBalance[i]) : "",
+            }));
+        }
+
+        while (fetchedItems.length < 4) {
+            fetchedItems.push(defaultItemRow());
+        }
+
+        return {
+            id: String(ac.id),
+            headName: ac.headName || "",
+            group: ac.group || "",
+            items: fetchedItems,
+        };
+    };
+
+    const fetchAllAccountCodes = async (openModal = true, force = false) => {
+        if (openModal) setIsViewAllOpen(true);
+        if (hasLoadedAccountCodes && !force) return;
+
+        setIsAccountCodesLoading(true);
+        setAccountCodesError("");
+        try {
+            const { data } = await api.get(ACCOUNT_CODES);
+            setAccountCodes(data.data || []);
+            setHasLoadedAccountCodes(true);
+        } catch (error: unknown) {
+            const apiError = error as ApiError;
+            setAccountCodesError(apiError.response?.data?.message || "Failed to fetch account codes");
+        } finally {
+            setIsAccountCodesLoading(false);
+        }
+    };
+
+    const addAccountCodeToCache = (item: AccountCodeRow) => {
+        setAccountCodes((current) => {
+            const existingIndex = current.findIndex(
+                (c) => String(c.id) === String(item.id)
+            );
+            if (existingIndex === -1) return [...current, item];
+            return current.map((c, index) => (index === existingIndex ? item : c));
+        });
+        setHasLoadedAccountCodes(true);
+    };
+
+    useEffect(() => {
+        void fetchNextId();
+        void fetchAllAccountCodes(false);
+    }, []);
+
+    const onSubmit = async (data: AccountCodeFormValues) => {
+        const validationResult = accountCodeSchema.safeParse(data);
+        if (!validationResult.success) {
+            clearErrors();
+            validationResult.error.issues.forEach((issue) => {
+                const field = issue.path[0];
+                if (typeof field === "string") {
+                    setError(field as any, {
+                        type: "manual",
+                        message: issue.message,
+                    });
+                }
+            });
+            return;
+        }
+
+        const filledItems = data.items.filter(
+            (row) =>
+                row.code?.trim() ||
+                row.name?.trim() ||
+                row.address?.trim() ||
+                row.contactNo?.trim() ||
+                row.saleTaxNo?.trim() ||
+                row.openingBalance?.trim()
+        );
+
+        const payload = {
+            headName: data.headName,
+            group: data.group,
+            items: filledItems,
+        };
+
+        try {
+            const response = isNewMode
+                ? await api.post(ACCOUNT_CODES, payload)
+                : await api.put(`${ACCOUNT_CODES}/${data.id}`, payload);
+
+            toast.success(response.data.message || "Account Form saved successfully");
+            if (hasLoadedAccountCodes) {
+                setHasLoadedAccountCodes(false);
+                await fetchAllAccountCodes(false, true);
+            }
+            refreshNextIdAfterSubmit.current = true;
+        } catch (error: unknown) {
+            const apiError = error as ApiError;
+            console.error("Account Form save failed:", apiError.response?.data || error);
+            toast.error(apiError.response?.data?.message || "Failed to save Account Form");
+        }
+    };
+
+    useEffect(() => {
+        if (!isSubmitting && refreshNextIdAfterSubmit.current) {
+            refreshNextIdAfterSubmit.current = false;
+            void fetchNextId();
+        }
+    }, [isSubmitting]);
+
+    const debouncedId = useDebounce(values.id, 500);
+    const accountCodeColumns: ViewAllColumn<AccountCodeRow>[] = [
         { key: "id", header: "Account ID" },
         { key: "headName", header: "Head Name" },
         { key: "group", header: "Group" },
     ];
 
-
-    const fetchNextId = async () => {
-        try {
-            const { data } = await api.get(`${ACCOUNT_CODES}/next-id`);
-            setValues({ ...initialValues, id: String(data.data.nextId) });
-            setIsNewMode(true);
-            setIsEditing(true);
-        } catch (error) {
-            console.error("Failed to fetch next account code ID", error);
-        }
-    };
-
     useEffect(() => {
-        fetchNextId();
-    }, []);
+        const fetchDebouncedId = async () => {
+            if (!debouncedId) return;
+            if (skipNextIdLookup.current) {
+                skipNextIdLookup.current = false;
+                return;
+            }
 
-    const {
-        values,
-        errors,
-        isLoading: isSubmitting,
-        handleInputChange,
-        handleSubmit,
-        setValues,
-    } = useForm({
-        initialValues,
-        validationSchema: accountCodeSchema,
-        onSubmit: async (data) => {
-            // Filter out completely empty rows
-            const filledItems = data.items.filter(row => 
-                row.code?.trim() || row.name?.trim() || row.address?.trim() || 
-                row.contactNo?.trim() || row.saleTaxNo?.trim() || row.openingBalance?.trim()
-            );
-
-            const payload = {
-                headName: data.headName,
-                group: data.group,
-                items: filledItems,
+            const resetToNextId = () => {
+                reset({
+                    ...initialValues,
+                    id: nextId,
+                    items: Array.from({ length: 4 }, defaultItemRow),
+                });
+                setIsNewMode(true);
+                setIsEditing(true);
             };
 
-            try {
-                if (isNewMode) {
-                    const response = await api.post(ACCOUNT_CODES, payload);
-                    toast.success(response.data.message || "Account Form created successfully");
-                } else {
-                    const response = await api.put(`${ACCOUNT_CODES}/${data.id}`, payload);
-                    toast.success(response.data.message || "Account Form updated successfully");
-                }
-                fetchNextId();
-            } catch (error: any) {
-                toast.error(error.response?.data?.message || "Failed to save Account Form");
-                throw error;
+            if (Number(debouncedId) < 1 || debouncedId === nextId) {
+                resetToNextId();
+                return;
             }
-        },
-    });
 
-    const handleIdBlur = async (selectedId = values.id) => {
-        if (!selectedId) return;
+            if (!canView) {
+                toast.error("You do not have permission to view or search for this record.");
+                resetToNextId();
+                return;
+            }
 
-        if (!canView) {
-            toast.error("You do not have permission to view or search for this record.");
-            setValues({ ...initialValues, id: selectedId });
-            setIsNewMode(true);
-            setIsEditing(true);
-            return;
-        }
-        try {
-            const { data } = await api.get(`${ACCOUNT_CODES}/${selectedId}`);
-            if (data.data) {
-                const ac = data.data;
-                let fetchedItems = ac.items?.length > 0 ? ac.items.map((it: any) => ({
-                    code: it.code || "",
-                    name: it.name || "",
-                    address: it.address || "",
-                    contactNo: it.contactNo || "",
-                    saleTaxNo: it.saleTaxNo || "",
-                    openingBalance: it.openingBalance !== null && it.openingBalance !== undefined ? String(it.openingBalance) : "",
-                })) : [...initialValues.items];
+            setIsIdLoading(true);
+            try {
+                const cached = accountCodes.find((item) => String(item.id) === debouncedId);
+                const ac = cached || (await api.get(`${ACCOUNT_CODES}/${debouncedId}`)).data.data;
 
-                // Pad with empty rows to ensure at least 4 rows are displayed
-                while (fetchedItems.length < 4) {
-                    fetchedItems.push({ code: "", name: "", address: "", contactNo: "", saleTaxNo: "", openingBalance: "" });
+                if (!ac) {
+                    toast.error("Account Form not found");
+                    resetToNextId();
+                    return;
                 }
 
-                setValues({
-                    id: String(ac.id),
-                    headName: ac.headName,
-                    group: ac.group,
-                    items: fetchedItems,
-                });
+                if (!cached) addAccountCodeToCache(ac);
+                reset(mapAccountCodeToForm(ac));
                 setIsNewMode(false);
                 setIsEditing(false);
                 toast.success("Account Form found");
-            } else {
-                toast.error("Account Form not found");
-                setValues({ ...initialValues, id: selectedId });
-                setIsNewMode(true);
-                setIsEditing(true);
+            } catch (error: unknown) {
+                const apiError = error as ApiError;
+                toast.error(
+                    apiError.response?.status === 403
+                        ? apiError.response?.data?.message || "Access denied. You do not have permission."
+                        : "Account Form not found"
+                );
+                resetToNextId();
+            } finally {
+                setIsIdLoading(false);
             }
-        } catch (error: any) {
-            if (error.response?.status === 403) {
-                toast.error(error.response?.data?.message || "Access denied. You do not have permission.");
-            } else {
-                toast.error("Invalid Head Code");
-            }
-            setValues({ ...initialValues, id: selectedId });
-            setIsNewMode(true);
-            setIsEditing(true);
-        }
-    };
+        };
+
+        void fetchDebouncedId();
+    }, [debouncedId, nextId, canView, accountCodes]);
 
     const handleItemChange = (index: number, field: string, value: string) => {
         const newItems = [...values.items];
         newItems[index] = { ...newItems[index], [field]: value };
-        setValues({ ...values, items: newItems });
-        
+
         // Auto add new row if editing the last row
         if (index === values.items.length - 1 && value.trim() !== "") {
-            setValues({
-                ...values,
-                items: [...newItems, { code: "", name: "", address: "", contactNo: "", saleTaxNo: "", openingBalance: "" }]
-            });
+            newItems.push(defaultItemRow());
         }
+        setValue("items", newItems, { shouldDirty: true, shouldValidate: true });
     };
-
-    const handleDeleteRow = (index: number) => {
-        if (values.items.length > 1) {
-            const newItems = values.items.filter((_: any, i: number) => i !== index);
-            setValues({ ...values, items: newItems });
-        }
-    };
-
-    const btnClass = "bg-white border border-zinc-400 px-6 py-1.5 text-[15px] text-black hover:bg-zinc-50 active:bg-zinc-100 min-w-[85px] transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center";
 
     return (
         <section className="mx-auto mt-10 w-full max-w-6xl bg-[#f0f0f0] p-8 shadow-sm">
-            <h1 className="mb-8 text-center text-3xl font-medium text-black tracking-wide">Account Form</h1>
+            <h1 className="mb-8 text-center text-3xl font-medium text-black tracking-wide">
+                Account Form
+            </h1>
 
-            <form onSubmit={handleSubmit} noValidate>
+            <form onSubmit={handleSubmit(onSubmit)} noValidate>
                 {/* Top Section */}
                 <div className="flex flex-col gap-2 mb-8 max-w-md">
                     <div className="flex items-center gap-4">
                         <label className="w-24 text-sm text-black">Head Code</label>
                         <input
-                            type="number"
-                            value={values.id || ""}
-                            onChange={handleInputChange("id")}
-                            onBlur={() => void handleIdBlur()}
-                            className={`border border-zinc-300 px-2 py-1 outline-none text-sm w-32 text-black ${errors.id ? "border-red-500" : ""}`}
+                            type={isIdLoading ? "text" : "number"}
+                            value={isIdLoading ? "Loading..." : values.id || ""}
+                            onChange={(event) => {
+                                if (/^\d*$/.test(event.target.value)) {
+                                    setValue("id", event.target.value, { shouldDirty: true });
+                                }
+                            }}
+                            onKeyDown={(event) => {
+                                if (
+                                    !/[0-9]/.test(event.key) &&
+                                    !["Backspace", "Delete", "ArrowLeft", "ArrowRight", "Tab", "Home", "End"].includes(event.key)
+                                ) {
+                                    event.preventDefault();
+                                }
+                            }}
+                            inputMode="numeric"
+                            disabled={isIdLoading}
+                            min={1}
+                            max={Number(nextId) || 1}
+                            className={`border border-zinc-300 px-2 py-1 outline-none text-sm w-32 text-black ${
+                                errors.id ? "border-red-500" : ""
+                            }`}
                         />
-                        {errors.id && <span className="text-red-500 text-xs">{errors.id}</span>}
+                        {errors.id && <span className="text-red-500 text-xs">{errors.id.message}</span>}
                     </div>
-                    
+
                     <div className="flex items-center gap-4">
                         <label className="w-24 text-sm text-black">Head Name</label>
                         <input
                             type="text"
                             value={values.headName}
-                            onChange={handleInputChange("headName")}
+                            onChange={(e) =>
+                                setValue("headName", e.target.value, {
+                                    shouldDirty: true,
+                                    shouldValidate: true,
+                                })
+                            }
                             disabled={!isEditing}
-                            className={`border border-zinc-300 px-2 py-1 outline-none text-sm flex-1 text-black ${errors.headName ? "border-red-500" : ""}`}
+                            className={`border border-zinc-300 px-2 py-1 outline-none text-sm flex-1 text-black ${
+                                errors.headName ? "border-red-500" : ""
+                            }`}
                         />
                     </div>
-                    {errors.headName && <span className="text-red-500 text-xs ml-28">{errors.headName}</span>}
+                    {errors.headName && (
+                        <span className="text-red-500 text-xs ml-28">{errors.headName.message}</span>
+                    )}
 
                     <div className="flex items-center gap-4">
                         <label className="w-24 text-sm text-black flex items-center gap-1">
@@ -219,9 +389,16 @@ export default function AccountCodePage() {
                         <div className="flex-1 ml-5 border border-zinc-300 bg-white">
                             <select
                                 value={values.group}
-                                onChange={(e) => setValues({ ...values, group: e.target.value })}
+                                onChange={(e) =>
+                                    setValue("group", e.target.value, {
+                                        shouldDirty: true,
+                                        shouldValidate: true,
+                                    })
+                                }
                                 disabled={!isEditing}
-                                className={`w-full px-2 py-1 outline-none text-sm bg-transparent text-black ${errors.group ? "border-red-500" : ""}`}
+                                className={`w-full px-2 py-1 outline-none text-sm bg-transparent text-black ${
+                                    errors.group ? "border-red-500" : ""
+                                }`}
                             >
                                 {groupOptions.map((opt) => (
                                     <option key={opt.value} value={opt.value}>
@@ -231,7 +408,9 @@ export default function AccountCodePage() {
                             </select>
                         </div>
                     </div>
-                    {errors.group && <span className="text-red-500 text-xs ml-28">{errors.group}</span>}
+                    {errors.group && (
+                        <span className="text-red-500 text-xs ml-28">{errors.group.message}</span>
+                    )}
                 </div>
 
                 {/* Grid Section */}
@@ -239,17 +418,32 @@ export default function AccountCodePage() {
                     <table className="w-full text-sm text-left text-black">
                         <thead className="bg-[#f8f8f8] border-b border-zinc-300">
                             <tr>
-                                <th className="px-2 py-2 border-r border-zinc-300 font-medium w-16 text-black">Code</th>
-                                <th className="px-2 py-2 border-r border-zinc-300 font-medium text-black">Name</th>
-                                <th className="px-2 py-2 border-r border-zinc-300 font-medium text-black">Address</th>
-                                <th className="px-2 py-2 border-r border-zinc-300 font-medium text-black">Contact</th>
-                                <th className="px-2 py-2 border-r border-zinc-300 font-medium text-black">Sale Tax No</th>
-                                <th className="px-2 py-2 font-medium w-32 border-r border-zinc-300 text-black">Opening Bal</th>
+                                <th className="px-2 py-2 border-r border-zinc-300 font-medium w-16 text-black">
+                                    Code
+                                </th>
+                                <th className="px-2 py-2 border-r border-zinc-300 font-medium text-black">
+                                    Name
+                                </th>
+                                <th className="px-2 py-2 border-r border-zinc-300 font-medium text-black">
+                                    Address
+                                </th>
+                                <th className="px-2 py-2 border-r border-zinc-300 font-medium text-black">
+                                    Contact
+                                </th>
+                                <th className="px-2 py-2 border-r border-zinc-300 font-medium text-black">
+                                    Sale Tax No
+                                </th>
+                                <th className="px-2 py-2 font-medium w-32 text-black">
+                                    Opening Bal
+                                </th>
                             </tr>
                         </thead>
                         <tbody>
-                            {values.items.map((item: any, idx: number) => (
-                                <tr key={idx} className="border-b border-zinc-300 last:border-0 hover:bg-zinc-50">
+                            {values.items.map((item, idx) => (
+                                <tr
+                                    key={idx}
+                                    className="border-b border-zinc-300 last:border-0 hover:bg-zinc-50"
+                                >
                                     <td className="border-r border-zinc-300">
                                         <input
                                             type="text"
@@ -295,11 +489,13 @@ export default function AccountCodePage() {
                                             className="w-full px-2 py-1.5 outline-none bg-transparent text-black"
                                         />
                                     </td>
-                                    <td className="border-r border-zinc-300">
+                                    <td>
                                         <input
                                             type="number"
                                             value={item.openingBalance}
-                                            onChange={(e) => handleItemChange(idx, "openingBalance", e.target.value)}
+                                            onChange={(e) =>
+                                                handleItemChange(idx, "openingBalance", e.target.value)
+                                            }
                                             disabled={!isEditing}
                                             className="w-full px-2 py-1.5 outline-none bg-transparent text-black"
                                         />
@@ -310,39 +506,73 @@ export default function AccountCodePage() {
                     </table>
                 </div>
 
-                {errors.items && typeof errors.items === 'string' && (
-                    <div className="text-red-500 text-sm mb-4">{errors.items}</div>
+                {errors.items && (
+                    <div className="text-red-500 text-sm mb-4">{errors.items.message}</div>
                 )}
 
                 {/* Action Buttons */}
-                <div className="flex items-center justify-center gap-4">
-                    <button type="button" onClick={fetchNextId} className={btnClass} disabled={isSubmitting || !canCreate}>New</button>
-                    <ViewAllResource
-                        endpoint={ACCOUNT_CODES}
-                        title="All Account Codes"
-                        columns={accountCodeColumns}
-                        searchKeys={["id", "headName", "group"]}
-                        canView={canView}
-                        onSelectId={(id) => {
-                            const selectedId = String(id);
-                            setValues((prev) => ({ ...prev, id: selectedId }));
-                            void handleIdBlur(selectedId);
-                        }}
-                    />
-                    <button type="submit" className={btnClass} disabled={!isEditing || isSubmitting}>Save</button>
-                    <button type="button" onClick={async () => {
-                        if (!values.id) return;
-                        try {
-                            const response = await api.delete(`${ACCOUNT_CODES}/${values.id}`);
-                            toast.success(response.data.message || "Deleted successfully");
-                            fetchNextId();
-                        } catch (error) {
-                            toast.error("Failed to delete");
-                        }
-                    }} className={btnClass} disabled={isEditing || isNewMode || isSubmitting}>Delete</button>
-                    <button type="button" onClick={() => setIsEditing(true)} className={btnClass} disabled={isEditing || isNewMode}>Edit</button>
+                <div className="flex flex-wrap items-center justify-center gap-3">
+                    <Button
+                        type="button"
+                        variant="secondary"
+                        shape="rounded"
+                        onClick={fetchNextId}
+                        disabled={isSubmitting || !canCreate}
+                        className="border border-zinc-400 bg-white px-6 hover:bg-zinc-50"
+                    >
+                        New
+                    </Button>
+                    <Button
+                        type="button"
+                        variant="secondary"
+                        shape="rounded"
+                        onClick={() => fetchAllAccountCodes()}
+                        disabled={isSubmitting || !canView}
+                        className="border border-zinc-400 bg-white px-6 hover:bg-zinc-50"
+                    >
+                        View All
+                    </Button>
+                    <Button
+                        type="button"
+                        variant="secondary"
+                        shape="rounded"
+                        onClick={() => setIsEditing(true)}
+                        disabled={isSubmitting || isNewMode || isEditing || !canUpdate}
+                        className="border border-zinc-400 bg-white px-6 hover:bg-zinc-50"
+                    >
+                        Edit
+                    </Button>
+                    <Button
+                        type="submit"
+                        variant="secondary"
+                        shape="rounded"
+                        isLoading={isSubmitting}
+                        disabled={!isEditing || (isNewMode ? !canCreate : !canUpdate)}
+                        className="border border-zinc-400 bg-white px-8 hover:bg-zinc-50"
+                    >
+                        Save
+                    </Button>
                 </div>
             </form>
+
+            <ViewAllModal
+                key={isViewAllOpen ? "open" : "closed"}
+                isOpen={isViewAllOpen}
+                title="All Account Codes"
+                rows={accountCodes}
+                columns={accountCodeColumns}
+                searchKeys={["id", "headName", "group"]}
+                isLoading={isAccountCodesLoading}
+                error={accountCodesError}
+                onClose={() => setIsViewAllOpen(false)}
+                onRowSelect={(item) => {
+                    reset(mapAccountCodeToForm(item));
+                    setIsNewMode(false);
+                    setIsEditing(false);
+                    setIsViewAllOpen(false);
+                }}
+                onDelete={() => undefined}
+            />
         </section>
     );
 }

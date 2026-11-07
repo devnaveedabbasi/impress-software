@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { LabeledField } from "@/components/ui/LabeledField";
 import { LabeledSelect } from "@/components/ui/LabeledSelect";
@@ -12,6 +12,7 @@ import api from "@/lib/axios";
 import toast from "react-hot-toast";
 import { usePermissions } from "@/hooks/usePermissions";
 import { ViewAllModal, type ViewAllColumn } from "@/components/ui/ViewAllModal";
+import { cn } from "@/lib/utils";
 
 type PurchaseOrderRow = {
     id: number;
@@ -33,6 +34,21 @@ type PurchaseOrderRow = {
     withHoldingPercent?: number;
     withHoldingAmount?: number;
     grandTotal?: number;
+    vendor?: { id: number; vendorName?: string; name?: string };
+    [key: string]: unknown;
+};
+
+type QuotationOption = {
+    id: number;
+    vendorId: number;
+    vendorName?: string;
+    date?: string;
+    remarks?: string;
+    itemName?: string[];
+    oldRate?: number[];
+    proposedRate?: number[];
+    approvedRate?: number[];
+    itemsSummary?: string;
     vendor?: { id: number; vendorName?: string; name?: string };
     [key: string]: unknown;
 };
@@ -73,8 +89,12 @@ export default function PurchaseOrderPage() {
     const [isNewMode, setIsNewMode] = useState(true);
     const [isEditing, setIsEditing] = useState(true);
     const [vendors, setVendors] = useState<{ label: string; value: string }[]>([]);
-    const [quotations, setQuotations] = useState<{ label: string; value: string }[]>([]);
+    const [quotationsList, setQuotationsList] = useState<QuotationOption[]>([]);
     const [inventoryItems, setInventoryItems] = useState<{ label: string; value: string }[]>([]);
+
+    // Quotation Selection Modal State
+    const [isQtModalOpen, setIsQtModalOpen] = useState(false);
+    const [qtSearchQuery, setQtSearchQuery] = useState("");
 
     const { hasPermission } = usePermissions();
     const canCreate = hasPermission("purchase_order", "create");
@@ -118,10 +138,15 @@ export default function PurchaseOrderPage() {
                 })));
             }
             if (qtRes.status === "fulfilled") {
-                setQuotations((qtRes.value.data.data || []).map((q: any) => ({
-                    label: `QT-${q.id}`,
-                    value: String(q.id),
-                })));
+                const rawList = qtRes.value.data.data || [];
+                setQuotationsList(
+                    rawList.map((q: any) => ({
+                        ...q,
+                        vendorName: q.vendor?.vendorName || q.vendor?.name || `Vendor #${q.vendorId}`,
+                        date: q.date ? new Date(q.date).toISOString().split("T")[0] : "",
+                        itemsSummary: Array.isArray(q.itemName) ? q.itemName.filter(Boolean).join(", ") : "",
+                    }))
+                );
             }
             if (invRes.status === "fulfilled") {
                 setInventoryItems((invRes.value.data.data || []).map((i: any) => ({
@@ -392,37 +417,46 @@ export default function PurchaseOrderPage() {
         void fetchDebouncedId();
     }, [debouncedId, nextId, canView, purchaseOrders]);
 
-    const handleQuotationChange = async (val: string) => {
-        setValue("quotationId", val, { shouldDirty: true, shouldValidate: true });
-        if (!val) return;
-        try {
-            const { data } = await api.get(`${QUOTATIONS}/${val}`);
-            if (data.data) {
-                const q = data.data;
-                const fetchedRows = (q.itemName || []).map((name: string, i: number) => {
-                    const rate = q.approvedRate?.[i] ?? q.proposedRate?.[i] ?? q.oldRate?.[i] ?? 0;
-                    return {
-                        code: "",
-                        itemName: name || "",
-                        unit: "1",
-                        quantity: "1",
-                        rate: String(rate),
-                        amount: String(rate * 1),
-                    };
-                });
+    // Handle selecting a quotation from the modal
+    const handleSelectQuotation = async (q: QuotationOption) => {
+        setIsQtModalOpen(false);
+        setValue("quotationId", String(q.id), { shouldDirty: true, shouldValidate: true });
 
-                while (fetchedRows.length < 10) fetchedRows.push(defaultRow());
-                if (fetchedRows.length > 10) fetchedRows.length = 10;
+        const fetchedRows = (q.itemName || []).map((name: string, i: number) => {
+            const rate = q.approvedRate?.[i] ?? q.proposedRate?.[i] ?? q.oldRate?.[i] ?? 0;
+            return {
+                code: "",
+                itemName: name || "",
+                unit: "1",
+                quantity: "1",
+                rate: String(rate),
+                amount: String(rate * 1),
+            };
+        });
 
-                setValue("vendorId", String(q.vendorId ?? ""), { shouldDirty: true, shouldValidate: true });
-                setValue("items", fetchedRows, { shouldDirty: true, shouldValidate: true });
-                toast.success("Quotation items loaded");
-            }
-        } catch (error) {
-            console.error("Failed to load quotation details", error);
-            toast.error("Failed to load quotation details");
-        }
+        while (fetchedRows.length < 10) fetchedRows.push(defaultRow());
+        if (fetchedRows.length > 10) fetchedRows.length = 10;
+
+        setValue("vendorId", String(q.vendorId ?? ""), { shouldDirty: true, shouldValidate: true });
+        setValue("items", fetchedRows, { shouldDirty: true, shouldValidate: true });
+        toast.success(`Quotation QT-${q.id} loaded (${q.vendorName || "Vendor"})`);
     };
+
+    const selectedQuotation = useMemo(() => {
+        return quotationsList.find((q) => String(q.id) === String(values.quotationId));
+    }, [quotationsList, values.quotationId]);
+
+    const filteredQuotations = useMemo(() => {
+        const query = qtSearchQuery.trim().toLowerCase();
+        if (!query) return quotationsList;
+        return quotationsList.filter((q) => {
+            const idMatch = String(q.id).includes(query) || `qt-${q.id}`.includes(query);
+            const vendorMatch = (q.vendorName || "").toLowerCase().includes(query);
+            const itemsMatch = (q.itemsSummary || "").toLowerCase().includes(query);
+            const remarksMatch = (q.remarks || "").toLowerCase().includes(query);
+            return idMatch || vendorMatch || itemsMatch || remarksMatch;
+        });
+    }, [quotationsList, qtSearchQuery]);
 
     const updateItemRow = (index: number, field: keyof typeof initialValues.items[0], value: string) => {
         const currentItems = [...values.items];
@@ -466,7 +500,7 @@ export default function PurchaseOrderPage() {
             <form onSubmit={handleSubmit(onSubmit)} noValidate>
                 {/* Top Section */}
                 <div className="flex flex-col md:flex-row justify-between items-start gap-10 mb-6">
-                    <div className="flex-1 w-full space-y-1.5 max-w-[500px]">
+                    <div className="flex-1 w-full space-y-3 max-w-[500px]">
                         <LabeledField
                             type={isIdLoading ? "text" : "number"}
                             label="Po No"
@@ -490,6 +524,69 @@ export default function PurchaseOrderPage() {
                             min={1}
                             max={Number(nextId) || 1}
                         />
+
+                        {/* Quotation Picker Field replacing Dropdown */}
+                        <div className="w-full">
+                            <label className="mb-1 block text-sm text-zinc-600">
+                                Quotation (QT ID)
+                            </label>
+                            <div className="flex items-center gap-2">
+                                <div className="relative flex-1">
+                                    <input
+                                        type="text"
+                                        readOnly
+                                        placeholder="Click 'Browse' to select Quotation"
+                                        value={
+                                            values.quotationId
+                                                ? `QT-${values.quotationId}${
+                                                      selectedQuotation?.vendorName
+                                                          ? ` (${selectedQuotation.vendorName})`
+                                                          : ""
+                                                  }`
+                                                : ""
+                                        }
+                                        onClick={() => {
+                                            if (isEditing) setIsQtModalOpen(true);
+                                        }}
+                                        disabled={!isEditing}
+                                        className={cn(
+                                            "w-full rounded-md border bg-white px-3 py-2 text-sm text-zinc-900 outline-none transition-colors cursor-pointer disabled:bg-zinc-50 disabled:text-zinc-400 font-medium",
+                                            errors.quotationId ? "border-red-400" : "border-zinc-300"
+                                        )}
+                                    />
+                                    {values.quotationId && isEditing && (
+                                        <button
+                                            type="button"
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                setValue("quotationId", "", {
+                                                    shouldDirty: true,
+                                                    shouldValidate: true,
+                                                });
+                                            }}
+                                            className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-red-500 font-bold text-xs"
+                                            title="Clear selection"
+                                        >
+                                            ✕
+                                        </button>
+                                    )}
+                                </div>
+                                <Button
+                                    type="button"
+                                    variant="secondary"
+                                    shape="rounded"
+                                    onClick={() => setIsQtModalOpen(true)}
+                                    disabled={!isEditing || isOptionsLoading}
+                                    className="border border-zinc-400 bg-white px-4 py-2 text-sm hover:bg-zinc-50 shrink-0 font-medium"
+                                >
+                                    {isOptionsLoading ? "Loading..." : "Browse Quotations"}
+                                </Button>
+                            </div>
+                            {errors.quotationId?.message && (
+                                <p className="mt-1 text-xs text-red-500">{errors.quotationId.message}</p>
+                            )}
+                        </div>
+
                         <LabeledSelect
                             label="Vendor Name"
                             options={vendors}
@@ -504,6 +601,7 @@ export default function PurchaseOrderPage() {
                             disabled={!isEditing || isOptionsLoading}
                             placeholder={isOptionsLoading ? "Loading vendors..." : "Select Vendor"}
                         />
+
                         <LabeledField
                             label="Validity"
                             value={values.validity}
@@ -516,6 +614,7 @@ export default function PurchaseOrderPage() {
                             error={errors.validity?.message}
                             disabled={!isEditing}
                         />
+
                         <LabeledField
                             label="Instruction"
                             value={values.instruction}
@@ -527,15 +626,6 @@ export default function PurchaseOrderPage() {
                             }
                             error={errors.instruction?.message}
                             disabled={!isEditing}
-                        />
-                        <LabeledSelect
-                            label="QT ID"
-                            options={quotations}
-                            value={values.quotationId}
-                            onChange={(val) => handleQuotationChange(String(val))}
-                            error={errors.quotationId?.message}
-                            disabled={!isEditing || isOptionsLoading}
-                            placeholder={isOptionsLoading ? "Loading quotations..." : "Select Quotation"}
                         />
                     </div>
 
@@ -641,7 +731,7 @@ export default function PurchaseOrderPage() {
                                             value={row.amount}
                                             readOnly
                                             disabled={!isEditing}
-                                            className="w-full bg-transparent px-2 py-1.5 text-center text-[13px] outline-none disabled:bg-[#f3f4f6] text-zinc-600"
+                                            className="w-full bg-transparent px-2 py-1.5 text-center text-[13px] outline-none disabled:bg-[#f3f4f6] text-zinc-600 font-medium"
                                         />
                                     </td>
                                 </tr>
@@ -778,6 +868,137 @@ export default function PurchaseOrderPage() {
                     </div>
                 </div>
             </form>
+
+            {/* Quotation Selection Modal */}
+            {isQtModalOpen && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+                    <div className="flex max-h-[90vh] w-full max-w-4xl flex-col rounded-lg bg-white shadow-2xl overflow-hidden">
+                        {/* Modal Header */}
+                        <div className="flex items-center justify-between border-b border-zinc-200 px-6 py-4 bg-zinc-50">
+                            <div>
+                                <h2 className="text-lg font-bold text-zinc-900">
+                                    Select Quotation for P.O
+                                </h2>
+                                <p className="text-xs text-zinc-500">
+                                    Choose a quotation to automatically fill vendor, items, and approved rates.
+                                </p>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => setIsQtModalOpen(false)}
+                                className="rounded p-1 text-zinc-400 hover:bg-zinc-200 hover:text-zinc-700 text-xl font-bold"
+                            >
+                                &times;
+                            </button>
+                        </div>
+
+                        {/* Search Input */}
+                        <div className="border-b border-zinc-200 bg-white px-6 py-3">
+                            <input
+                                type="text"
+                                placeholder="Search by Quotation ID (e.g. 5 or QT-5), Vendor Name, Items, or Remarks..."
+                                value={qtSearchQuery}
+                                onChange={(e) => setQtSearchQuery(e.target.value)}
+                                className="w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-zinc-500"
+                                autoFocus
+                            />
+                        </div>
+
+                        {/* Modal Table Body */}
+                        <div className="flex-1 overflow-y-auto p-6">
+                            {filteredQuotations.length === 0 ? (
+                                <div className="py-12 text-center text-sm text-zinc-500">
+                                    No quotations found matching your search.
+                                </div>
+                            ) : (
+                                <div className="overflow-x-auto border border-zinc-200 rounded-md">
+                                    <table className="w-full border-collapse text-left text-sm">
+                                        <thead className="bg-zinc-100 text-xs font-semibold uppercase text-zinc-600">
+                                            <tr>
+                                                <th className="px-4 py-3 border-r border-zinc-200 w-24">QT ID</th>
+                                                <th className="px-4 py-3 border-r border-zinc-200 w-28">Date</th>
+                                                <th className="px-4 py-3 border-r border-zinc-200 w-44">Vendor</th>
+                                                <th className="px-4 py-3 border-r border-zinc-200">Items Summary</th>
+                                                <th className="px-4 py-3 border-r border-zinc-200 w-36">Remarks</th>
+                                                <th className="px-4 py-3 text-center w-24">Action</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-zinc-200 text-zinc-800">
+                                            {filteredQuotations.map((q) => {
+                                                const isSelected = String(q.id) === String(values.quotationId);
+                                                return (
+                                                    <tr
+                                                        key={q.id}
+                                                        onClick={() => void handleSelectQuotation(q)}
+                                                        className={cn(
+                                                            "cursor-pointer hover:bg-blue-50/70 transition-colors",
+                                                            isSelected ? "bg-blue-50 font-medium" : ""
+                                                        )}
+                                                    >
+                                                        <td className="px-4 py-3 font-bold text-blue-600 border-r border-zinc-200">
+                                                            QT-{q.id}
+                                                        </td>
+                                                        <td className="px-4 py-3 whitespace-nowrap text-xs border-r border-zinc-200">
+                                                            {q.date ? new Date(q.date).toISOString().split("T")[0] : "-"}
+                                                        </td>
+                                                        <td className="px-4 py-3 font-medium border-r border-zinc-200">
+                                                            {q.vendorName || `Vendor #${q.vendorId}`}
+                                                        </td>
+                                                        <td
+                                                            className="px-4 py-3 max-w-xs truncate text-xs text-zinc-600 border-r border-zinc-200"
+                                                            title={q.itemsSummary}
+                                                        >
+                                                            {q.itemsSummary || "-"}
+                                                        </td>
+                                                        <td className="px-4 py-3 max-w-xs truncate text-xs text-zinc-500 border-r border-zinc-200">
+                                                            {q.remarks || "-"}
+                                                        </td>
+                                                        <td className="px-4 py-3 text-center">
+                                                            <Button
+                                                                type="button"
+                                                                variant="secondary"
+                                                                shape="rounded"
+                                                                onClick={(e) => {
+                                                                    e.stopPropagation();
+                                                                    void handleSelectQuotation(q);
+                                                                }}
+                                                                className={cn(
+                                                                    "px-3 py-1 text-xs border",
+                                                                    isSelected
+                                                                        ? "bg-emerald-600 text-white border-emerald-600 hover:bg-emerald-700"
+                                                                        : "bg-white border-zinc-300 hover:bg-zinc-100"
+                                                                )}
+                                                            >
+                                                                {isSelected ? "Selected ✓" : "Select"}
+                                                            </Button>
+                                                        </td>
+                                                    </tr>
+                                                );
+                                            })}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Modal Footer */}
+                        <div className="flex items-center justify-between border-t border-zinc-200 px-6 py-3 bg-zinc-50 text-xs text-zinc-500">
+                            <span>
+                                Showing {filteredQuotations.length} of {quotationsList.length} quotations
+                            </span>
+                            <Button
+                                type="button"
+                                variant="secondary"
+                                shape="rounded"
+                                onClick={() => setIsQtModalOpen(false)}
+                                className="border border-zinc-300 bg-white px-4 py-1.5 text-xs hover:bg-zinc-100"
+                            >
+                                Close
+                            </Button>
+                        </div>
+                    </div>
+                </div>
+            )}
 
             <ViewAllModal
                 key={isViewAllOpen ? "open" : "closed"}

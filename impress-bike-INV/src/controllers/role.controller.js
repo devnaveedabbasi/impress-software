@@ -1,4 +1,7 @@
-import prisma from "../config/prisma.js";
+import prisma, {
+    getActiveDatabaseClient,
+    getActiveDatabaseName,
+} from "../config/prisma.js";
 import asyncHandler from "../utils/asyncHandler.js";
 import { ApiResponse } from "../utils/apiResponse.js";
 
@@ -28,6 +31,19 @@ const createRole = asyncHandler(async (req, res) => {
         return res.status(400).json({ success: false, message: "Role already exists with a similar name" });
     }
 
+    console.log(
+        `[Role] Creating role "${name.trim()}" in ${getActiveDatabaseName().toUpperCase()} database`
+    );
+
+    // Sync PostgreSQL auto-increment sequence
+    await getActiveDatabaseClient().$executeRaw`
+        SELECT setval(
+            pg_get_serial_sequence('"Role"', 'id'),
+            COALESCE((SELECT MAX(id) FROM "Role"), 1),
+            EXISTS(SELECT 1 FROM "Role")
+        )
+    `;
+
     const role = await prisma.role.create({ 
         data: { 
             name: name.trim(),
@@ -56,7 +72,7 @@ const getRoles = asyncHandler(async (req, res) => {
                 not: "admin"
             }
         },
-        orderBy: { createdAt: 'desc' },
+        orderBy: { id: 'asc' },
         include: {
             permissions: {
                 include: {
@@ -167,10 +183,16 @@ const deleteRole = asyncHandler(async (req, res) => {
 
 // GET NEXT ID
 const getNextId = asyncHandler(async (req, res) => {
-    const lastRole = await prisma.role.findFirst({
-        orderBy: { id: 'desc' }
+    const { _max } = await prisma.role.aggregate({
+        _max: { id: true }
     });
-    const nextId = lastRole ? lastRole.id + 1 : 1;
+    const nextId = (_max.id || 0) + 1;
+
+    console.log(
+        `[Role] Next ID ${nextId} from ${getActiveDatabaseName().toUpperCase()} database`
+    );
+
+    res.set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
     return res.status(200).json(
         new ApiResponse(200, { nextId }, "Next Role ID fetched successfully")
     );

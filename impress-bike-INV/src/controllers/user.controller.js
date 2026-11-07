@@ -1,4 +1,7 @@
-import prisma from "../config/prisma.js";
+import prisma, {
+    getActiveDatabaseClient,
+    getActiveDatabaseName,
+} from "../config/prisma.js";
 import asyncHandler from "../utils/asyncHandler.js";
 import { ApiResponse } from "../utils/apiResponse.js";
 import { ApiError } from "../utils/apiError.js";
@@ -24,7 +27,7 @@ export const mapUserPermissions = (user) => {
 };
 
 const createUser = asyncHandler(async (req, res) => {
-    const { name, email, password, roleId ,permissionIds} = req.body;
+    const { name, email, password, roleId, permissionIds } = req.body;
 
     if (!name || !email || !password || !roleId) {
         throw new ApiError(400, "Name, email, password, and roleId are required");
@@ -39,6 +42,19 @@ const createUser = asyncHandler(async (req, res) => {
     if (!existingRole) {
         throw new ApiError(404, "Role not found");
     }
+
+    console.log(
+        `[User] Creating user "${email}" in ${getActiveDatabaseName().toUpperCase()} database`
+    );
+
+    // Sync PostgreSQL auto-increment sequence
+    await getActiveDatabaseClient().$executeRaw`
+        SELECT setval(
+            pg_get_serial_sequence('"User"', 'id'),
+            COALESCE((SELECT MAX(id) FROM "User"), 1),
+            EXISTS(SELECT 1 FROM "User")
+        )
+    `;
 
     const hashedPassword = await hashPassword(password);
 
@@ -71,7 +87,6 @@ const createUser = asyncHandler(async (req, res) => {
             }
         },
     });
-    
 
     const userResponse = {
         id: newUser.id,
@@ -96,6 +111,7 @@ const getAllUsers = asyncHandler(async (req, res) => {
                 },
             },
         },
+        orderBy: { id: "asc" },
         include: {
             role: {
                 include: {
@@ -118,11 +134,9 @@ const getAllUsers = asyncHandler(async (req, res) => {
         id: user.id,
         name: user.name,
         email: user.email,
-
         role: user.role ? user.role.name : null,
-
+        roleId: user.roleId,
         permissions: mapUserPermissions(user),
-
         createdAt: user.createdAt,
     }));
 
@@ -172,9 +186,8 @@ const getUserById = asyncHandler(async (req, res) => {
         name: user.name,
         email: user.email,
         role: user.role ? user.role.name : null,
-
+        roleId: user.roleId,
         permissions: mapUserPermissions(user),
-
         createdAt: user.createdAt,
     };
     return res.status(200).json(
@@ -184,7 +197,7 @@ const getUserById = asyncHandler(async (req, res) => {
             "User fetched successfully"
         )
     );
-})
+});
 
 const updateUser = asyncHandler(async (req, res) => {
     const { id } = req.params;
@@ -286,6 +299,7 @@ const updateUser = asyncHandler(async (req, res) => {
         name: updatedUser.name,
         email: updatedUser.email,
         role: updatedUser.role ? updatedUser.role.name : null,
+        roleId: updatedUser.roleId,
         permissions: mapUserPermissions(updatedUser),
         createdAt: updatedUser.createdAt,
     };
@@ -297,7 +311,7 @@ const updateUser = asyncHandler(async (req, res) => {
             "User updated successfully"
         )
     );
-})
+});
 
 const deleteUser = asyncHandler(async (req, res) => {
     const { id } = req.params;
@@ -326,7 +340,7 @@ const deleteUser = asyncHandler(async (req, res) => {
             "User deleted successfully"
         )
     );
-})
+});
 
 const changePassword = asyncHandler(async (req, res) => {
     const { oldPassword, newPassword } = req.body;
@@ -394,10 +408,16 @@ const changePassword = asyncHandler(async (req, res) => {
 
 // GET NEXT ID
 const getNextId = asyncHandler(async (req, res) => {
-    const lastUser = await prisma.user.findFirst({
-        orderBy: { id: 'desc' }
+    const { _max } = await prisma.user.aggregate({
+        _max: { id: true }
     });
-    const nextId = lastUser ? lastUser.id + 1 : 1;
+    const nextId = (_max.id || 0) + 1;
+
+    console.log(
+        `[User] Next ID ${nextId} from ${getActiveDatabaseName().toUpperCase()} database`
+    );
+
+    res.set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
     return res.status(200).json(
         new ApiResponse(200, { nextId }, "Next User ID fetched successfully")
     );
@@ -411,4 +431,4 @@ export default {
     deleteUser,
     changePassword,
     getNextId,
-};  
+};

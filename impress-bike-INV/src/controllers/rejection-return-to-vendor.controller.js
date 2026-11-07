@@ -1,11 +1,14 @@
 import { ApiError } from "../utils/apiError.js";
 import { ApiResponse } from "../utils/apiResponse.js";
 import asyncHandler from "../utils/asyncHandler.js";
-import prisma from "../config/prisma.js";
+import prisma, {
+    getActiveDatabaseClient,
+    getActiveDatabaseName,
+} from "../config/prisma.js";
 
 const getAllRejectionReturns = asyncHandler(async (req, res) => {
     const rejectionReturns = await prisma.rejectionReturnToVendor.findMany({
-        orderBy: { id: "desc" }
+        orderBy: { id: "asc" }
     });
     return res.status(200).json(new ApiResponse(200, rejectionReturns, "Rejection Returns fetched successfully"));
 });
@@ -27,6 +30,19 @@ const createRejectionReturn = asyncHandler(async (req, res) => {
         claimNoteId, date, vendorName, address, contactNo, saleTaxNo, 
         transport, builtyNo, bookNo, receivedBy, itemName, rej, report 
     } = req.body;
+
+    console.log(
+        `[RejectionReturnToVendor] Creating Return for "${vendorName}" in ${getActiveDatabaseName().toUpperCase()} database`
+    );
+
+    // Sync PostgreSQL auto-increment sequence
+    await getActiveDatabaseClient().$executeRaw`
+        SELECT setval(
+            pg_get_serial_sequence('"RejectionReturnToVendor"', 'id'),
+            COALESCE((SELECT MAX(id) FROM "RejectionReturnToVendor"), 1),
+            EXISTS(SELECT 1 FROM "RejectionReturnToVendor")
+        )
+    `;
 
     const rejectionReturn = await prisma.rejectionReturnToVendor.create({
         data: {
@@ -99,12 +115,16 @@ const deleteRejectionReturn = asyncHandler(async (req, res) => {
 });
 
 const getNextIdRejectionReturn = asyncHandler(async (req, res) => {
-    const lastRecord = await prisma.rejectionReturnToVendor.findFirst({
-        orderBy: { id: 'desc' }
+    const { _max } = await prisma.rejectionReturnToVendor.aggregate({
+        _max: { id: true }
     });
+    const nextId = (_max.id || 0) + 1;
 
-    const nextId = lastRecord ? lastRecord.id + 1 : 1;
+    console.log(
+        `[RejectionReturnToVendor] Next ID ${nextId} from ${getActiveDatabaseName().toUpperCase()} database`
+    );
 
+    res.set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
     return res.status(200).json(
         new ApiResponse(
             200,
