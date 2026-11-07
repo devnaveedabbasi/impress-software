@@ -63,7 +63,13 @@ const authorizeToken = async (req, res, next) => {
       });
     }
 
-    // Multi-session safe: JWT is cryptographically verified
+    if (!user.token || user.token !== token) {
+      return res.status(401).json({
+        success: false,
+        code: "SESSION_REPLACED",
+        message: "This account was signed in on another device.",
+      });
+    }
 
     req.user = user;
 

@@ -15,6 +15,17 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    const handleUnauthorized = (event: Event) => {
+      const detail = (event as CustomEvent<{ redirect?: string }>).detail;
+      dispatch(logoutUser());
+      router.push(detail?.redirect || "/auth/login");
+    };
+
+    window.addEventListener("unauthorized", handleUnauthorized);
+    return () => window.removeEventListener("unauthorized", handleUnauthorized);
+  }, [dispatch, router]);
+
+  useEffect(() => {
     const checkAuth = async () => {
       const token = localStorage.getItem("token");
 

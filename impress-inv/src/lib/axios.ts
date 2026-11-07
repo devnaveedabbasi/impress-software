@@ -44,9 +44,15 @@ axiosInstance.interceptors.response.use(
       message: error.message,
     });
     if (error.response?.status === 401 && typeof window !== "undefined") {
+      const sessionReplaced = error.response?.data?.code === "SESSION_REPLACED";
       localStorage.removeItem("token");
       window.dispatchEvent(
-        new CustomEvent("unauthorized", { detail: { redirect: "/auth/login" } })
+        new CustomEvent("unauthorized", {
+          detail: {
+            redirect: "/auth/login",
+            sessionReplaced,
+          },
+        })
       );
     }
     return Promise.reject(error);
