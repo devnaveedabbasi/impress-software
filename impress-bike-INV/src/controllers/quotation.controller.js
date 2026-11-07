@@ -1,14 +1,17 @@
 import { ApiError } from "../utils/apiError.js";
 import { ApiResponse } from "../utils/apiResponse.js";
 import asyncHandler from "../utils/asyncHandler.js";
-import prisma from "../config/prisma.js";
+import prisma, {
+    getActiveDatabaseClient,
+    getActiveDatabaseName,
+} from "../config/prisma.js";
 
 const getAllQuotations = asyncHandler(async (req, res) => {
     const quotations = await prisma.quotation.findMany({
         include: {
             vendor: true
         },
-        orderBy: { id: "desc" }
+        orderBy: { id: "asc" }
     });
     return res.status(200).json(new ApiResponse(200, quotations, "Quotations fetched successfully"));
 });
@@ -30,6 +33,19 @@ const getByIdQuotation = asyncHandler(async (req, res) => {
 
 const createQuotation = asyncHandler(async (req, res) => {
     const { date, vendorId, remarks, itemName, oldRate, proposedRate, approvedRate } = req.body;
+
+    console.log(
+        `[Quotation] Creating quotation for Vendor ${vendorId} in ${getActiveDatabaseName().toUpperCase()} database`
+    );
+
+    // Sync PostgreSQL auto-increment sequence
+    await getActiveDatabaseClient().$executeRaw`
+        SELECT setval(
+            pg_get_serial_sequence('"Quotation"', 'id'),
+            COALESCE((SELECT MAX(id) FROM "Quotation"), 1),
+            EXISTS(SELECT 1 FROM "Quotation")
+        )
+    `;
 
     const quotation = await prisma.quotation.create({
         data: {
@@ -87,12 +103,16 @@ const deleteQuotation = asyncHandler(async (req, res) => {
 });
 
 const getNextIdQuotation = asyncHandler(async (req, res) => {
-    const lastQuotation = await prisma.quotation.findFirst({
-        orderBy: { id: 'desc' }
+    const { _max } = await prisma.quotation.aggregate({
+        _max: { id: true }
     });
+    const nextId = (_max.id || 0) + 1;
 
-    const nextId = lastQuotation ? lastQuotation.id + 1 : 1;
+    console.log(
+        `[Quotation] Next ID ${nextId} from ${getActiveDatabaseName().toUpperCase()} database`
+    );
 
+    res.set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
     return res.status(200).json(
         new ApiResponse(
             200,

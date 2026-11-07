@@ -1,11 +1,14 @@
 import { ApiError } from "../utils/apiError.js";
 import { ApiResponse } from "../utils/apiResponse.js";
 import asyncHandler from "../utils/asyncHandler.js";
-import prisma from "../config/prisma.js";
+import prisma, {
+    getActiveDatabaseClient,
+    getActiveDatabaseName,
+} from "../config/prisma.js";
 
 const getAllSaleGatePasses = asyncHandler(async (req, res) => {
     const saleGatePasses = await prisma.saleGatePass.findMany({
-        orderBy: { id: "desc" }
+        orderBy: { id: "asc" }
     });
     return res.status(200).json(new ApiResponse(200, saleGatePasses, "Sale Gate Passes fetched successfully"));
 });
@@ -24,6 +27,19 @@ const getByIdSaleGatePass = asyncHandler(async (req, res) => {
 
 const createSaleGatePass = asyncHandler(async (req, res) => {
     const { date, accountName, billNO, throughBy, remarks, vehicleNo, code, itemName, unit, stockInHand, qty } = req.body;
+
+    console.log(
+        `[SaleGatePass] Creating Sale Gate Pass for "${accountName}" in ${getActiveDatabaseName().toUpperCase()} database`
+    );
+
+    // Sync PostgreSQL auto-increment sequence
+    await getActiveDatabaseClient().$executeRaw`
+        SELECT setval(
+            pg_get_serial_sequence('"SaleGatePass"', 'id'),
+            COALESCE((SELECT MAX(id) FROM "SaleGatePass"), 1),
+            EXISTS(SELECT 1 FROM "SaleGatePass")
+        )
+    `;
 
     const saleGatePass = await prisma.saleGatePass.create({
         data: {
@@ -89,12 +105,16 @@ const deleteSaleGatePass = asyncHandler(async (req, res) => {
 });
 
 const getNextIdSaleGatePass = asyncHandler(async (req, res) => {
-    const lastGatePass = await prisma.saleGatePass.findFirst({
-        orderBy: { id: 'desc' }
+    const { _max } = await prisma.saleGatePass.aggregate({
+        _max: { id: true }
     });
+    const nextId = (_max.id || 0) + 1;
 
-    const nextId = lastGatePass ? lastGatePass.id + 1 : 1;
+    console.log(
+        `[SaleGatePass] Next ID ${nextId} from ${getActiveDatabaseName().toUpperCase()} database`
+    );
 
+    res.set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
     return res.status(200).json(
         new ApiResponse(
             200,

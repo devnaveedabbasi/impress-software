@@ -1,24 +1,43 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Icon } from "@iconify/react";
+import { useEffect, useRef, useState } from "react";
+import { useForm } from "react-hook-form";
 import { LabeledField } from "@/components/ui/LabeledField";
 import { LabeledSelect } from "@/components/ui/LabeledSelect";
 import { Button } from "@/components/ui/Button";
-import { useForm } from "@/hooks/useForm";
+import useDebounce from "@/hooks/useDebounce";
 import { quotationSchema, type QuotationFormValues } from "@/lib/validations/master";
 import { QUOTATIONS, VENDORS, INVENTORY } from "@/utlis/apiRoutes";
 import api from "@/lib/axios";
 import toast from "react-hot-toast";
 import { usePermissions } from "@/hooks/usePermissions";
-import { ViewAllResource, type ViewAllColumn } from "@/components/ui/ViewAllModal";
+import { ViewAllModal, type ViewAllColumn } from "@/components/ui/ViewAllModal";
 
-type ViewAllRow = { id: number; [key: string]: unknown };
+type QuotationRow = {
+    id: number;
+    vendorId: number;
+    vendorName?: string;
+    date: string;
+    remarks?: string;
+    itemName?: string[];
+    oldRate?: number[];
+    proposedRate?: number[];
+    approvedRate?: number[];
+    vendor?: { id: number; vendorName?: string; name?: string };
+    [key: string]: unknown;
+};
+
+type ApiError = {
+    response?: {
+        status?: number;
+        data?: { message?: string };
+    };
+};
 
 const defaultRow = () => ({ itemName: "", oldRate: "", proposedRate: "", approvedRate: "" });
 const initialValues: QuotationFormValues = {
     id: "",
-    date: new Date().toISOString().split('T')[0],
+    date: new Date().toISOString().split("T")[0],
     vendorId: "",
     remarks: "",
     items: Array.from({ length: 10 }, defaultRow),
@@ -30,177 +49,342 @@ export default function QuotationPage() {
     const [vendors, setVendors] = useState<{ label: string; value: string }[]>([]);
     const [inventoryItems, setInventoryItems] = useState<{ label: string; value: string }[]>([]);
 
+    const { hasPermission } = usePermissions();
+    const canCreate = hasPermission("quotation", "create");
+    const canUpdate = hasPermission("quotation", "update");
+    const canView = hasPermission("quotation", "view");
+
+    const [isIdLoading, setIsIdLoading] = useState(true);
+    const [nextId, setNextId] = useState("");
+    const [isOptionsLoading, setIsOptionsLoading] = useState(true);
+    const [isViewAllOpen, setIsViewAllOpen] = useState(false);
+    const [quotations, setQuotations] = useState<QuotationRow[]>([]);
+    const [hasLoadedQuotations, setHasLoadedQuotations] = useState(false);
+    const [isQuotationsLoading, setIsQuotationsLoading] = useState(false);
+    const [quotationsError, setQuotationsError] = useState("");
+    const skipNextIdLookup = useRef(false);
+    const refreshNextIdAfterSubmit = useRef(false);
+
+    const {
+        handleSubmit,
+        reset,
+        setError,
+        clearErrors,
+        setValue,
+        watch,
+        formState: { errors, isSubmitting },
+    } = useForm<QuotationFormValues>({ defaultValues: initialValues });
+    const values = watch();
+
     const fetchOptions = async () => {
+        setIsOptionsLoading(true);
         try {
             const [vendorRes, invRes] = await Promise.all([
                 api.get(VENDORS),
                 api.get(INVENTORY),
             ]);
-            setVendors((vendorRes.data.data || []).map((v: any) => ({ label: v.vendorName || v.name, value: String(v.id) })));
-            setInventoryItems((invRes.data.data || []).map((i: any) => ({ label: i.itemName, value: i.itemName })));
+            setVendors((vendorRes.data.data || []).map((v: any) => ({
+                label: v.vendorName || v.name,
+                value: String(v.id),
+            })));
+            setInventoryItems((invRes.data.data || []).map((i: any) => ({
+                label: i.itemName,
+                value: i.itemName,
+            })));
         } catch (error) {
             console.error("Failed to fetch dropdown options", error);
+            toast.error("Failed to load dropdown options");
+        } finally {
+            setIsOptionsLoading(false);
         }
     };
-    const { hasPermission } = usePermissions();
-    const canCreate = hasPermission("quotation", "create");
-    const canUpdate = hasPermission("quotation", "update");
-    const canView = hasPermission("quotation", "view");
-    const quotationColumns: ViewAllColumn<ViewAllRow>[] = [
-        { key: "id", header: "Quotation ID" },
-        { key: "vendorId", header: "Vendor ID" },
-        { key: "date", header: "Date" },
-        { key: "remarks", header: "Remarks" },
-    ];
-
 
     const fetchNextId = async () => {
+        setIsIdLoading(true);
         try {
-            const { data } = await api.get(`${QUOTATIONS}/next-id`);
-            setValues({ ...initialValues, id: String(data.data.nextId) });
+            const { data } = await api.get(`${QUOTATIONS}/next-id`, {
+                params: { _ts: Date.now() },
+            });
+            const fetchedNextId = String(data.data.nextId);
+            setNextId(fetchedNextId);
+            skipNextIdLookup.current = true;
+            reset({
+                ...initialValues,
+                id: fetchedNextId,
+                date: new Date().toISOString().split("T")[0],
+                items: Array.from({ length: 10 }, defaultRow),
+            });
             setIsNewMode(true);
             setIsEditing(true);
         } catch (error) {
             console.error("Failed to fetch next quotation ID", error);
+        } finally {
+            setIsIdLoading(false);
+        }
+    };
+
+    const mapQuotationToForm = (q: any) => {
+        const fetchedRows = (q.itemName || []).map((name: string, i: number) => ({
+            itemName: name || "",
+            oldRate: q.oldRate?.[i] !== undefined && q.oldRate?.[i] !== null ? String(q.oldRate[i]) : "",
+            proposedRate: q.proposedRate?.[i] !== undefined && q.proposedRate?.[i] !== null ? String(q.proposedRate[i]) : "",
+            approvedRate: q.approvedRate?.[i] !== undefined && q.approvedRate?.[i] !== null ? String(q.approvedRate[i]) : "",
+        }));
+
+        while (fetchedRows.length < 10) fetchedRows.push(defaultRow());
+        if (fetchedRows.length > 10) fetchedRows.length = 10;
+
+        return {
+            id: String(q.id),
+            date: q.date ? new Date(q.date).toISOString().split("T")[0] : new Date().toISOString().split("T")[0],
+            vendorId: String(q.vendorId ?? ""),
+            remarks: q.remarks || "",
+            items: fetchedRows,
+        };
+    };
+
+    const fetchAllQuotations = async (openModal = true, force = false) => {
+        if (openModal) setIsViewAllOpen(true);
+        if (hasLoadedQuotations && !force) return;
+
+        setIsQuotationsLoading(true);
+        setQuotationsError("");
+        try {
+            const { data } = await api.get(QUOTATIONS);
+            const vendorMap = new Map(
+                vendors.map((vendor) => [vendor.value, vendor.label])
+            );
+            setQuotations(
+                (data.data || []).map((item: QuotationRow) => ({
+                    ...item,
+                    vendorName:
+                        vendorMap.get(String(item.vendorId)) ||
+                        item.vendor?.vendorName ||
+                        item.vendor?.name ||
+                        `Vendor #${item.vendorId}`,
+                    date: item.date ? new Date(item.date).toISOString().split("T")[0] : "",
+                }))
+            );
+            setHasLoadedQuotations(true);
+        } catch (error: unknown) {
+            const apiError = error as ApiError;
+            setQuotationsError(apiError.response?.data?.message || "Failed to fetch quotations");
+        } finally {
+            setIsQuotationsLoading(false);
+        }
+    };
+
+    const addQuotationToCache = (item: QuotationRow) => {
+        setQuotations((current) => {
+            const vendorName =
+                vendors.find((v) => String(v.value) === String(item.vendorId))?.label ||
+                item.vendorName ||
+                `Vendor #${item.vendorId}`;
+            const cachedItem = {
+                ...item,
+                vendorName,
+                date: item.date ? new Date(item.date).toISOString().split("T")[0] : "",
+            };
+            const existingIndex = current.findIndex(
+                (c) => String(c.id) === String(item.id)
+            );
+
+            if (existingIndex === -1) return [...current, cachedItem];
+            return current.map((c, index) =>
+                index === existingIndex ? cachedItem : c
+            );
+        });
+        setHasLoadedQuotations(true);
+    };
+
+    useEffect(() => {
+        void fetchNextId();
+        void fetchOptions();
+        void fetchAllQuotations(false);
+    }, []);
+
+    const onSubmit = async (data: QuotationFormValues) => {
+        const validationResult = quotationSchema.safeParse(data);
+        if (!validationResult.success) {
+            clearErrors();
+            validationResult.error.issues.forEach((issue) => {
+                const field = issue.path[0];
+                if (typeof field === "string") {
+                    setError(field as any, {
+                        type: "manual",
+                        message: issue.message,
+                    });
+                }
+            });
+            return;
+        }
+
+        const validRows = data.items.filter(
+            (r) => r.itemName && r.oldRate && r.proposedRate && r.approvedRate
+        );
+
+        if (validRows.length === 0) {
+            toast.error("Please fill at least one complete row");
+            return;
+        }
+
+        const payload = {
+            date: new Date(data.date).toISOString(),
+            vendorId: Number(data.vendorId),
+            remarks: data.remarks || "",
+            itemName: validRows.map((r) => r.itemName),
+            oldRate: validRows.map((r) => Number(r.oldRate)),
+            proposedRate: validRows.map((r) => Number(r.proposedRate)),
+            approvedRate: validRows.map((r) => Number(r.approvedRate)),
+        };
+
+        try {
+            const response = isNewMode
+                ? await api.post(QUOTATIONS, payload)
+                : await api.put(`${QUOTATIONS}/${data.id}`, payload);
+
+            toast.success(response.data.message || "Quotation saved successfully");
+            if (hasLoadedQuotations) {
+                setHasLoadedQuotations(false);
+                await fetchAllQuotations(false, true);
+            }
+            refreshNextIdAfterSubmit.current = true;
+        } catch (error: unknown) {
+            const apiError = error as ApiError;
+            console.error("Quotation save failed:", apiError.response?.data || error);
+            toast.error(apiError.response?.data?.message || "Failed to save quotation");
         }
     };
 
     useEffect(() => {
-        fetchNextId();
-        fetchOptions();
-    }, []);
+        if (!isSubmitting && refreshNextIdAfterSubmit.current) {
+            refreshNextIdAfterSubmit.current = false;
+            void fetchNextId();
+        }
+    }, [isSubmitting]);
 
-    const {
-        values,
-        errors,
-        isLoading: isSubmitting,
-        handleInputChange,
-        handleSelectChange,
-        handleSubmit,
-        setValues,
-    } = useForm({
-        initialValues,
-        validationSchema: quotationSchema,
-        onSubmit: async (data) => {
-            const validRows = data.items.filter(r => r.itemName && r.oldRate && r.proposedRate && r.approvedRate);
-            if (validRows.length === 0) {
-                toast.error("Please fill at least one complete row");
+    const debouncedId = useDebounce(values.id, 500);
+    const quotationColumns: ViewAllColumn<QuotationRow>[] = [
+        { key: "id", header: "Quotation ID" },
+        { key: "vendorName", header: "Vendor" },
+        { key: "date", header: "Date" },
+        { key: "remarks", header: "Remarks" },
+    ];
+
+    useEffect(() => {
+        const fetchDebouncedId = async () => {
+            if (!debouncedId) return;
+            if (skipNextIdLookup.current) {
+                skipNextIdLookup.current = false;
                 return;
             }
 
-            const payload = {
-                date: new Date(data.date).toISOString(),
-                vendorId: Number(data.vendorId),
-                remarks: data.remarks || "",
-                itemName: validRows.map(r => r.itemName),
-                oldRate: validRows.map(r => Number(r.oldRate)),
-                proposedRate: validRows.map(r => Number(r.proposedRate)),
-                approvedRate: validRows.map(r => Number(r.approvedRate)),
+            const resetToNextId = () => {
+                reset({
+                    ...initialValues,
+                    id: nextId,
+                    items: Array.from({ length: 10 }, defaultRow),
+                });
+                setIsNewMode(true);
+                setIsEditing(true);
             };
 
-            try {
-                if (isNewMode) {
-                    const response = await api.post(QUOTATIONS, payload);
-                    toast.success(response.data.message || "Quotation created successfully");
-                } else {
-                    const response = await api.put(`${QUOTATIONS}/${data.id}`, payload);
-                    toast.success(response.data.message || "Quotation updated successfully");
-                }
-                fetchNextId();
-            } catch (error: any) {
-                toast.error(error.response?.data?.message || "Failed to save quotation");
-                throw error;
+            if (Number(debouncedId) < 1 || debouncedId === nextId) {
+                resetToNextId();
+                return;
             }
-        },
-    });
 
-    const handleIdBlur = async () => {
-        if (!values.id) return;
+            if (!canView) {
+                toast.error("You do not have permission to view or search for this record.");
+                resetToNextId();
+                return;
+            }
 
-        if (!canView) {
-            toast.error("You do not have permission to view or search for this record.");
-            setValues({ ...initialValues, id: values.id });
-            setIsNewMode(true);
-            setIsEditing(true);
-            return;
-        }
+            setIsIdLoading(true);
+            try {
+                const cached = quotations.find((item) => String(item.id) === debouncedId);
+                const quotation = cached || (await api.get(`${QUOTATIONS}/${debouncedId}`)).data.data;
 
-        try {
-            const { data } = await api.get(`${QUOTATIONS}/${values.id}`);
-            if (data.data) {
-                const q = data.data;
-                const fetchedRows = (q.itemName || []).map((name: string, i: number) => ({
-                    itemName: name,
-                    oldRate: String(q.oldRate?.[i] ?? ""),
-                    proposedRate: String(q.proposedRate?.[i] ?? ""),
-                    approvedRate: String(q.approvedRate?.[i] ?? ""),
-                }));
+                if (!quotation) {
+                    toast.error("Quotation not found");
+                    resetToNextId();
+                    return;
+                }
 
-                while (fetchedRows.length < 10) fetchedRows.push(defaultRow());
-                if (fetchedRows.length > 10) fetchedRows.length = 10;
-
-                setValues({
-                    id: String(q.id),
-                    date: new Date(q.date).toISOString().split('T')[0],
-                    vendorId: String(q.vendorId),
-                    remarks: q.remarks || "",
-                    items: fetchedRows,
-                });
+                if (!cached) addQuotationToCache(quotation);
+                reset(mapQuotationToForm(quotation));
                 setIsNewMode(false);
                 setIsEditing(false);
                 toast.success("Quotation found");
-            } else {
-                toast.error("Quotation not found");
-                setValues({ ...initialValues, id: values.id });
-                setIsNewMode(true);
+            } catch (error: unknown) {
+                const apiError = error as ApiError;
+                toast.error(
+                    apiError.response?.status === 403
+                        ? apiError.response?.data?.message || "Access denied. You do not have permission."
+                        : "Quotation not found"
+                );
+                resetToNextId();
+            } finally {
+                setIsIdLoading(false);
             }
-        } catch (error: any) {
-            if (error.response?.status === 403) {
-                toast.error(error.response?.data?.message || "Access denied. You do not have permission.");
-            } else {
-                toast.error("Quotation not found");
-            }
-            setValues({ ...initialValues, id: values.id });
-            setIsNewMode(true);
-        }
-    };
+        };
+
+        void fetchDebouncedId();
+    }, [debouncedId, nextId, canView, quotations]);
 
     const updateItemRow = (index: number, field: keyof typeof initialValues.items[0], value: string) => {
-        setValues((prev) => {
-            const newItems = prev.items.map((row, i) => {
-                if (i === index) {
-                    if (field === "itemName" && value === "") {
-                        return { itemName: "", oldRate: "", proposedRate: "", approvedRate: "" };
-                    }
-                    return { ...row, [field]: value };
-                }
-                return row;
-            });
-            return { ...prev, items: newItems };
-        });
+        const currentItems = [...values.items];
+        if (field === "itemName" && value === "") {
+            currentItems[index] = defaultRow();
+        } else {
+            currentItems[index] = { ...currentItems[index], [field]: value };
+        }
+        setValue("items", currentItems, { shouldDirty: true, shouldValidate: true });
     };
 
     return (
         <section className="mx-auto mt-10 w-full max-w-5xl bg-form-bg p-8 shadow-sm">
-            <h1 className="mb-10 text-center text-4xl font-medium text-black tracking-wide">Quotation Entry</h1>
+            <h1 className="mb-10 text-center text-4xl font-medium text-black tracking-wide">
+                Quotation Entry
+            </h1>
 
-            <form onSubmit={handleSubmit} noValidate className="space-y-6">
+            <form onSubmit={handleSubmit(onSubmit)} noValidate className="space-y-6">
                 <div className="grid gap-3 md:grid-cols-2">
                     <LabeledField
-                        type="number"
+                        type={isIdLoading ? "text" : "number"}
                         label="Quotation ID"
-                        value={values.id || ""}
-                        onChange={handleInputChange("id")}
-                        onBlur={handleIdBlur}
-                        error={errors.id}
+                        value={isIdLoading ? "Loading..." : values.id || ""}
+                        onChange={(event) => {
+                            if (/^\d*$/.test(event.target.value)) {
+                                setValue("id", event.target.value, { shouldDirty: true });
+                            }
+                        }}
+                        onKeyDown={(event) => {
+                            if (
+                                !/[0-9]/.test(event.key) &&
+                                !["Backspace", "Delete", "ArrowLeft", "ArrowRight", "Tab", "Home", "End"].includes(event.key)
+                            ) {
+                                event.preventDefault();
+                            }
+                        }}
+                        inputMode="numeric"
+                        error={errors.id?.message}
+                        disabled={isIdLoading}
+                        min={1}
+                        max={Number(nextId) || 1}
                         wrapperClassName="w-32"
                     />
                     <LabeledField
                         type="date"
                         label="Date"
                         value={values.date}
-                        onChange={handleInputChange("date")}
-                        error={errors.date}
+                        onChange={(e) =>
+                            setValue("date", e.target.value, {
+                                shouldDirty: true,
+                                shouldValidate: true,
+                            })
+                        }
+                        error={errors.date?.message}
                         disabled={!isEditing}
                     />
 
@@ -208,17 +392,27 @@ export default function QuotationPage() {
                         label="Vendor"
                         options={vendors}
                         value={values.vendorId}
-                        onChange={handleSelectChange("vendorId")}
-                        error={errors.vendorId}
-                        disabled={!isEditing}
-                        placeholder="Select Vendor"
+                        onChange={(value) =>
+                            setValue("vendorId", value, {
+                                shouldDirty: true,
+                                shouldValidate: true,
+                            })
+                        }
+                        error={errors.vendorId?.message}
+                        disabled={!isEditing || isOptionsLoading}
+                        placeholder={isOptionsLoading ? "Loading vendors..." : "Select Vendor"}
                     />
 
                     <LabeledField
                         label="Remarks"
                         value={values.remarks}
-                        onChange={handleInputChange("remarks")}
-                        error={errors.remarks}
+                        onChange={(e) =>
+                            setValue("remarks", e.target.value, {
+                                shouldDirty: true,
+                                shouldValidate: true,
+                            })
+                        }
+                        error={errors.remarks?.message}
                         disabled={!isEditing}
                         wrapperClassName="md:col-span-2"
                     />
@@ -228,10 +422,18 @@ export default function QuotationPage() {
                     <table className="w-full border-collapse text-sm text-black relative">
                         <thead className="sticky top-0 z-10 bg-white">
                             <tr className="border-b border-zinc-400">
-                                <th className="border-r border-zinc-400 px-2 py-1.5 text-center font-medium w-1/2">Item Name</th>
-                                <th className="border-r border-zinc-400 px-2 py-1.5 text-center font-medium w-1/6">Old Rate</th>
-                                <th className="border-r border-zinc-400 px-2 py-1.5 text-center font-medium w-1/6">Proposed Rate</th>
-                                <th className="px-2 py-1.5 text-center font-medium w-1/6">Approved Rate</th>
+                                <th className="border-r border-zinc-400 px-2 py-1.5 text-center font-medium w-1/2">
+                                    Item Name
+                                </th>
+                                <th className="border-r border-zinc-400 px-2 py-1.5 text-center font-medium w-1/6">
+                                    Old Rate
+                                </th>
+                                <th className="border-r border-zinc-400 px-2 py-1.5 text-center font-medium w-1/6">
+                                    Proposed Rate
+                                </th>
+                                <th className="px-2 py-1.5 text-center font-medium w-1/6">
+                                    Approved Rate
+                                </th>
                             </tr>
                         </thead>
                         <tbody>
@@ -245,7 +447,11 @@ export default function QuotationPage() {
                                             className="w-full bg-transparent px-2 py-1.5 text-[13px] outline-none disabled:bg-[#f3f4f6] disabled:text-zinc-500"
                                         >
                                             <option value="">Select Item</option>
-                                            {inventoryItems.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}
+                                            {inventoryItems.map((item) => (
+                                                <option key={item.value} value={item.value}>
+                                                    {item.label}
+                                                </option>
+                                            ))}
                                         </select>
                                     </td>
                                     <td className="border-r border-zinc-300 p-0">
@@ -283,7 +489,9 @@ export default function QuotationPage() {
                         </tbody>
                     </table>
                 </div>
-                {errors.items && <p className="mt-1.5 text-xs text-red-500">{errors.items}</p>}
+                {errors.items && (
+                    <p className="mt-1.5 text-xs text-red-500">{errors.items.message}</p>
+                )}
 
                 <div className="flex flex-wrap items-center justify-center gap-3 pt-6">
                     <Button
@@ -296,14 +504,16 @@ export default function QuotationPage() {
                     >
                         New
                     </Button>
-                    <ViewAllResource
-                        endpoint={QUOTATIONS}
-                        title="All Quotations"
-                        columns={quotationColumns}
-                        searchKeys={["id", "vendorId", "date", "remarks"]}
-                        canView={canView}
-                        onSelectId={(id) => setValues((prev) => ({ ...prev, id: String(id) }))}
-                    />
+                    <Button
+                        type="button"
+                        variant="secondary"
+                        shape="rounded"
+                        onClick={() => fetchAllQuotations()}
+                        disabled={isSubmitting || !canView}
+                        className="border border-zinc-400 bg-white px-6 hover:bg-zinc-50"
+                    >
+                        View All
+                    </Button>
                     <Button
                         type="button"
                         variant="secondary"
@@ -327,7 +537,25 @@ export default function QuotationPage() {
                     </Button>
                 </div>
             </form>
+
+            <ViewAllModal
+                key={isViewAllOpen ? "open" : "closed"}
+                isOpen={isViewAllOpen}
+                title="All Quotations"
+                rows={quotations}
+                columns={quotationColumns}
+                searchKeys={["id", "vendorName", "date", "remarks"]}
+                isLoading={isQuotationsLoading}
+                error={quotationsError}
+                onClose={() => setIsViewAllOpen(false)}
+                onRowSelect={(item) => {
+                    reset(mapQuotationToForm(item));
+                    setIsNewMode(false);
+                    setIsEditing(false);
+                    setIsViewAllOpen(false);
+                }}
+                onDelete={() => undefined}
+            />
         </section>
     );
 }
-

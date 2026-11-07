@@ -1,12 +1,15 @@
 import { ApiError } from "../utils/apiError.js";
 import { ApiResponse } from "../utils/apiResponse.js";
 import asyncHandler from "../utils/asyncHandler.js";
-import prisma from "../config/prisma.js";
+import prisma, {
+    getActiveDatabaseClient,
+    getActiveDatabaseName,
+} from "../config/prisma.js";
 
 const getAllPurchaseOrders = asyncHandler(async (req, res) => {
     const purchaseOrders = await prisma.purchaseOrder.findMany({
         include: { vendor: true, quotation: true },
-        orderBy: { id: "desc" }
+        orderBy: { id: "asc" }
     });
     return res.status(200).json(new ApiResponse(200, purchaseOrders, "Purchase Orders fetched successfully"));
 });
@@ -26,6 +29,19 @@ const getByIdPurchaseOrder = asyncHandler(async (req, res) => {
 
 const createPurchaseOrder = asyncHandler(async (req, res) => {
     const { date, vendorId, validity, instruction, quotationId, code, itemName, unit, quantity, rate, amount, total, saleTaxPercent, totalWithSaleTax, withHoldingPercent, withHoldingAmount, grandTotal } = req.body;
+
+    console.log(
+        `[PurchaseOrder] Creating PO for Vendor ${vendorId} in ${getActiveDatabaseName().toUpperCase()} database`
+    );
+
+    // Sync PostgreSQL auto-increment sequence
+    await getActiveDatabaseClient().$executeRaw`
+        SELECT setval(
+            pg_get_serial_sequence('"PurchaseOrder"', 'id'),
+            COALESCE((SELECT MAX(id) FROM "PurchaseOrder"), 1),
+            EXISTS(SELECT 1 FROM "PurchaseOrder")
+        )
+    `;
 
     const purchaseOrder = await prisma.purchaseOrder.create({
         data: {
@@ -108,12 +124,16 @@ const deletePurchaseOrder = asyncHandler(async (req, res) => {
 });
 
 const getNextIdPurchaseOrder = asyncHandler(async (req, res) => {
-    const lastPurchaseOrder = await prisma.purchaseOrder.findFirst({
-        orderBy: { id: 'desc' }
+    const { _max } = await prisma.purchaseOrder.aggregate({
+        _max: { id: true }
     });
+    const nextId = (_max.id || 0) + 1;
 
-    const nextId = lastPurchaseOrder ? lastPurchaseOrder.id + 1 : 1;
+    console.log(
+        `[PurchaseOrder] Next ID ${nextId} from ${getActiveDatabaseName().toUpperCase()} database`
+    );
 
+    res.set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
     return res.status(200).json(
         new ApiResponse(200, { nextId }, "Next Purchase Order ID fetched successfully")
     );
