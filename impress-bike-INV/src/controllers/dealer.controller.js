@@ -1,9 +1,31 @@
+import prisma, {
+    getActiveDatabaseClient,
+    getActiveDatabaseName,
+} from "../config/prisma.js";
 import { ApiError } from "../utils/apiError.js";
 import { ApiResponse } from "../utils/apiResponse.js";
 import asyncHandler from "../utils/asyncHandler.js";
-import prisma from "../config/prisma.js";
 
-const dealerTypes = ['single', 'dealar']; // Based on enum DealerType
+const dealerTypes = ['single', 'dealar'];
+
+const isDealerConflict = (error) => {
+    const message = String(error?.message || "");
+    return (
+        error?.code === "P2002" ||
+        message.includes("Unique constraint failed")
+    );
+};
+
+const handleDealerWrite = async (operation) => {
+    try {
+        return await operation();
+    } catch (error) {
+        if (isDealerConflict(error)) {
+            throw new ApiError(409, "Dealer with this information already exists.");
+        }
+        throw error;
+    }
+};
 
 const createDealer = asyncHandler(async (req, res) => {
     const {
@@ -11,32 +33,49 @@ const createDealer = asyncHandler(async (req, res) => {
         name, provinceId, cityId, mobileNo, opeaningBalance, dealarType, NICNo
     } = req.body;
 
-    if (!dealarShipName || !contactNo || !address || !saleTaxNo || !NTNNo || !name || !provinceId || !cityId || !mobileNo || opeaningBalance === undefined || !dealarType || !NICNo) {
-        throw new ApiError(400, "All fields are required");
+    if (!dealarShipName?.trim() || !contactNo?.trim() || !address?.trim() || !name?.trim() || !provinceId || !cityId) {
+        throw new ApiError(400, "Required dealer fields are missing");
     }
 
-    if (!dealerTypes.includes(dealarType)) {
+    if (dealarType && !dealerTypes.includes(dealarType)) {
         throw new ApiError(400, "Invalid dealer type");
     }
 
-    const dealer = await prisma.dealer.create({
-        data: {
-            dealarShipName,
-            contactNo,
-            address,
-            saleTaxNo,
-            NTNNo,
-            name,
-            provinceId: Number(provinceId),
-            cityId: Number(cityId),
-            mobileNo,
-            opeaningBalance: Number(opeaningBalance),
-            dealarType,
-            NICNo,
-            createdById: req.user?.id || 1, // Fallback if no user, though auth middleware should provide it
-            updatedById: req.user?.id || 1
-        },
-    });
+    const trimmedDealership = dealarShipName.trim();
+
+    console.log(
+        `[Dealer] Creating "${trimmedDealership}" in ${getActiveDatabaseName().toUpperCase()} database`
+    );
+
+    // Sync PostgreSQL auto-increment sequence
+    await getActiveDatabaseClient().$executeRaw`
+        SELECT setval(
+            pg_get_serial_sequence('"Dealer"', 'id'),
+            COALESCE((SELECT MAX(id) FROM "Dealer"), 1),
+            EXISTS(SELECT 1 FROM "Dealer")
+        )
+    `;
+
+    const dealer = await handleDealerWrite(() =>
+        prisma.dealer.create({
+            data: {
+                dealarShipName: trimmedDealership,
+                contactNo: String(contactNo).trim(),
+                address: address.trim(),
+                saleTaxNo: saleTaxNo ? String(saleTaxNo).trim() : "",
+                NTNNo: NTNNo ? String(NTNNo).trim() : "",
+                name: name.trim(),
+                provinceId: Number(provinceId),
+                cityId: Number(cityId),
+                mobileNo: mobileNo ? String(mobileNo).trim() : "",
+                opeaningBalance: Number(opeaningBalance) || 0,
+                dealarType: dealarType || "single",
+                NICNo: NICNo ? String(NICNo).trim() : "",
+                createdById: req.user?.id || 1,
+                updatedById: req.user?.id || 1,
+            },
+        })
+    );
 
     return res.status(201).json(
         new ApiResponse(
@@ -49,10 +88,11 @@ const createDealer = asyncHandler(async (req, res) => {
 
 const getAllDealers = asyncHandler(async (req, res) => {
     const dealers = await prisma.dealer.findMany({
+        orderBy: { id: "asc" },
         include: {
             province: true,
-            city: true
-        }
+            city: true,
+        },
     });
 
     return res.status(200).json(
@@ -74,14 +114,13 @@ const getByIdDealer = asyncHandler(async (req, res) => {
         where: { id: Number(id) },
         include: {
             province: true,
-            city: true
-        }
+            city: true,
+        },
     });
 
     if (!dealer) {
         throw new ApiError(404, "Dealer not found");
     }
-
 
     return res.status(200).json(
         new ApiResponse(
@@ -104,7 +143,7 @@ const updateDealer = asyncHandler(async (req, res) => {
     }
 
     const existingDealer = await prisma.dealer.findUnique({
-        where: { id: Number(id) }
+        where: { id: Number(id) },
     });
 
     if (!existingDealer) {
@@ -115,24 +154,26 @@ const updateDealer = asyncHandler(async (req, res) => {
         throw new ApiError(400, "Invalid dealer type");
     }
 
-    const dealer = await prisma.dealer.update({
-        where: { id: Number(id) },
-        data: {
-            dealarShipName: dealarShipName || existingDealer.dealarShipName,
-            contactNo: contactNo || existingDealer.contactNo,
-            address: address || existingDealer.address,
-            saleTaxNo: saleTaxNo || existingDealer.saleTaxNo,
-            NTNNo: NTNNo || existingDealer.NTNNo,
-            name: name || existingDealer.name,
-            provinceId: provinceId ? Number(provinceId) : existingDealer.provinceId,
-            cityId: cityId ? Number(cityId) : existingDealer.cityId,
-            mobileNo: mobileNo || existingDealer.mobileNo,
-            opeaningBalance: opeaningBalance !== undefined ? Number(opeaningBalance) : existingDealer.opeaningBalance,
-            dealarType: dealarType || existingDealer.dealarType,
-            NICNo: NICNo || existingDealer.NICNo,
-            updatedById: req.user?.id || existingDealer.updatedById
-        },
-    });
+    const dealer = await handleDealerWrite(() =>
+        prisma.dealer.update({
+            where: { id: Number(id) },
+            data: {
+                dealarShipName: dealarShipName !== undefined ? dealarShipName.trim() : existingDealer.dealarShipName,
+                contactNo: contactNo !== undefined ? String(contactNo).trim() : existingDealer.contactNo,
+                address: address !== undefined ? address.trim() : existingDealer.address,
+                saleTaxNo: saleTaxNo !== undefined ? String(saleTaxNo).trim() : existingDealer.saleTaxNo,
+                NTNNo: NTNNo !== undefined ? String(NTNNo).trim() : existingDealer.NTNNo,
+                name: name !== undefined ? name.trim() : existingDealer.name,
+                provinceId: provinceId ? Number(provinceId) : existingDealer.provinceId,
+                cityId: cityId ? Number(cityId) : existingDealer.cityId,
+                mobileNo: mobileNo !== undefined ? String(mobileNo).trim() : existingDealer.mobileNo,
+                opeaningBalance: opeaningBalance !== undefined ? Number(opeaningBalance) : existingDealer.opeaningBalance,
+                dealarType: dealarType || existingDealer.dealarType,
+                NICNo: NICNo !== undefined ? String(NICNo).trim() : existingDealer.NICNo,
+                updatedById: req.user?.id || existingDealer.updatedById,
+            },
+        })
+    );
 
     return res.status(200).json(
         new ApiResponse(
@@ -150,7 +191,7 @@ const deleteDealer = asyncHandler(async (req, res) => {
     }
 
     const existingDealer = await prisma.dealer.findUnique({
-        where: { id: Number(id) }
+        where: { id: Number(id) },
     });
 
     if (!existingDealer) {
@@ -158,7 +199,7 @@ const deleteDealer = asyncHandler(async (req, res) => {
     }
 
     const dealer = await prisma.dealer.delete({
-        where: { id: Number(id) }
+        where: { id: Number(id) },
     });
 
     return res.status(200).json(
@@ -171,12 +212,16 @@ const deleteDealer = asyncHandler(async (req, res) => {
 });
 
 const getNextIdDealer = asyncHandler(async (req, res) => {
-    const lastDealer = await prisma.dealer.findFirst({
-        orderBy: { id: 'desc' }
+    const { _max } = await prisma.dealer.aggregate({
+        _max: { id: true },
     });
+    const nextId = (_max.id || 0) + 1;
 
-    const nextId = lastDealer ? lastDealer.id + 1 : 1;
+    console.log(
+        `[Dealer] Next ID ${nextId} from ${getActiveDatabaseName().toUpperCase()} database`
+    );
 
+    res.set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
     return res.status(200).json(
         new ApiResponse(
             200,
@@ -192,5 +237,5 @@ export default {
     getByIdDealer,
     updateDealer,
     deleteDealer,
-    getNextIdDealer
+    getNextIdDealer,
 };

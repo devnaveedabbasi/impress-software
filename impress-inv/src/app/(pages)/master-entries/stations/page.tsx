@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useForm } from "react-hook-form";
 import { LabeledField } from "@/components/ui/LabeledField";
 import { Button } from "@/components/ui/Button";
-import { useForm } from "@/hooks/useForm";
 import useDebounce from "@/hooks/useDebounce";
 import { stationSchema, type StationFormValues } from "@/lib/validations/master";
 import { STATIONS } from "@/utlis/apiRoutes";
@@ -15,6 +15,13 @@ import { ViewAllModal, type ViewAllColumn } from "@/components/ui/ViewAllModal";
 type StationRow = {
     id: number;
     name: string;
+};
+
+type ApiError = {
+    response?: {
+        status?: number;
+        data?: { message?: string };
+    };
 };
 
 const initialValues: StationFormValues = {
@@ -30,20 +37,36 @@ export default function StationPage() {
     const canUpdate = hasPermission("station", "update");
     const canView = hasPermission("station", "view");
     const [isIdLoading, setIsIdLoading] = useState(true);
-    const [nextId, setNextId] = useState<string>("");
+    const [nextId, setNextId] = useState("");
     const [isViewAllOpen, setIsViewAllOpen] = useState(false);
     const [stations, setStations] = useState<StationRow[]>([]);
+    const [hasLoadedStations, setHasLoadedStations] = useState(false);
     const [isStationsLoading, setIsStationsLoading] = useState(false);
     const [stationsError, setStationsError] = useState("");
+    const skipNextIdLookup = useRef(false);
+    const refreshNextIdAfterSubmit = useRef(false);
 
+    const {
+        handleSubmit,
+        reset,
+        setError,
+        clearErrors,
+        setValue,
+        watch,
+        formState: { errors, isSubmitting },
+    } = useForm<StationFormValues>({ defaultValues: initialValues });
+    const values = watch();
 
     const fetchNextId = async () => {
         setIsIdLoading(true);
         try {
-            const { data } = await api.get(`${STATIONS}/next-id`);
+            const { data } = await api.get(`${STATIONS}/next-id`, {
+                params: { _ts: Date.now() },
+            });
             const fetchedNextId = String(data.data.nextId);
             setNextId(fetchedNextId);
-            setValues({ id: fetchedNextId, name: "" });
+            skipNextIdLookup.current = true;
+            reset({ id: fetchedNextId, name: "" });
             setIsNewMode(true);
             setIsEditing(true);
         } catch (error) {
@@ -53,54 +76,87 @@ export default function StationPage() {
         }
     };
 
-    const fetchAllStations = async () => {
-        setIsViewAllOpen(true);
+    const fetchAllStations = async (openModal = true, force = false) => {
+        if (openModal) setIsViewAllOpen(true);
+        if (hasLoadedStations && !force) return;
+
         setIsStationsLoading(true);
         setStationsError("");
         try {
             const { data } = await api.get(STATIONS);
             setStations(data.data || []);
-        } catch (error: any) {
-            setStationsError(error.response?.data?.message || "Failed to fetch stations");
+            setHasLoadedStations(true);
+        } catch (error: unknown) {
+            const apiError = error as ApiError;
+            setStationsError(apiError.response?.data?.message || "Failed to fetch stations");
         } finally {
             setIsStationsLoading(false);
         }
     };
 
+    const addStationToCache = (station: StationRow) => {
+        setStations((current) => {
+            const existingIndex = current.findIndex(
+                (item) => String(item.id) === String(station.id)
+            );
+            if (existingIndex === -1) return [...current, station];
+            return current.map((item, index) =>
+                index === existingIndex ? station : item
+            );
+        });
+        setHasLoadedStations(true);
+    };
+
     useEffect(() => {
-        fetchNextId();
+        void fetchNextId();
+        void fetchAllStations(false);
     }, []);
 
-    const {
-        values,
-        errors,
-        isLoading: isSubmitting,
-        handleInputChange,
-        handleSubmit,
-        setValues,
-    } = useForm({
-        initialValues,
-        validationSchema: stationSchema,
-        onSubmit: async (data) => {
-            try {
-                if (isNewMode) {
-                    const response = await api.post(STATIONS, { name: data.name });
-                    toast.success(response.data.message || "Station created successfully");
-                } else {
-                    const response = await api.put(`${STATIONS}/${data.id}`, { name: data.name });
-                    toast.success(response.data.message || "Station updated successfully");
+    const onSubmit = async (data: StationFormValues) => {
+        const validationResult = stationSchema.safeParse(data);
+        if (!validationResult.success) {
+            clearErrors();
+            validationResult.error.issues.forEach((issue) => {
+                const field = issue.path[0];
+                if (typeof field === "string") {
+                    setError(field as keyof StationFormValues, {
+                        type: "manual",
+                        message: issue.message,
+                    });
                 }
-                fetchNextId();
-            } catch (error: any) {
-                toast.error(error.response?.data?.message || "Failed to save station");
-                throw error;
+            });
+            return;
+        }
+
+        try {
+            const payload = {
+                name: validationResult.data.name.trim(),
+            };
+            const response = isNewMode
+                ? await api.post(STATIONS, payload)
+                : await api.put(`${STATIONS}/${validationResult.data.id}`, payload);
+
+            toast.success(response.data.message || "Station saved successfully");
+            if (hasLoadedStations) {
+                setHasLoadedStations(false);
+                await fetchAllStations(false, true);
             }
-        },
-    });
+            refreshNextIdAfterSubmit.current = true;
+        } catch (error: unknown) {
+            const apiError = error as ApiError;
+            console.error("Station save failed:", apiError.response?.data || error);
+            toast.error(apiError.response?.data?.message || "Failed to save station");
+        }
+    };
 
-    
-    const debouncedId = useDebounce(values?.id, 500);
+    useEffect(() => {
+        if (!isSubmitting && refreshNextIdAfterSubmit.current) {
+            refreshNextIdAfterSubmit.current = false;
+            void fetchNextId();
+        }
+    }, [isSubmitting]);
 
+    const debouncedId = useDebounce(values.id, 500);
     const stationColumns: ViewAllColumn<StationRow>[] = [
         { key: "id", header: "Station ID" },
         { key: "name", header: "Station Name" },
@@ -108,71 +164,103 @@ export default function StationPage() {
 
     useEffect(() => {
         const fetchDebouncedId = async () => {
-        if (!debouncedId) return;
+            if (!debouncedId) return;
+            if (skipNextIdLookup.current) {
+                skipNextIdLookup.current = false;
+                return;
+            }
 
-        if (debouncedId === String(nextId)) {
-            setValues({ ...initialValues, id: nextId });
-            setIsNewMode(true);
-            setIsEditing(true);
-            return;
-        }
+            const resetToNextId = () => {
+                reset({ ...initialValues, id: nextId });
+                setIsNewMode(true);
+                setIsEditing(true);
+            };
 
-        if (!canView) {
-            toast.error("You do not have permission to view or search for this record.");
-            setValues({ ...initialValues, id: nextId });
-            setIsNewMode(true);
-            setIsEditing(true);
-            return;
-        }
+            if (Number(debouncedId) < 1 || debouncedId === nextId) {
+                resetToNextId();
+                return;
+            }
 
-        setIsIdLoading(true);
-        try {
-            const { data } = await api.get(`${STATIONS}/${debouncedId}`);
-            if (data.data) {
-                setValues({ id: String(data.data.id), name: data.data.name });
+            if (!canView) {
+                toast.error("You do not have permission to view or search for this record.");
+                resetToNextId();
+                return;
+            }
+
+            setIsIdLoading(true);
+            try {
+                const cached = stations.find((s) => String(s.id) === debouncedId);
+                const station = cached || (await api.get(`${STATIONS}/${debouncedId}`)).data.data;
+
+                if (!station) {
+                    toast.error("Station not found");
+                    resetToNextId();
+                    return;
+                }
+
+                if (!cached) addStationToCache(station);
+                reset({
+                    id: String(station.id),
+                    name: station.name,
+                });
                 setIsNewMode(false);
                 setIsEditing(false);
-                toast.success("Station found");
-            } else {
-                toast.error("Station not found");
-                setValues({ ...initialValues, id: nextId });
-                setIsNewMode(true);
+            } catch (error: unknown) {
+                const apiError = error as ApiError;
+                toast.error(
+                    apiError.response?.status === 403
+                        ? apiError.response?.data?.message || "Access denied. You do not have permission."
+                        : "Invalid Station ID"
+                );
+                resetToNextId();
+            } finally {
+                setIsIdLoading(false);
             }
-        } catch (error: any) {
-            if (error.response?.status === 403) {
-                toast.error(error.response?.data?.message || "Access denied. You do not have permission.");
-            } else {
-                toast.error("Invalid Station ID");
-            }
-            setValues({ ...initialValues, id: nextId });
-            setIsNewMode(true);
-        } finally {
-            setIsIdLoading(false);
-        }
-    }
-        fetchDebouncedId();
-    }, [debouncedId]);;
+        };
+
+        void fetchDebouncedId();
+    }, [debouncedId, nextId, canView, stations]);
 
     return (
         <section className="mx-auto mt-10 w-full max-w-110 bg-form-bg p-6 shadow-xl sm:p-8">
-            <h1 className="mb-6 text-center text-2xl font-bold text-zinc-900 sm:text-3xl">Station Entry</h1>
+            <h1 className="mb-6 text-center text-2xl font-bold text-zinc-900 sm:text-3xl">
+                Station Entry
+            </h1>
 
-            <form onSubmit={handleSubmit} noValidate className="space-y-3">
+            <form onSubmit={handleSubmit(onSubmit)} noValidate className="space-y-3">
                 <LabeledField
                     type={isIdLoading ? "text" : "number"}
                     label="Station ID"
                     value={isIdLoading ? "Loading..." : values.id || ""}
-                    onChange={handleInputChange("id")}
-                    error={errors.id}
+                    onChange={(event) => {
+                        if (/^\d*$/.test(event.target.value)) {
+                            setValue("id", event.target.value, { shouldDirty: true });
+                        }
+                    }}
+                    onKeyDown={(event) => {
+                        if (
+                            !/[0-9]/.test(event.key) &&
+                            !["Backspace", "Delete", "ArrowLeft", "ArrowRight", "Tab", "Home", "End"].includes(event.key)
+                        ) {
+                            event.preventDefault();
+                        }
+                    }}
+                    inputMode="numeric"
+                    error={errors.id?.message}
                     disabled={isIdLoading}
-                min={1}
+                    min={1}
                     max={Number(nextId) || 1}
                 />
                 <LabeledField
                     label="Station Name"
                     value={values.name}
-                    onChange={handleInputChange("name")}
-                    error={errors.name}
+                    onChange={(event) =>
+                        setValue("name", event.target.value, {
+                            shouldDirty: true,
+                            shouldValidate: true,
+                        })
+                    }
+                    error={errors.name?.message}
                     disabled={!isEditing}
                 />
 
@@ -191,7 +279,7 @@ export default function StationPage() {
                         type="button"
                         variant="secondary"
                         shape="rounded"
-                        onClick={fetchAllStations}
+                        onClick={() => fetchAllStations()}
                         disabled={isSubmitting || !canView}
                         className="border border-zinc-400 bg-white px-6 hover:bg-zinc-50"
                     >
@@ -207,7 +295,6 @@ export default function StationPage() {
                     >
                         Edit
                     </Button>
-
                     <Button
                         type="submit"
                         variant="secondary"
@@ -232,7 +319,10 @@ export default function StationPage() {
                 error={stationsError}
                 onClose={() => setIsViewAllOpen(false)}
                 onRowSelect={(station) => {
-                    setValues({ id: String(station.id), name: station.name });
+                    reset({
+                        id: String(station.id),
+                        name: station.name,
+                    });
                     setIsNewMode(false);
                     setIsEditing(false);
                     setIsViewAllOpen(false);
@@ -242,4 +332,3 @@ export default function StationPage() {
         </section>
     );
 }
-
