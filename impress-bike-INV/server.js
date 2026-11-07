@@ -52,7 +52,7 @@ async function startServer() {
         });
     } catch (error) {
         console.error("Database connection failed:", error.message);
-        console.error("Set LOCAL_DATABASE_URL or DATABASE_URL to the local PostgreSQL database.");
+        console.error("Set LOCAL_DATABASE_URL/DATABASE_URL for desktop or CLOUD_DATABASE_URL for Render.");
         process.exit(1);
     }
 }

@@ -22,16 +22,23 @@ function createPool(connectionString, name) {
   });
 }
 
-// DATABASE_URL (or LOCAL_DATABASE_URL) is the local database; cloud is only a sync target.
-const primaryDatabaseUrl = process.env.LOCAL_DATABASE_URL || process.env.DATABASE_URL;
+// Desktop uses the local database as primary. Cloud-only deployments use the cloud
+// database as primary when no local/database URL is configured.
+const configuredLocalDatabaseUrl =
+  process.env.LOCAL_DATABASE_URL || process.env.DATABASE_URL;
+const cloudDatabaseUrl = process.env.CLOUD_DATABASE_URL;
+const primaryDatabaseUrl = configuredLocalDatabaseUrl || cloudDatabaseUrl;
+const isCloudPrimary = !configuredLocalDatabaseUrl && Boolean(cloudDatabaseUrl);
 const localPool = createPool(primaryDatabaseUrl, "Primary");
 const localAdapter = new PrismaPg(localPool);
 export const prismaLocal = new PrismaClient({ adapter: localAdapter });
 
 // Cloud client is optional and must be separate from the local database.
 let prismaCloud = null;
-if (process.env.CLOUD_DATABASE_URL && process.env.CLOUD_DATABASE_URL !== primaryDatabaseUrl) {
-  const cloudPool = createPool(process.env.CLOUD_DATABASE_URL, "Cloud");
+if (isCloudPrimary) {
+  prismaCloud = prismaLocal;
+} else if (cloudDatabaseUrl && cloudDatabaseUrl !== primaryDatabaseUrl) {
+  const cloudPool = createPool(cloudDatabaseUrl, "Cloud");
   const cloudAdapter = new PrismaPg(cloudPool);
   prismaCloud = new PrismaClient({ adapter: cloudAdapter });
 }
@@ -39,7 +46,7 @@ if (process.env.CLOUD_DATABASE_URL && process.env.CLOUD_DATABASE_URL !== primary
 export { prismaCloud };
 
 let activeClient = prismaLocal;
-let activeDatabase = "local";
+let activeDatabase = isCloudPrimary ? "live" : "local";
 let databaseMonitor;
 let cloudHealthCache = null;
 let cloudHealthCheckedAt = 0;
