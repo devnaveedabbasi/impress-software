@@ -15,6 +15,7 @@ app.use(cors(corsOptions));
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+app.use(logger);
 
 // Health check
 app.get("/", (req, res) => {
@@ -37,5 +38,4 @@ app.use("/api", routes);
 
 // Global Error Handler
 app.use(errorHandler);
-app.use(logger);
 export default app;

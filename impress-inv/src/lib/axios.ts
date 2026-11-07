@@ -35,6 +35,14 @@ axiosInstance.interceptors.request.use((config) => {
 axiosInstance.interceptors.response.use(
   (response) => response,
   (error) => {
+    console.error("[API request error]", {
+      method: error.config?.method,
+      url: error.config?.url,
+      baseURL: error.config?.baseURL,
+      status: error.response?.status,
+      data: error.response?.data,
+      message: error.message,
+    });
     if (error.response?.status === 401 && typeof window !== "undefined") {
       localStorage.removeItem("token");
       window.dispatchEvent(

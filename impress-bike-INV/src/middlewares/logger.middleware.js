@@ -1,5 +1,12 @@
 const logger = (req, res, next) => {
-  console.log(`${req.method} ${req.originalUrl} - ${new Date().toLocaleTimeString()}`);
+  const startedAt = Date.now();
+  console.log(`[HTTP] ${req.method} ${req.originalUrl} - ${new Date().toLocaleTimeString()}`);
+
+  res.on("finish", () => {
+    console.log(
+      `[HTTP] ${req.method} ${req.originalUrl} -> ${res.statusCode} (${Date.now() - startedAt}ms)`
+    );
+  });
 
   next();
 };

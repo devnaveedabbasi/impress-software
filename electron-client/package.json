@@ -10,10 +10,10 @@
   "build": {
     "appId": "com.impress.bike",
     "productName": "Impress Bike",
-    "icon": "build/icon.ico",
+    "icon": "build/icon.png",
     "win": {
       "target": "nsis",
-      "icon": "build/icon.ico"
+      "icon": "build/icon.png"
     },
     "nsis": {
       "oneClick": false,
@@ -24,7 +24,7 @@
       "main.js",
       "preload.js",
       "config.json",
-      "build/icon.ico"
+      "build/icon.png"
     ],
     "extraResources": [
       {

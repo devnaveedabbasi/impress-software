@@ -18,6 +18,18 @@ const errorHandler = (err, req, res, next) => {
         });
     }
 
+    if (
+        String(err?.message || "").includes("City_name_key") ||
+        String(err?.message || "").includes("Unique constraint failed")
+    ) {
+        return res.status(409).json({
+            success: false,
+            code: 409,
+            message: "City already exists.",
+            data: null,
+        });
+    }
+
     if (err instanceof ApiError) {
         return res.status(err.statusCode).json({
             success: false,

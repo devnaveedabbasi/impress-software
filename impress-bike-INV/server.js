@@ -30,14 +30,25 @@ async function startServer() {
         await prismaLocal.$connect();
         await startDatabaseMonitor();
 
-        console.log("Local database connected successfully");
+        console.log("Local database connected successfully (startup/fallback client)");
+        console.log(`[Database] Active request database: ${getActiveDatabaseName().toUpperCase()}`);
 
         const localIp = getLocalIp();
 
-        app.listen(PORT, "0.0.0.0", () => {
+        const server = app.listen(PORT, "0.0.0.0", () => {
             console.log(`Server running on port ${PORT}`);
             console.log(`Network: http://${localIp}:${PORT}`);
             startAutoSync();
+        });
+        server.on("error", (error) => {
+            if (error.code === "EADDRINUSE") {
+                console.error(
+                    `[Server] Port ${PORT} is already in use. Stop the existing PM2/server process before running nodemon.`
+                );
+            } else {
+                console.error("[Server] HTTP server error:", error);
+            }
+            process.exitCode = 1;
         });
     } catch (error) {
         console.error("Database connection failed:", error.message);
