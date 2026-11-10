@@ -47,15 +47,18 @@ export const SYNC_MODELS = [
   "category",
   "department",
   "station",
+  "color",
   "province",
   "city",
   "vendor",
   "dealer",
   "accountCode",
   "inventory",
+  "inventoryStock", // must come after "inventory", "station" and "color" (foreign keys)
   "quotation",
   "purchaseOrder",
   "inward",
+  "inwardItem", // must come after "inward" and "inventory" (foreign keys)
   "saleGatePass",
   "rejectionReturnToVendor",
 ];

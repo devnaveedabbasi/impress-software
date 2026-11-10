@@ -6,24 +6,30 @@ export const inventoryIdSchema = z.object({
     }),
 });
 
-const rowDataBody = {
-    stationIds: z.array(z.coerce.number().min(1, "Station ID is required")).min(1, "At least one station is required"),
-    color: z.array(z.string().min(1, "Color name cannot be empty")).min(1, "At least one color is required"),
-    qty: z.array(z.coerce.number().min(0, "Quantity cannot be negative")).min(1, "At least one quantity is required"),
-};
+// One stock row: Station + Color (both linked tables) + quantity
+const stockRowSchema = z.object({
+    stationId: z.coerce.number({ error: "Station is required" }).int().min(1, "Station is required"),
+    colorId: z.coerce.number({ error: "Color is required" }).int().min(1, "Color is required"),
+    qty: z.coerce.number({ error: "Quantity must be a number" }).int().min(0, "Quantity cannot be negative"),
+});
+
+const stocksSchema = z
+    .array(stockRowSchema)
+    .min(1, "At least one Station / Color / Qty row is required")
+    .refine(
+        (rows) => new Set(rows.map((row) => `${row.stationId}:${row.colorId}`)).size === rows.length,
+        { message: "The same Station + Color combination cannot be added twice" }
+    );
 
 export const createInventorySchema = z.object({
     body: z.object({
         itemName: z.string().min(1, "Item name is required").max(200, "Item name too long"),
-        categoryId: z.coerce.number({ required_error: "Category ID is required", invalid_type_error: "Category ID must be a number" }),
-        departmentId: z.coerce.number({ required_error: "Department ID is required", invalid_type_error: "Department ID must be a number" }),
-        pack: z.coerce.number({ required_error: "Pack is required", invalid_type_error: "Pack must be a number" }),
-        rate: z.coerce.number({ required_error: "Rate is required", invalid_type_error: "Rate must be a number" }),
-        unitPerBike: z.coerce.number({ required_error: "Unit per bike is required", invalid_type_error: "Unit per bike must be a number" }),
-        ...rowDataBody,
-    }).refine((data) => data.color.length === data.qty.length && data.color.length === data.stationIds.length, {
-        message: "Each row must have a matching station, color, and quantity",
-        path: ["qty"],
+        categoryId: z.coerce.number({ error: "Category ID must be a number" }),
+        departmentId: z.coerce.number({ error: "Department ID must be a number" }),
+        pack: z.coerce.number({ error: "Pack must be a number" }),
+        rate: z.coerce.number({ error: "Rate must be a number" }),
+        unitPerBike: z.coerce.number({ error: "Unit per bike must be a number" }),
+        stocks: stocksSchema,
     }),
 });
 
@@ -38,18 +44,6 @@ export const updateInventorySchema = z.object({
         pack: z.coerce.number().optional(),
         rate: z.coerce.number().optional(),
         unitPerBike: z.coerce.number().optional(),
-        stationIds: z.array(z.coerce.number().min(1)).optional(),
-        color: z.array(z.string().min(1)).optional(),
-        qty: z.array(z.coerce.number().min(0)).optional(),
-    }).refine((data) => {
-        const lengths = [
-            data.color?.length,
-            data.qty?.length,
-            data.stationIds?.length
-        ].filter(l => l !== undefined);
-        return lengths.length === 0 || lengths.every(l => l === lengths[0]);
-    }, {
-        message: "Each row must have a matching station, color, and quantity",
-        path: ["qty"],
+        stocks: stocksSchema.optional(),
     }),
 });

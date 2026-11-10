@@ -7,16 +7,18 @@ export interface NavItem {
 
 export const NAV_ITEMS: NavItem[] = [
   {
-    label: "Master Enter Registration",
+    label: "Master Entries",
     children: [
-      { label: "Category", href: "/master-entries/categories", operation: "category" },
+      {label:"Account Code", href:"/master-entries/account-code", operation:"account_code_registration"},
       { label: "City", href: "/master-entries/cities", operation: "city" },
       { label: "Province", href: "/master-entries/provinces", operation: "province" },
-      { label: "Station", href: "/master-entries/stations", operation: "station" },
-      { label: "Dealer", href: "/master-entries/dealers", operation: "dealer" },
+      { label: "Dealer ", href: "/master-entries/dealers", operation: "dealer" },
       { label: "Vendor", href: "/master-entries/vendors", operation: "vendor" },
-      { label: "Department", href: "/master-entries/departments", operation: "department" },
       { label: "Inventory", href: "/master-entries/inventory", operation: "inventory" },
+      { label: "Category", href: "/master-entries/categories", operation: "category" },
+      { label: "Department", href: "/master-entries/departments", operation: "department" },
+      { label: "Station", href: "/master-entries/stations", operation: "station" },
+      { label: "Color", href: "/master-entries/colors", operation: "color" },
     ],
   },
   {

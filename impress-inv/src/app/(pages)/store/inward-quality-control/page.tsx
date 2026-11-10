@@ -10,6 +10,7 @@ import useDebounce from "@/hooks/useDebounce";
 import { usePermissions } from "@/hooks/usePermissions";
 import { ViewAllModal, type ViewAllColumn } from "@/components/ui/ViewAllModal";
 import { Button } from "@/components/ui/Button";
+import { Icon } from "@iconify/react";
 
 type InwardRow = {
     id: number;
@@ -22,16 +23,22 @@ type InwardRow = {
     billNO?: number | null;
     detail: string;
     name?: string;
-    code?: number[];
-    itemName?: string[];
-    poBalQty?: number[];
-    recQty?: number[];
-    rejQty?: number[];
-    okQty?: number[];
-    packingDetail?: string[];
+    items?: InwardItemRow[];
     purchaseOrder?: { vendor?: { vendorName?: string; name?: string } };
     quotation?: { vendor?: { vendorName?: string; name?: string } };
     [key: string]: unknown;
+};
+
+// One item row of an inward, linked to an Inventory item
+type InwardItemRow = {
+    id: number;
+    inventoryId: number;
+    inventory?: { id: number; itemName: string } | null;
+    poBalQty: number;
+    recQty: number;
+    rejQty: number;
+    okQty: number;
+    packingDetail: string;
 };
 
 type ApiError = {
@@ -41,8 +48,26 @@ type ApiError = {
     };
 };
 
+type InventoryPickRow = {
+    id: number;
+    itemName: string;
+    categoryName: string;
+    stock: number;
+    [key: string]: unknown;
+};
+
+const MIN_ROWS = 10;
+
+const padRows = <T,>(rows: T[], makeRow: () => T): T[] => {
+    const padded = [...rows];
+    while (padded.length < MIN_ROWS) padded.push(makeRow());
+    return padded;
+};
+
+const normalizeName = (name: string | undefined | null) => String(name || "").trim().toLowerCase();
+
 const defaultRow = () => ({
-    code: "",
+    inventoryId: "",
     itemName: "",
     poBalQty: "",
     recQty: "",
@@ -74,6 +99,9 @@ export default function InwardQualityControlPage() {
     const [showPrintModal, setShowPrintModal] = useState(false);
     const [vendors, setVendors] = useState<{ label: string; value: string }[]>([]);
     const [itemOptions, setItemOptions] = useState<{ label: string; value: string }[]>([]);
+    const [inventoryRows, setInventoryRows] = useState<InventoryPickRow[]>([]);
+    const [isInventoryLoading, setIsInventoryLoading] = useState(true);
+    const [pickerRowIndex, setPickerRowIndex] = useState<number | null>(null);
     const [printVendorId, setPrintVendorId] = useState("");
     const [printFromDate, setPrintFromDate] = useState("");
     const [printToDate, setPrintToDate] = useState("");
@@ -129,8 +157,22 @@ export default function InwardQualityControlPage() {
                 ]);
             }
             if (inventoryRes.status === "fulfilled") {
+                const inventoryList = inventoryRes.value.data.data || [];
+                setInventoryRows(
+                    inventoryList.map((item: any) => ({
+                        id: item.id,
+                        itemName: item.itemName,
+                        categoryName: item.category?.name || "-",
+                        stock: Array.isArray(item.stocks)
+                            ? item.stocks.reduce(
+                                  (sum: number, row: { qty: number }) => sum + (Number(row.qty) || 0),
+                                  0
+                              )
+                            : 0,
+                    }))
+                );
                 const names: string[] = Array.from(
-                    new Set((inventoryRes.value.data.data || []).map((item: any) => item.itemName))
+                    new Set(inventoryList.map((item: any) => item.itemName))
                 );
                 setItemOptions([
                     { label: "All Items", value: "" },
@@ -139,6 +181,8 @@ export default function InwardQualityControlPage() {
             }
         } catch (error) {
             console.error("Failed to fetch dropdown options", error);
+        } finally {
+            setIsInventoryLoading(false);
         }
     };
 
@@ -167,18 +211,15 @@ export default function InwardQualityControlPage() {
     };
 
     const mapInwardToForm = (inv: any): InwardFormValues => {
-        const fetchedRows = (inv.itemName || []).map((name: string, i: number) => ({
-            code: inv.code?.[i] !== undefined && inv.code?.[i] !== null ? String(inv.code[i]) : "",
-            itemName: name || "",
-            poBalQty: inv.poBalQty?.[i] !== undefined && inv.poBalQty?.[i] !== null ? String(inv.poBalQty[i]) : "",
-            recQty: inv.recQty?.[i] !== undefined && inv.recQty?.[i] !== null ? String(inv.recQty[i]) : "",
-            rejQty: inv.rejQty?.[i] !== undefined && inv.rejQty?.[i] !== null ? String(inv.rejQty[i]) : "",
-            okQty: inv.okQty?.[i] !== undefined && inv.okQty?.[i] !== null ? String(inv.okQty[i]) : "",
-            packingDetail: inv.packingDetail?.[i] || "",
+        const fetchedRows = ((inv.items || []) as InwardItemRow[]).map((item) => ({
+            inventoryId: String(item.inventoryId),
+            itemName: item.inventory?.itemName || `Item #${item.inventoryId}`,
+            poBalQty: String(item.poBalQty ?? 0),
+            recQty: String(item.recQty ?? 0),
+            rejQty: String(item.rejQty ?? 0),
+            okQty: String(item.okQty ?? 0),
+            packingDetail: item.packingDetail || "",
         }));
-
-        while (fetchedRows.length < 10) fetchedRows.push(defaultRow());
-        if (fetchedRows.length > 10) fetchedRows.length = 10;
 
         return {
             id: String(inv.id),
@@ -191,7 +232,7 @@ export default function InwardQualityControlPage() {
             billNO: inv.billNO !== undefined && inv.billNO !== null ? String(inv.billNO) : "",
             detail: inv.detail || "",
             name: inv.purchaseOrder?.vendor?.vendorName || inv.purchaseOrder?.vendor?.name || inv.quotation?.vendor?.vendorName || "",
-            items: fetchedRows,
+            items: padRows(fetchedRows, defaultRow),
         };
     };
 
@@ -255,9 +296,10 @@ export default function InwardQualityControlPage() {
             return;
         }
 
-        const validRows = data.items.filter((r) => r.code && r.itemName);
+        clearErrors();
+        const validRows = data.items.filter((r) => r.inventoryId && r.recQty);
         if (validRows.length === 0) {
-            toast.error("Please fill at least one complete row");
+            toast.error("Please add at least one item");
             return;
         }
 
@@ -271,13 +313,13 @@ export default function InwardQualityControlPage() {
             billNO: data.billNO ? Number(data.billNO) : null,
             detail: data.detail,
 
-            code: validRows.map((r) => Number(r.code) || 0),
-            itemName: validRows.map((r) => r.itemName),
-            poBalQty: validRows.map((r) => Number(r.poBalQty) || 0),
-            recQty: validRows.map((r) => Number(r.recQty) || 0),
-            rejQty: validRows.map((r) => Number(r.rejQty) || 0),
-            okQty: validRows.map((r) => Number(r.okQty) || 0),
-            packingDetail: validRows.map((r) => r.packingDetail || ""),
+            items: validRows.map((r) => ({
+                inventoryId: Number(r.inventoryId),
+                poBalQty: Number(r.poBalQty) || 0,
+                recQty: Number(r.recQty) || 0,
+                rejQty: Number(r.rejQty) || 0,
+                packingDetail: r.packingDetail || "",
+            })),
         };
 
         try {
@@ -357,7 +399,6 @@ export default function InwardQualityControlPage() {
                 reset(mapInwardToForm(inv));
                 setIsNewMode(false);
                 setIsEditing(false);
-                toast.success("Inward record found");
             } catch (error: unknown) {
                 const apiError = error as ApiError;
                 toast.error(
@@ -381,23 +422,49 @@ export default function InwardQualityControlPage() {
             const { data } = await api.get(`${PURCHASE_ORDERS}/${val}`);
             if (data.data) {
                 const po = data.data;
-                const fetchedRows = (po.itemName || []).map((name: string, i: number) => ({
-                    code: String(po.code?.[i] ?? ""),
-                    itemName: name,
-                    poBalQty: String(po.quantity?.[i] ?? "0"),
-                    recQty: "",
-                    rejQty: "",
-                    okQty: "",
-                    packingDetail: "",
-                }));
 
-                while (fetchedRows.length < 10) fetchedRows.push(defaultRow());
-                if (fetchedRows.length > 10) fetchedRows.length = 10;
+                // Qty already received against this PO in earlier inwards (excluding the record being edited)
+                const receivedByItem: Record<string, number> = {};
+                for (const inv of inwards) {
+                    if (String(inv.purchaseOrderId) !== String(val)) continue;
+                    if (!isNewMode && String(inv.id) === String(values.id)) continue;
+                    for (const item of inv.items || []) {
+                        const key = normalizeName(item.inventory?.itemName);
+                        receivedByItem[key] = (receivedByItem[key] || 0) + (Number(item.recQty) || 0);
+                    }
+                }
+
+                // PO items are stored by name — link each one to its Inventory item by name
+                const unmatched: string[] = [];
+                const fetchedRows = (po.itemName || []).map((name: string, i: number) => {
+                    const ordered = Number(po.quantity?.[i]) || 0;
+                    const balance = Math.max(ordered - (receivedByItem[normalizeName(name)] || 0), 0);
+                    const inventoryItem = inventoryRows.find(
+                        (inventory) => normalizeName(inventory.itemName) === normalizeName(name)
+                    );
+                    if (!inventoryItem) unmatched.push(name);
+                    return {
+                        inventoryId: inventoryItem ? String(inventoryItem.id) : "",
+                        itemName: inventoryItem?.itemName || name,
+                        poBalQty: String(balance),
+                        recQty: "",
+                        rejQty: "",
+                        okQty: "",
+                        packingDetail: "",
+                    };
+                });
 
                 setValue("name", po.vendor?.vendorName || po.vendor?.name || "", { shouldDirty: true });
                 setValue("quotationId", String(po.quotationId || ""), { shouldDirty: true });
-                setValue("items", fetchedRows, { shouldDirty: true, shouldValidate: true });
-                toast.success("PO details loaded");
+                setValue("items", padRows(fetchedRows, defaultRow), { shouldDirty: true, shouldValidate: true });
+                if (unmatched.length > 0) {
+                    toast.error(
+                        `Not found in inventory: ${unmatched.join(", ")}. Click Item Name to select the correct item.`,
+                        { duration: 6000 }
+                    );
+                } else {
+                    toast.success("PO details loaded");
+                }
             }
         } catch (error) {
             console.error("Failed to load PO details", error);
@@ -410,27 +477,110 @@ export default function InwardQualityControlPage() {
         if (field === "itemName" && value === "") {
             currentItems[index] = defaultRow();
         } else {
-            const newRow = { ...currentItems[index], [field]: value };
-            if (field === "recQty" || field === "rejQty") {
-                const rec = Number(newRow.recQty) || 0;
-                const rej = Number(newRow.rejQty) || 0;
-                const ok = rec - rej;
-                newRow.okQty = String(ok > 0 ? ok : 0);
+            const isQtyField = field === "recQty" || field === "rejQty" || field === "poBalQty";
+            // Qty fields accept whole positive numbers only
+            const cleanValue = isQtyField ? value.replace(/\D/g, "").replace(/^0+(?=\d)/, "") : value;
+            const newRow = { ...currentItems[index], [field]: cleanValue };
 
-                if (rej > 0 && ok <= 0) {
-                    newRow.code = "5000"; // Fully rejected
-                } else if (ok > 0) {
-                    newRow.code = "2000"; // Approved (or partially approved)
-                } else if (rec > 0) {
-                    newRow.code = "2000"; // Has received qty
-                } else {
-                    newRow.code = "";
+            if (field === "recQty" || field === "rejQty" || field === "poBalQty") {
+                const poBal = Number(newRow.poBalQty) || 0;
+                let rec = Number(newRow.recQty) || 0;
+                let rej = Number(newRow.rejQty) || 0;
+
+                // Rec Qty cannot be more than the PO balance (when the row came from a PO)
+                if (poBal > 0 && rec > poBal) {
+                    rec = poBal;
+                    newRow.recQty = String(poBal);
+                    toast.error(
+                        field === "poBalQty"
+                            ? `Row ${index + 1}: Rec Qty reduced to ${poBal} to match PO Bal Qty`
+                            : `Row ${index + 1}: Rec Qty cannot be more than PO Bal Qty (${poBal})`,
+                        { id: `qty-limit-${index}` }
+                    );
                 }
+
+                // REJ Qty cannot be more than Rec Qty
+                if (rej > rec) {
+                    rej = rec;
+                    newRow.rejQty = newRow.recQty === "" ? "" : String(rec);
+                    if (field === "rejQty") {
+                        toast.error(
+                            rec > 0
+                                ? `Row ${index + 1}: REJ Qty cannot be more than Rec Qty (${rec})`
+                                : `Row ${index + 1}: Enter Rec Qty first`,
+                            { id: `qty-limit-${index}` }
+                        );
+                    }
+                }
+
+                newRow.okQty = newRow.recQty === "" && newRow.rejQty === "" ? "" : String(Math.max(rec - rej, 0));
             }
             currentItems[index] = newRow;
         }
         setValue("items", currentItems, { shouldDirty: true, shouldValidate: true });
     };
+
+    // Packing Detail modal
+    const [packingRowIndex, setPackingRowIndex] = useState<number | null>(null);
+    const [packingDraft, setPackingDraft] = useState("");
+
+    const openPackingModal = (index: number) => {
+        setPackingDraft(values.items[index]?.packingDetail || "");
+        setPackingRowIndex(index);
+    };
+
+    const savePackingDetail = () => {
+        if (packingRowIndex === null) return;
+        updateItemRow(packingRowIndex, "packingDetail", packingDraft.trim());
+        setPackingRowIndex(null);
+    };
+
+    // PO Bal Qty comes from the PO when an "Against PO" inward has a PO selected; otherwise the user enters it
+    const isPoBalLocked = values.Type === "againstPO" && !!values.purchaseOrderId;
+
+    const rowHasData = (row: (typeof values.items)[number]) =>
+        !!(row.inventoryId || row.itemName || row.recQty || row.rejQty || row.packingDetail);
+
+    const removeItemRow = (index: number) => {
+        const remaining = values.items.filter((_, i) => i !== index);
+        setValue("items", padRows(remaining, defaultRow), { shouldDirty: true });
+    };
+
+    const addItemRow = () => {
+        setValue("items", [...values.items, defaultRow()], { shouldDirty: true });
+    };
+
+    const handleInventorySelect = (item: InventoryPickRow) => {
+        if (pickerRowIndex === null) return;
+        const duplicateIndex = values.items.findIndex(
+            (row, i) => i !== pickerRowIndex && row.inventoryId === String(item.id)
+        );
+        if (duplicateIndex !== -1) {
+            toast.error(`"${item.itemName}" is already added in row ${duplicateIndex + 1}`);
+            return;
+        }
+
+        const currentItems = [...values.items];
+        const existing = currentItems[pickerRowIndex];
+        // Keep the PO balance when linking a PO row to its matching inventory item
+        const sameItem = normalizeName(existing.itemName) === normalizeName(item.itemName);
+        currentItems[pickerRowIndex] = {
+            ...existing,
+            inventoryId: String(item.id),
+            itemName: item.itemName,
+            // A PO balance only applies to the item that came from the PO
+            poBalQty: sameItem ? existing.poBalQty : "",
+        };
+        setValue("items", currentItems, { shouldDirty: true });
+        setPickerRowIndex(null);
+    };
+
+    const inventoryColumns: ViewAllColumn<InventoryPickRow>[] = [
+        { key: "id", header: "Code" },
+        { key: "itemName", header: "Item Name" },
+        { key: "categoryName", header: "Category" },
+        { key: "stock", header: "Stock Qty" },
+    ];
 
     const buildPrintParams = (includeStatus = true) => {
         const params = new URLSearchParams();
@@ -453,7 +603,14 @@ export default function InwardQualityControlPage() {
                 Inward / Quality Control
             </h1>
 
-            <form onSubmit={handleSubmit(onSubmit)} noValidate>
+            <form
+                onSubmit={(event) => {
+                    // Clear stale manual errors, otherwise handleSubmit blocks onSubmit forever
+                    clearErrors();
+                    void handleSubmit(onSubmit)(event);
+                }}
+                noValidate
+            >
                 {/* Top Section */}
                 <div className="flex flex-wrap gap-4 mb-4">
                     <div className="flex items-center gap-2">
@@ -496,6 +653,7 @@ export default function InwardQualityControlPage() {
                             disabled={!isEditing}
                             className="border border-zinc-300 px-2 py-1 outline-none w-36 bg-white"
                         />
+                        {errors.date && <span className="text-xs text-red-500">{errors.date.message}</span>}
                     </div>
 
                     <div className="flex items-center gap-2">
@@ -556,7 +714,7 @@ export default function InwardQualityControlPage() {
                     />
                 </div>
 
-                <div className="flex flex-wrap gap-4 mb-4">
+                <div className="flex flex-wrap gap-4 mb-1">
                     <div className="flex items-center gap-2 flex-1 min-w-[200px]">
                         <label className="text-sm font-medium w-20">G.R.LR No</label>
                         <input
@@ -604,7 +762,14 @@ export default function InwardQualityControlPage() {
                         />
                     </div>
                 </div>
+                <div className="flex flex-wrap gap-4 mb-4 min-h-4 text-xs text-red-500">
+                    {errors.GRIRNo && <span>{errors.GRIRNo.message}</span>}
+                    {errors.DCNo && <span>{errors.DCNo.message}</span>}
+                </div>
 
+                {errors.detail && (
+                    <p className="mb-1 ml-18 text-xs text-red-500">{errors.detail.message}</p>
+                )}
                 <div className="flex items-center gap-2 mb-6">
                     <label className="text-sm font-medium w-16">Details</label>
                     <input
@@ -633,65 +798,101 @@ export default function InwardQualityControlPage() {
                                     Item Name
                                 </th>
                                 <th className="border-r border-zinc-300 px-2 py-1 font-medium w-24">
-                                    Pol Bal Qty
+                                    PO Bal Qty
                                 </th>
                                 <th className="border-r border-zinc-300 px-2 py-1 font-medium w-24">
                                     Rec Qty
                                 </th>
                                 <th className="border-r border-zinc-300 px-2 py-1 font-medium w-20">
-                                    REJ
+                                    REJ Qty
                                 </th>
                                 <th className="border-r border-zinc-300 px-2 py-1 font-medium w-20">
-                                    Ok
+                                    OK Qty
                                 </th>
-                                <th className="px-2 py-1 font-medium w-48">Paking Detail</th>
+                                <th className="px-2 py-1 font-medium w-56">Packing Detail</th>
                             </tr>
                         </thead>
                         <tbody>
                             {values.items.map((row, index) => (
-                                <tr key={index} className="border-b border-zinc-200 last:border-b-0">
+                                <tr
+                                    key={index}
+                                    className="group border-b border-zinc-200 last:border-b-0 hover:bg-zinc-50 has-[.row-delete:hover]:bg-red-50 has-[.row-delete:focus-visible]:bg-red-50"
+                                >
                                     <td className="border-r border-zinc-200 p-0">
                                         <input
-                                            type="number"
-                                            value={row.code}
-                                            onChange={(e) => updateItemRow(index, "code", e.target.value)}
+                                            type="text"
+                                            value={row.inventoryId}
+                                            readOnly
+                                            tabIndex={-1}
+                                            title="Inventory item code (set by selecting Item Name)"
                                             disabled={!isEditing}
-                                            className="w-full bg-transparent px-2 py-1 text-center outline-none disabled:bg-[#f3f4f6]"
+                                            className={`w-full bg-transparent px-2 py-1 text-center outline-none disabled:bg-[#f3f4f6] ${
+                                                row.itemName && !row.inventoryId ? "bg-red-50" : ""
+                                            }`}
                                         />
                                     </td>
                                     <td className="border-r border-zinc-200 p-0">
                                         <input
                                             type="text"
                                             value={row.itemName}
-                                            onChange={(e) => updateItemRow(index, "itemName", e.target.value)}
+                                            readOnly
+                                            onClick={() => isEditing && setPickerRowIndex(index)}
+                                            onKeyDown={(e) => {
+                                                if (isEditing && (e.key === "Enter" || e.key === " ")) {
+                                                    e.preventDefault();
+                                                    setPickerRowIndex(index);
+                                                }
+                                            }}
+                                            placeholder={isEditing ? "Click to select item" : ""}
                                             disabled={!isEditing}
-                                            className="w-full bg-transparent px-2 py-1 outline-none disabled:bg-[#f3f4f6]"
+                                            title={isEditing ? "Click to select item from inventory" : undefined}
+                                            className="w-full cursor-pointer bg-transparent px-2 py-1 outline-none placeholder:text-zinc-400 hover:bg-primary-50 disabled:cursor-default disabled:bg-[#f3f4f6]"
                                         />
                                     </td>
                                     <td className="border-r border-zinc-200 p-0">
                                         <input
-                                            type="number"
+                                            type="text"
+                                            inputMode="numeric"
                                             value={row.poBalQty}
                                             onChange={(e) => updateItemRow(index, "poBalQty", e.target.value)}
-                                            disabled={!isEditing}
-                                            className="w-full bg-transparent px-2 py-1 text-center outline-none disabled:bg-[#f3f4f6]"
+                                            readOnly={isPoBalLocked}
+                                            tabIndex={isPoBalLocked ? -1 : undefined}
+                                            title={
+                                                isPoBalLocked
+                                                    ? "Loaded from the selected PO (remaining quantity)"
+                                                    : "Enter the expected / balance quantity"
+                                            }
+                                            disabled={!isEditing || !row.inventoryId}
+                                            className={`w-full bg-transparent px-2 py-1 text-center outline-none disabled:bg-[#f3f4f6] ${
+                                                isPoBalLocked ? "text-zinc-600" : ""
+                                            }`}
                                         />
                                     </td>
                                     <td className="border-r border-zinc-200 p-0">
                                         <input
-                                            type="number"
+                                            type="text"
+                                            inputMode="numeric"
                                             value={row.recQty}
                                             onChange={(e) => updateItemRow(index, "recQty", e.target.value)}
-                                            disabled={!isEditing}
+                                            disabled={!isEditing || !row.inventoryId}
+                                            title={
+                                                !row.inventoryId
+                                                    ? "Select Item Name first"
+                                                    : Number(row.poBalQty) > 0
+                                                    ? `Max ${row.poBalQty} (PO Bal Qty)`
+                                                    : undefined
+                                            }
                                             className="w-full bg-transparent px-2 py-1 text-center outline-none disabled:bg-[#f3f4f6]"
                                         />
                                     </td>
                                     <td className="border-r border-zinc-200 p-0">
                                         <input
-                                            type="number"
+                                            type="text"
+                                            inputMode="numeric"
                                             value={row.rejQty}
                                             onChange={(e) => updateItemRow(index, "rejQty", e.target.value)}
-                                            disabled={!isEditing}
+                                            disabled={!isEditing || !row.recQty}
+                                            title={row.recQty ? `Max ${row.recQty} (Rec Qty)` : "Enter Rec Qty first"}
                                             className="w-full bg-transparent px-2 py-1 text-center outline-none disabled:bg-[#f3f4f6]"
                                         />
                                     </td>
@@ -699,24 +900,59 @@ export default function InwardQualityControlPage() {
                                         <input
                                             type="number"
                                             value={row.okQty}
-                                            onChange={(e) => updateItemRow(index, "okQty", e.target.value)}
+                                            readOnly
+                                            tabIndex={-1}
+                                            title="Auto calculated: Rec Qty - REJ Qty"
                                             disabled={!isEditing}
                                             className="w-full bg-transparent px-2 py-1 text-center outline-none disabled:bg-[#f3f4f6] text-black font-medium"
                                         />
                                     </td>
-                                    <td className="p-0">
-                                        <input
-                                            type="text"
-                                            value={row.packingDetail}
-                                            onChange={(e) => updateItemRow(index, "packingDetail", e.target.value)}
-                                            disabled={!isEditing}
-                                            className="w-full bg-transparent px-2 py-1 outline-none disabled:bg-[#f3f4f6]"
-                                        />
+                                    <td className="relative p-0">
+                                        {/* Packing detail: click to view / write in a modal */}
+                                        <button
+                                            type="button"
+                                            onClick={() => openPackingModal(index)}
+                                            disabled={!isEditing && !row.packingDetail}
+                                            title={row.packingDetail || (isEditing ? "Click to add packing detail" : undefined)}
+                                            className={`block w-full truncate px-2 py-1 text-left outline-none disabled:cursor-default ${
+                                                isEditing && rowHasData(row) ? "pr-8" : ""
+                                            } ${row.packingDetail ? "text-black" : "text-zinc-400"} ${
+                                                isEditing ? "hover:bg-primary-50 focus-visible:bg-primary-50" : "bg-[#f3f4f6]"
+                                            }`}
+                                        >
+                                            {row.packingDetail || (isEditing ? "Click to add" : " ")}
+                                        </button>
+
+                                        {/* Remove row: appears on row hover */}
+                                        {isEditing && rowHasData(row) && (
+                                            <button
+                                                type="button"
+                                                onClick={() => removeItemRow(index)}
+                                                title="Remove this row"
+                                                aria-label={`Remove row ${index + 1}`}
+                                                className="row-delete absolute right-1 top-1/2 -translate-y-1/2 rounded p-0.5 text-red-500 opacity-0 transition-opacity hover:bg-red-100 hover:text-red-700 focus-visible:opacity-100 group-hover:opacity-100"
+                                            >
+                                                <Icon icon="mdi:trash-can-outline" className="h-4 w-4" />
+                                            </button>
+                                        )}
                                     </td>
                                 </tr>
                             ))}
                         </tbody>
                     </table>
+                </div>
+                <div className="-mt-4 mb-4 flex items-center justify-between gap-2">
+                    <span className="text-xs text-zinc-500">
+                        {isEditing ? "Tip: hover a row and click the trash icon to remove it" : ""}
+                    </span>
+                    <button
+                        type="button"
+                        onClick={addItemRow}
+                        disabled={!isEditing}
+                        className="border border-zinc-300 bg-white px-3 py-1 text-xs hover:bg-zinc-50 disabled:opacity-50"
+                    >
+                        + Add Row
+                    </button>
                 </div>
                 {errors.items && (
                     <p className="mb-4 text-xs text-red-500 text-center">{errors.items.message}</p>
@@ -749,7 +985,7 @@ export default function InwardQualityControlPage() {
                         variant="secondary"
                         shape="rounded"
                         onClick={() => setIsEditing(true)}
-                        disabled={isNewMode || isEditing || !canUpdate}
+                        disabled={isSubmitting || isNewMode || isEditing || !canUpdate}
                         className="border border-zinc-400 bg-white px-6 hover:bg-zinc-50"
                     >
                         Edit
@@ -794,6 +1030,91 @@ export default function InwardQualityControlPage() {
                 }}
                 onDelete={() => undefined}
             />
+
+            <ViewAllModal
+                key={pickerRowIndex !== null ? "picker-open" : "picker-closed"}
+                isOpen={pickerRowIndex !== null}
+                title={`Select Inventory Item${pickerRowIndex !== null ? ` (Row ${pickerRowIndex + 1})` : ""}`}
+                rows={inventoryRows}
+                columns={inventoryColumns}
+                searchKeys={["id", "itemName", "categoryName"]}
+                isLoading={isInventoryLoading}
+                error={!isInventoryLoading && inventoryRows.length === 0 ? "No inventory items found. Add items in Master Entries > Inventory." : ""}
+                onClose={() => setPickerRowIndex(null)}
+                onRowSelect={handleInventorySelect}
+            />
+
+            {/* Packing Detail Modal */}
+            {packingRowIndex !== null && (
+                <div
+                    className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+                    role="dialog"
+                    aria-modal="true"
+                    aria-labelledby="packing-modal-title"
+                    onMouseDown={(e) => {
+                        if (e.target === e.currentTarget) setPackingRowIndex(null);
+                    }}
+                    onKeyDown={(e) => {
+                        if (e.key === "Escape") setPackingRowIndex(null);
+                        if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && isEditing) savePackingDetail();
+                    }}
+                >
+                    <div className="flex w-full max-w-lg flex-col overflow-hidden rounded-lg bg-white shadow-2xl">
+                        <div className="flex items-start justify-between gap-4 border-b border-zinc-200 px-5 py-4">
+                            <div>
+                                <h2 id="packing-modal-title" className="text-lg font-semibold text-zinc-900">
+                                    Packing Detail
+                                </h2>
+                                <p className="text-xs text-zinc-500">
+                                    Row {packingRowIndex + 1}
+                                    {values.items[packingRowIndex]?.itemName
+                                        ? ` · ${values.items[packingRowIndex].itemName}`
+                                        : ""}
+                                </p>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => setPackingRowIndex(null)}
+                                aria-label="Close"
+                                className="text-2xl leading-none text-zinc-500 hover:text-zinc-900"
+                            >
+                                ×
+                            </button>
+                        </div>
+
+                        <div className="p-4">
+                            <textarea
+                                value={packingDraft}
+                                onChange={(e) => setPackingDraft(e.target.value.slice(0, 255))}
+                                readOnly={!isEditing}
+                                autoFocus
+                                rows={7}
+                                maxLength={255}
+                                placeholder="e.g. 5 cartons x 10 pcs, sealed, no damage"
+                                className="w-full resize-y rounded-md border border-zinc-300 px-3 py-2 text-sm text-zinc-900 outline-none focus:border-primary-400 read-only:bg-zinc-50"
+                            />
+                            <div className="mt-1 text-right text-xs text-zinc-500">{packingDraft.length}/255</div>
+                        </div>
+
+                        <div className="flex justify-end gap-2 border-t border-zinc-200 px-4 py-3">
+                            <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                shape="rounded"
+                                onClick={() => setPackingRowIndex(null)}
+                            >
+                                {isEditing ? "Cancel" : "Close"}
+                            </Button>
+                            {isEditing && (
+                                <Button type="button" size="sm" shape="rounded" onClick={savePackingDetail}>
+                                    Done
+                                </Button>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {/* Print Modal */}
             {showPrintModal && (
@@ -887,27 +1208,32 @@ export default function InwardQualityControlPage() {
                         </div>
 
                         <div className="mt-6 flex flex-col gap-2">
-                            <button
+                            <Button
                                 type="button"
+                                shape="rounded"
                                 onClick={() => openPrint("/reports/inward", true)}
-                                className="w-full bg-blue-600 hover:bg-blue-700 text-white py-2 text-sm font-medium rounded"
+                                className="w-full"
                             >
                                 Open Inward Quality Control Report
-                            </button>
-                            <button
+                            </Button>
+                            <Button
                                 type="button"
+                                variant="outline"
+                                shape="rounded"
                                 onClick={() => openPrint("/reports/purchase-order-balance", false)}
-                                className="w-full bg-emerald-600 hover:bg-emerald-700 text-white py-2 text-sm font-medium rounded"
+                                className="w-full"
                             >
                                 Open Purchase Order Balance Report
-                            </button>
-                            <button
+                            </Button>
+                            <Button
                                 type="button"
+                                variant="secondary"
+                                shape="rounded"
                                 onClick={() => setShowPrintModal(false)}
-                                className="w-full border border-zinc-300 hover:bg-zinc-100 py-1.5 text-sm rounded mt-1"
+                                className="mt-1 w-full"
                             >
                                 Cancel
-                            </button>
+                            </Button>
                         </div>
                     </div>
                 </div>

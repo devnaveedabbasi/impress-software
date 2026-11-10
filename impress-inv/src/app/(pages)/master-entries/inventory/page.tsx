@@ -7,11 +7,19 @@ import { LabeledSelect } from "@/components/ui/LabeledSelect";
 import { Button } from "@/components/ui/Button";
 import useDebounce from "@/hooks/useDebounce";
 import { inventorySchema, type InventoryFormValues } from "@/lib/validations/master";
-import { INVENTORY, CATEGORIES, DEPARTMENTS, STATIONS } from "@/utlis/apiRoutes";
+import { INVENTORY, CATEGORIES, DEPARTMENTS, STATIONS, COLORS } from "@/utlis/apiRoutes";
 import api from "@/lib/axios";
 import toast from "react-hot-toast";
 import { usePermissions } from "@/hooks/usePermissions";
 import { ViewAllModal, type ViewAllColumn } from "@/components/ui/ViewAllModal";
+
+// One stock row of an inventory item, linked to a Station and a Color
+type StockRow = {
+    id: number;
+    stationId: number;
+    colorId: number;
+    qty: number;
+};
 
 type InventoryRow = {
     id: number;
@@ -21,9 +29,7 @@ type InventoryRow = {
     pack: number;
     rate: number;
     unitPerBike: number;
-    stationIds?: number[];
-    color?: string[];
-    qty?: number[];
+    stocks?: StockRow[];
     categoryName?: string;
     departmentName?: string;
     category?: { name: string };
@@ -37,7 +43,20 @@ type ApiError = {
     };
 };
 
-const defaultRow = () => ({ stationId: "", color: "", qty: "" });
+const MIN_ROWS = 4;
+
+const defaultRow = () => ({ stationId: "", colorId: "", qty: "" });
+
+// Convert saved stock rows into form rows (at least MIN_ROWS rows are always shown)
+const stocksToFormRows = (stocks: StockRow[] = []) => {
+    const rows = stocks.map((stock) => ({
+        stationId: String(stock.stationId),
+        colorId: String(stock.colorId),
+        qty: String(stock.qty ?? ""),
+    }));
+    while (rows.length < MIN_ROWS) rows.push(defaultRow());
+    return rows;
+};
 
 const initialValues: InventoryFormValues = {
     id: "",
@@ -50,15 +69,6 @@ const initialValues: InventoryFormValues = {
     colorRows: [defaultRow(), defaultRow(), defaultRow(), defaultRow()],
 };
 
-const COLORS_LIST = [
-    { label: "Red", value: "Red" },
-    { label: "Black", value: "Black" },
-    { label: "Blue", value: "Blue" },
-    { label: "Silver", value: "Silver" },
-    { label: "Grey", value: "Grey" },
-    { label: "White", value: "White" },
-];
-
 const QTY_LIST = Array.from({ length: 50 }, (_, i) => ({
     label: String(i + 1),
     value: String(i + 1),
@@ -70,6 +80,7 @@ export default function InventoryPage() {
     const [categories, setCategories] = useState<{ label: string; value: string }[]>([]);
     const [departments, setDepartments] = useState<{ label: string; value: string }[]>([]);
     const [stations, setStations] = useState<{ label: string; value: string }[]>([]);
+    const [colorOptions, setColorOptions] = useState<{ label: string; value: string }[]>([]);
     const [isOptionsLoading, setIsOptionsLoading] = useState(true);
 
     const { hasPermission } = usePermissions();
@@ -100,11 +111,18 @@ export default function InventoryPage() {
 
     const fetchOptions = async () => {
         try {
-            const [catRes, deptRes, stationRes] = await Promise.all([
+            const [catRes, deptRes, stationRes, colorRes] = await Promise.all([
                 api.get(CATEGORIES),
                 api.get(DEPARTMENTS),
                 api.get(STATIONS),
+                api.get(COLORS),
             ]);
+            setColorOptions(
+                (colorRes.data.data || []).map((c: { id: number; name: string }) => ({
+                    label: c.name,
+                    value: String(c.id),
+                }))
+            );
             setCategories(
                 (catRes.data.data || []).map((c: { id: number; name: string }) => ({
                     label: c.name,
@@ -196,7 +214,7 @@ export default function InventoryPage() {
 
     const updateColorRow = (
         index: number,
-        field: "stationId" | "color" | "qty",
+        field: "stationId" | "colorId" | "qty",
         value: string
     ) => {
         const currentRows = [...values.colorRows];
@@ -208,7 +226,7 @@ export default function InventoryPage() {
         if (!isEditing || isOptionsLoading) return true;
         if (index === 0) return false;
         const prevRow = values.colorRows[index - 1];
-        return !(prevRow?.stationId && prevRow?.color && prevRow?.qty);
+        return !(prevRow?.stationId && prevRow?.colorId && prevRow?.qty);
     };
 
     const onSubmit = async (data: InventoryFormValues) => {
@@ -228,7 +246,7 @@ export default function InventoryPage() {
         }
 
         const validRows = data.colorRows.filter(
-            (r) => r.stationId && r.color && r.qty
+            (r) => r.stationId && r.colorId && r.qty
         );
         if (validRows.length === 0) {
             toast.error("Please fill at least one complete row (Station, Color, Qty)");
@@ -242,9 +260,11 @@ export default function InventoryPage() {
             pack: Number(validationResult.data.pack),
             rate: Number(validationResult.data.rate),
             unitPerBike: Number(validationResult.data.unitPerBike),
-            stationIds: validRows.map((r) => Number(r.stationId)),
-            color: validRows.map((r) => r.color),
-            qty: validRows.map((r) => Number(r.qty)),
+            stocks: validRows.map((r) => ({
+                stationId: Number(r.stationId),
+                colorId: Number(r.colorId),
+                qty: Number(r.qty),
+            })),
         };
 
         try {
@@ -319,15 +339,6 @@ export default function InventoryPage() {
 
                 if (!cached) addInventoryToCache(inv);
 
-                const fetchedRows = (inv.color || []).map((c: string, i: number) => ({
-                    stationId: String(inv.stationIds?.[i] || ""),
-                    color: c,
-                    qty: String(inv.qty?.[i] || ""),
-                }));
-
-                while (fetchedRows.length < 4) fetchedRows.push(defaultRow());
-                if (fetchedRows.length > 4) fetchedRows.length = 4;
-
                 reset({
                     id: String(inv.id),
                     itemName: inv.itemName || "",
@@ -336,7 +347,7 @@ export default function InventoryPage() {
                     pack: String(inv.pack ?? ""),
                     rate: String(inv.rate ?? ""),
                     unitPerBike: String(inv.unitPerBike ?? ""),
-                    colorRows: fetchedRows,
+                    colorRows: stocksToFormRows(inv.stocks),
                 });
                 setIsNewMode(false);
                 setIsEditing(false);
@@ -514,15 +525,15 @@ export default function InventoryPage() {
                                     </td>
                                     <td className="border-r border-zinc-300 p-0">
                                         <select
-                                            value={row.color}
+                                            value={row.colorId}
                                             onChange={(e) =>
-                                                updateColorRow(index, "color", e.target.value)
+                                                updateColorRow(index, "colorId", e.target.value)
                                             }
                                             disabled={isRowDisabled(index)}
                                             className="w-full bg-transparent px-2 py-1.5 text-[13px] text-black font-medium outline-none disabled:bg-[#f3f4f6] disabled:text-zinc-500"
                                         >
                                             <option value="" disabled hidden></option>
-                                            {COLORS_LIST.map((c) => (
+                                            {colorOptions.map((c) => (
                                                 <option key={c.value} value={c.value}>
                                                     {c.label}
                                                 </option>
@@ -551,6 +562,10 @@ export default function InventoryPage() {
                         </tbody>
                     </table>
                 </div>
+
+                {errors.colorRows && (
+                    <p className="text-center text-xs text-red-500">{errors.colorRows.message}</p>
+                )}
 
                 <div className="flex flex-wrap items-center justify-center gap-3 pt-6">
                     <Button
@@ -617,15 +632,6 @@ export default function InventoryPage() {
                 error={inventoriesError}
                 onClose={() => setIsViewAllOpen(false)}
                 onRowSelect={(inv) => {
-                    const fetchedRows = (inv.color || []).map((c: string, i: number) => ({
-                        stationId: String(inv.stationIds?.[i] || ""),
-                        color: c,
-                        qty: String(inv.qty?.[i] || ""),
-                    }));
-
-                    while (fetchedRows.length < 4) fetchedRows.push(defaultRow());
-                    if (fetchedRows.length > 4) fetchedRows.length = 4;
-
                     reset({
                         id: String(inv.id),
                         itemName: inv.itemName || "",
@@ -634,7 +640,7 @@ export default function InventoryPage() {
                         pack: String(inv.pack ?? ""),
                         rate: String(inv.rate ?? ""),
                         unitPerBike: String(inv.unitPerBike ?? ""),
-                        colorRows: fetchedRows,
+                        colorRows: stocksToFormRows(inv.stocks),
                     });
                     setIsNewMode(false);
                     setIsEditing(false);

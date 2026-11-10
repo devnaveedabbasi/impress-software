@@ -160,16 +160,17 @@ const getPurchaseOrderBalanceReport = asyncHandler(async (req, res) => {
 
     // Sum received quantity per (purchaseOrderId, itemName) across all matching Inward records
     const inwards = await prisma.inward.findMany({
-        where: { purchaseOrderId: { in: poIds } }
+        where: { purchaseOrderId: { in: poIds } },
+        include: { items: { include: { inventory: { select: { itemName: true } } } } }
     });
 
+    // PO rows store the item name, inward rows are linked to Inventory — match on the inventory item name
+    const normalizeName = (name) => String(name || "").trim().toLowerCase();
     const receivedByPoAndItem = {};
     for (const inward of inwards) {
-        if (!Array.isArray(inward.itemName)) continue;
-        for (let i = 0; i < inward.itemName.length; i++) {
-            const key = `${inward.purchaseOrderId}::${inward.itemName[i]}`;
-            const rec = inward.recQty?.[i] || 0;
-            receivedByPoAndItem[key] = (receivedByPoAndItem[key] || 0) + rec;
+        for (const item of inward.items || []) {
+            const key = `${inward.purchaseOrderId}::${normalizeName(item.inventory?.itemName)}`;
+            receivedByPoAndItem[key] = (receivedByPoAndItem[key] || 0) + (item.recQty || 0);
         }
     }
 
@@ -182,7 +183,7 @@ const getPurchaseOrderBalanceReport = asyncHandler(async (req, res) => {
             if (itemName && rowItemName !== itemName) continue;
 
             const orderedQty = po.quantity?.[i] || 0;
-            const receivedQty = receivedByPoAndItem[`${po.id}::${rowItemName}`] || 0;
+            const receivedQty = receivedByPoAndItem[`${po.id}::${normalizeName(rowItemName)}`] || 0;
             const balanceQty = orderedQty - receivedQty;
 
             flattenedReport.push({

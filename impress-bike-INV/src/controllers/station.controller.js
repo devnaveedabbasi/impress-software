@@ -136,6 +136,14 @@ const deleteStation = asyncHandler(async (req, res) => {
         throw new ApiError(400, "Station id is required");
     }
 
+    const usedInStock = await prisma.inventoryStock.count({ where: { stationId: Number(id) } });
+    if (usedInStock > 0) {
+        throw new ApiError(
+            400,
+            `This station is used in ${usedInStock} inventory stock row(s) and cannot be deleted`
+        );
+    }
+
     await prisma.station.delete({ where: { id: Number(id) } });
 
     return res.status(200).json(new ApiResponse(200, null, "Station deleted successfully"));

@@ -212,12 +212,24 @@ model Department {
 
 // 09 Station Manegment
 model Station {
-  id          Int      @id @default(autoincrement())
-  name        String   @unique
-  createdById Int?
-  updatedById Int?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id              Int              @id @default(autoincrement())
+  name            String           @unique
+  createdById     Int?
+  updatedById     Int?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  inventoryStocks InventoryStock[]
+}
+
+// 09.1 Color Management (master entry used by inventory stock rows)
+model Color {
+  id              Int              @id @default(autoincrement())
+  name            String           @unique
+  createdById     Int?
+  updatedById     Int?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  inventoryStocks InventoryStock[]
 }
 
 // 06 Inventory  Manegment
@@ -243,6 +255,27 @@ model Inventory {
   createdAt      DateTime       @default(now())
   updatedAt      DateTime       @updatedAt
   saleGatePasses SaleGatePass[]
+  inwardItems    InwardItem[]
+  stocks         InventoryStock[]
+}
+
+// 06.1 Inventory stock rows — one row per (station, color) with its quantity
+model InventoryStock {
+  id          Int       @id @default(autoincrement())
+  inventoryId Int
+  inventory   Inventory @relation(fields: [inventoryId], references: [id], onDelete: Cascade)
+  stationId   Int
+  station     Station   @relation(fields: [stationId], references: [id])
+  colorId     Int
+  color       Color     @relation(fields: [colorId], references: [id])
+  qty         Int       @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([inventoryId, stationId, colorId])
+  @@index([colorId])
+  @@index([stationId])
 }
 
 model Quotation {
@@ -316,18 +349,32 @@ model Inward {
   billNO          Int?
   detail          String
 
-  code          Int[]
-  itemName      String[]
-  poBalQty      Int[]
-  recQty        Int[]
-  rejQty        Int[]
-  okQty         Int[]
-  packingDetail String[]
+  items InwardItem[]
 
   createdById Int?
   updatedById Int?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+}
+
+// 10.1 Inward/Quality Control item rows — each row is linked to an Inventory item
+model InwardItem {
+  id            Int       @id @default(autoincrement())
+  inwardId      Int
+  inward        Inward    @relation(fields: [inwardId], references: [id], onDelete: Cascade)
+  inventoryId   Int
+  inventory     Inventory @relation(fields: [inventoryId], references: [id])
+  poBalQty      Int       @default(0)
+  recQty        Int       @default(0)
+  rejQty        Int       @default(0)
+  okQty         Int       @default(0)
+  packingDetail String    @default("")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([inwardId, inventoryId])
+  @@index([inventoryId])
 }
 
 // 11 Sale GatePass

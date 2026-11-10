@@ -14,6 +14,7 @@ const operations = [
   "inventory",
   "province",
   "station",
+  "color",
   "vendor",
   "purchase_order",
   "quotation",

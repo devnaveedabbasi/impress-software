@@ -13,6 +13,7 @@ export const PROVINCES = "/provinces";
 export const CITIES = "/cities";
 export const STATIONS = "/stations";
 export const CATEGORIES = "/categories";
+export const COLORS = "/colors";
 export const DEPARTMENTS = "/departments";
 export const VENDORS = "/vendors";
 export const DEALERS = "/dealers";

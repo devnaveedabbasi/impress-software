@@ -29,6 +29,17 @@ export const categorySchema = z.object({
 
 export type CategoryFormValues = z.infer<typeof categorySchema>;
 
+export const colorSchema = z.object({
+  id: z.string().optional(),
+  name: z
+    .string()
+    .trim()
+    .min(1, { message: "Color Name is required" })
+    .max(50, { message: "Color Name is too long" }),
+});
+
+export type ColorFormValues = z.infer<typeof colorSchema>;
+
 export const departmentSchema = z.object({
   id: z.string().optional(),
   name: z.string().min(1, { message: "Department Name is required" }),
@@ -154,10 +165,21 @@ export const inventorySchema = z.object({
     .array(
       z.object({
         stationId: z.string().optional(),
-        color: z.string().optional(),
+        colorId: z.string().optional(), // id from the Color master table
         qty: z.string().optional(),
       })
-    ),
+    )
+    .superRefine((rows, ctx) => {
+      const keys = rows
+        .filter((row) => row.stationId && row.colorId)
+        .map((row) => `${row.stationId}:${row.colorId}`);
+      if (keys.length !== new Set(keys).size) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "The same Station + Color combination cannot be added twice",
+        });
+      }
+    }),
 });
 
 export type InventoryFormValues = z.infer<typeof inventorySchema>;
@@ -281,7 +303,8 @@ export const inwardSchema = z.object({
   items: z
     .array(
       z.object({
-        code: z.string().optional().or(z.literal("")),
+        // Linked Inventory item id (shown as "Code") — set only by picking from the inventory modal
+        inventoryId: z.string().optional().or(z.literal("")),
         itemName: z.string().trim().optional().or(z.literal("")),
         poBalQty: z.string().optional().or(z.literal("")),
         recQty: z.string().optional().or(z.literal("")),
@@ -292,34 +315,55 @@ export const inwardSchema = z.object({
     )
     .superRefine((items, ctx) => {
       let hasCompleteRow = false;
-      let hasPartialRow = false;
 
-      for (const row of items) {
-        const hasAny = !!(row.code || row.itemName || row.poBalQty || row.recQty || row.rejQty || row.okQty || row.packingDetail);
-        const hasAll = !!(row.code && row.itemName && row.poBalQty && row.recQty && row.rejQty && row.okQty);
+      for (const [index, row] of items.entries()) {
+        const hasAny = !!(row.inventoryId || row.itemName || row.recQty || row.rejQty || row.packingDetail);
+        if (!hasAny) continue;
 
-        if (hasAll) hasCompleteRow = true;
-        if (hasAny && !hasAll) hasPartialRow = true;
+        if (!row.inventoryId) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: `Row ${index + 1}: "${row.itemName || "item"}" is not linked to inventory — click Item Name and select it from the list`,
+          });
+          return;
+        }
+        if (!row.recQty || Number(row.recQty) < 1) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: `Row ${index + 1}: Rec Qty is required`,
+          });
+          return;
+        }
+        if (Number(row.poBalQty) > 0 && Number(row.recQty) > Number(row.poBalQty)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: `Row ${index + 1}: Rec Qty cannot be more than PO Bal Qty (${row.poBalQty})`,
+          });
+          return;
+        }
+        if ((Number(row.rejQty) || 0) > Number(row.recQty)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: `Row ${index + 1}: REJ Qty cannot be greater than Rec Qty`,
+          });
+          return;
+        }
+        hasCompleteRow = true;
       }
 
       if (!hasCompleteRow) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
-          message: "Please fill at least one complete row",
+          message: "Please add at least one item (select Item Name and enter Rec Qty)",
         });
-      } else if (hasPartialRow) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: "Please complete all fields in partially filled rows, or leave them completely blank",
-        });
+        return;
       }
 
-      const codes = items.map(r => r.code).filter(c => c && c.trim() !== "");
-      const uniqueCodes = new Set(codes);
-      if (codes.length !== uniqueCodes.size) {
+      const ids = items.map((r) => r.inventoryId).filter(Boolean);
+      if (ids.length !== new Set(ids).size) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
-          message: "Each Code must be unique across the rows",
+          message: "The same inventory item cannot be added twice",
         });
       }
     }),

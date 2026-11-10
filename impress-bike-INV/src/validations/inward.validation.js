@@ -6,42 +6,52 @@ export const inwardIdSchema = z.object({
     }),
 });
 
-const rowDataBody = {
-    code: z.array(z.coerce.number().min(1, "Code cannot be empty")).min(1, "At least one code is required"),
-    itemName: z.array(z.string().min(1, "Item name cannot be empty")).min(1, "At least one item name is required"),
-    poBalQty: z.array(z.coerce.number().min(0, "PO Bal Qty cannot be negative")).min(1, "At least one PO Bal Qty is required"),
-    recQty: z.array(z.coerce.number().min(0, "Rec Qty cannot be negative")).min(1, "At least one Rec Qty is required"),
-    rejQty: z.array(z.coerce.number().min(0, "REJ Qty cannot be negative")).min(1, "At least one REJ Qty is required"),
-    okQty: z.array(z.coerce.number().min(0, "Ok Qty cannot be negative")).min(1, "At least one Ok Qty is required"),
-    packingDetail: z.array(z.string().optional()).min(1, "At least one Packing Detail is required"),
+// Each row must be linked to an Inventory item (inventoryId)
+const inwardItemSchema = z
+    .object({
+        inventoryId: z.coerce
+            .number({ error: "Please select an item from inventory" })
+            .int()
+            .min(1, "Please select an item from inventory"),
+        poBalQty: z.coerce.number().int().min(0, "PO Bal Qty cannot be negative").default(0),
+        recQty: z.coerce.number().int().min(1, "Rec Qty must be at least 1"),
+        rejQty: z.coerce.number().int().min(0, "REJ Qty cannot be negative").default(0),
+        okQty: z.coerce.number().int().min(0, "OK Qty cannot be negative").optional(),
+        packingDetail: z.string().max(255).optional().default(""),
+    })
+    .refine((row) => row.rejQty <= row.recQty, {
+        message: "REJ Qty cannot be greater than Rec Qty",
+        path: ["rejQty"],
+    })
+    .refine((row) => !(row.poBalQty > 0) || row.recQty <= row.poBalQty, {
+        message: "Rec Qty cannot be more than PO Bal Qty",
+        path: ["recQty"],
+    });
+
+const itemsSchema = z
+    .array(inwardItemSchema)
+    .min(1, "At least one item row is required")
+    .refine(
+        (items) => new Set(items.map((item) => item.inventoryId)).size === items.length,
+        { message: "The same inventory item cannot be added twice" }
+    );
+
+const headerFields = {
+    date: z.string().min(1, "Date is required"),
+    Type: z.enum(["againstSimple", "againstPO", "againstDealarRejection"]),
+    purchaseOrderId: z.coerce.number().nullable().optional(),
+    quotationId: z.coerce.number().nullable().optional(),
+    GRIRNo: z.coerce.number().min(1, "GRIRNo is required"),
+    DCNo: z.coerce.number().min(1, "DCNo is required"),
+    billNO: z.coerce.number().nullable().optional(),
+    detail: z.string().min(1, "Detail is required"),
 };
 
 export const createInwardSchema = z.object({
     body: z.object({
-        date: z.string().min(1, "Date is required"),
-        Type: z.enum(["againstSimple", "againstPO", "againstDealarRejection"]),
-        purchaseOrderId: z.coerce.number().optional(),
-        quotationId: z.coerce.number().optional(),
-        GRIRNo: z.coerce.number().min(1, "GRIRNo is required"),
-        DCNo: z.coerce.number().min(1, "DCNo is required"),
-        billNO: z.coerce.number().optional(),
-        detail: z.string().min(1, "Detail is required"),
-        ...rowDataBody
-    }).refine((data) => {
-        const lengths = [
-            data.code.length,
-            data.itemName.length,
-            data.poBalQty.length,
-            data.recQty.length,
-            data.rejQty.length,
-            data.okQty.length,
-            data.packingDetail.length
-        ];
-        return lengths.every(val => val === lengths[0]);
-    }, {
-        message: "All array fields (code, itemName, poBalQty, recQty, rejQty, okQty, packingDetail) must have the same length",
-        path: ["arrays"]
-    })
+        ...headerFields,
+        items: itemsSchema,
+    }),
 });
 
 export const updateInwardSchema = z.object({
@@ -49,41 +59,16 @@ export const updateInwardSchema = z.object({
         id: z.string().regex(/^\d+$/, "Id must be a valid number"),
     }),
     body: z.object({
-        date: z.string().optional(),
-        Type: z.enum(["againstSimple", "againstPO", "againstDealarRejection"]).optional(),
-        purchaseOrderId: z.coerce.number().optional(),
-        quotationId: z.coerce.number().optional(),
-        GRIRNo: z.coerce.number().optional(),
-        DCNo: z.coerce.number().optional(),
-        billNO: z.coerce.number().optional(),
-        detail: z.string().optional(),
-        code: z.array(z.coerce.number().min(1, "Code cannot be empty")).optional(),
-        itemName: z.array(z.string().min(1, "Item name cannot be empty")).optional(),
-        poBalQty: z.array(z.coerce.number().min(0, "PO Bal Qty cannot be negative")).optional(),
-        recQty: z.array(z.coerce.number().min(0, "Rec Qty cannot be negative")).optional(),
-        rejQty: z.array(z.coerce.number().min(0, "REJ Qty cannot be negative")).optional(),
-        okQty: z.array(z.coerce.number().min(0, "Ok Qty cannot be negative")).optional(),
-        packingDetail: z.array(z.string().optional()).optional(),
-    }).refine((data) => {
-        const arrays = [
-            data.code,
-            data.itemName,
-            data.poBalQty,
-            data.recQty,
-            data.rejQty,
-            data.okQty,
-            data.packingDetail
-        ].filter(arr => arr !== undefined);
-
-        if (arrays.length > 0) {
-            const length = arrays[0].length;
-            return arrays.every(arr => arr.length === length);
-        }
-        return true;
-    }, {
-        message: "If provided, all array fields must have the same length",
-        path: ["arrays"]
-    })
+        date: headerFields.date.optional(),
+        Type: headerFields.Type.optional(),
+        purchaseOrderId: headerFields.purchaseOrderId,
+        quotationId: headerFields.quotationId,
+        GRIRNo: headerFields.GRIRNo.optional(),
+        DCNo: headerFields.DCNo.optional(),
+        billNO: headerFields.billNO,
+        detail: headerFields.detail.optional(),
+        items: itemsSchema.optional(),
+    }),
 });
 
 export const inwardByDateSchema = z.object({

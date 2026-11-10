@@ -8,7 +8,7 @@ const router = Router();
 
 router.use(authorizeToken);
 
-router.get("/", checkPermission("inventory:view"), inventoryController.getAllInventories);
+router.get("/", checkPermission("inventory:view", "inward_quality_control:view", "inward_quality_control:create"), inventoryController.getAllInventories);
 router.get("/next-id", checkPermission("inventory:view"), inventoryController.getNextIdInventory);
 router.get("/:id", checkPermission("inventory:view"), validate(inventoryIdSchema), inventoryController.getByIdInventory);
 router.post("/", checkPermission("inventory:create"), validate(createInventorySchema), inventoryController.createInventory);

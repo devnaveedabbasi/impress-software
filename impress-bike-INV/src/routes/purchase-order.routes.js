@@ -9,18 +9,18 @@ const router = Router();
 router.use(authorizeToken);
 
 router.route("/")
-    .get(checkPermission("purchaseOrder:view"), purchaseOrderController.getAllPurchaseOrders)
-    .post(checkPermission("purchaseOrder:create"), validate(createPurchaseOrderSchema), purchaseOrderController.createPurchaseOrder);
+    .get(checkPermission("purchase_order:view", "inward_quality_control:view", "inward_quality_control:create"), purchaseOrderController.getAllPurchaseOrders)
+    .post(checkPermission("purchase_order:create"), validate(createPurchaseOrderSchema), purchaseOrderController.createPurchaseOrder);
 
 router.route("/next-id")
-    .get(checkPermission("purchaseOrder:view"), purchaseOrderController.getNextIdPurchaseOrder);
+    .get(checkPermission("purchase_order:view", "purchase_order:create"), purchaseOrderController.getNextIdPurchaseOrder);
 
 router.route("/balance-report")
-    .get(checkPermission("purchaseOrder:view"), purchaseOrderController.getPurchaseOrderBalanceReport);
+    .get(checkPermission("purchase_order:view", "inward_quality_control:view"), purchaseOrderController.getPurchaseOrderBalanceReport);
 
 router.route("/:id")
-    .get(checkPermission("purchaseOrder:view"), validate(purchaseOrderIdSchema), purchaseOrderController.getByIdPurchaseOrder)
-    .put(checkPermission("purchaseOrder:update"), validate(updatePurchaseOrderSchema), purchaseOrderController.updatePurchaseOrder)
-    .delete(checkPermission("purchaseOrder:delete"), validate(purchaseOrderIdSchema), purchaseOrderController.deletePurchaseOrder);
+    .get(checkPermission("purchase_order:view", "inward_quality_control:view", "inward_quality_control:create"), validate(purchaseOrderIdSchema), purchaseOrderController.getByIdPurchaseOrder)
+    .put(checkPermission("purchase_order:update"), validate(updatePurchaseOrderSchema), purchaseOrderController.updatePurchaseOrder)
+    .delete(checkPermission("purchase_order:delete"), validate(purchaseOrderIdSchema), purchaseOrderController.deletePurchaseOrder);
 
 export default router;
