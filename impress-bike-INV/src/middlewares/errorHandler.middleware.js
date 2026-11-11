@@ -3,7 +3,6 @@ import { isConnectionError } from '../config/prisma.js';
 
 const errorHandler = (err, req, res, next) => {
     console.error(" Error:", err);
-
     // Web always uses the LIVE database, so tell the user clearly when it cannot be reached
     if (isConnectionError(err)) {
         return res.status(503).json({

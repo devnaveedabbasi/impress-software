@@ -716,3 +716,63 @@ export const storeIssueSchema = z.object({
 });
 
 export type StoreIssueFormValues = z.infer<typeof storeIssueSchema>;
+
+// ---------------- Item Return from Department ("Rejection Received") ----------------
+export const itemReturnSchema = z.object({
+  id: z.string().optional(), // the Requisition Slip No (generated automatically)
+  date: pastOrTodayDate,
+  departmentId: z.string().min(1, { message: "Please select a department" }),
+  items: z
+    .array(
+      z.object({
+        // Linked Inventory item id (shown as "Code"), set only by picking from the inventory modal
+        inventoryId: z.string().optional().or(z.literal("")),
+        itemName: z.string().trim().optional().or(z.literal("")),
+        recvdQty: z.string().optional().or(z.literal("")),
+        purpose: z.string().trim().max(100, { message: "Purpose must be at most 100 characters" }).optional().or(z.literal("")),
+      })
+    )
+    .superRefine((items, ctx) => {
+      let completeRows = 0;
+      const seen = new Map<string, number>();
+
+      items.forEach((row, index) => {
+        const hasAny = !!(row.inventoryId || row.itemName || row.recvdQty);
+        if (!hasAny) return;
+
+        if (!row.inventoryId) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: [index, "inventoryId"],
+            message: "click Item Description and select the item from the list",
+          });
+          return;
+        }
+        const qtyError = checkRowQty(row.recvdQty, "Recvd Qty");
+        if (qtyError) {
+          ctx.addIssue({ code: z.ZodIssueCode.custom, path: [index, "recvdQty"], message: qtyError });
+          return;
+        }
+        if (seen.has(row.inventoryId)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: [index, "inventoryId"],
+            message: `"${row.itemName}" is already added in row ${(seen.get(row.inventoryId) as number) + 1}`,
+          });
+          return;
+        }
+        seen.set(row.inventoryId, index);
+        completeRows++;
+      });
+
+      // Only when every row is empty: if rows have data, their own problems are reported instead
+      if (completeRows === 0 && !items.some((row) => Object.values(row).some(Boolean))) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Please add at least one item (select Item Description and enter Recvd Qty)",
+        });
+      }
+    }),
+});
+
+export type ItemReturnFormValues = z.infer<typeof itemReturnSchema>;

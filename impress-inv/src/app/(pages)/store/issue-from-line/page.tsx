@@ -272,10 +272,27 @@ export default function IssueFromLinePage() {
             })),
         };
 
-        // The old system allowed stock to go below zero, so this only warns and does not block
-        const overStock = validRows
-            .filter((row) => Number(row.issueQty) > Number(row.handStock || 0))
-            .map((row) => row.itemName);
+        // Issue Qty cannot be more than the hand stock. The server checks this again with the live stock.
+        // A saved slip's own quantity is part of its hand stock again, so it is not counted twice.
+        const overStock = data.items
+            .map((row, index) => ({ row, index }))
+            .filter(({ row }) => row.inventoryId && row.issueQty && Number(row.issueQty) > Number(row.handStock || 0));
+        if (overStock.length > 0) {
+            const rows: Record<number, { field: string; message: string }> = {};
+            for (const { row, index } of overStock) {
+                rows[index] = {
+                    field: "issueQty",
+                    message: `Issue Qty (${row.issueQty}) is more than the hand stock (${row.handStock || 0})`,
+                };
+            }
+            setRowErrors(rows);
+            const first = overStock[0];
+            toast.error(`${first.row.itemName}: Issue Qty (${first.row.issueQty}) is more than the hand stock (${first.row.handStock || 0})`);
+            requestAnimationFrame(() =>
+                document.querySelector('[data-row-error="true"]')?.scrollIntoView({ block: "center", behavior: "smooth" })
+            );
+            return;
+        }
 
         try {
             const response = isNewMode
@@ -283,12 +300,6 @@ export default function IssueFromLinePage() {
                 : await api.put(`${STORE_ISSUES}/${data.id}`, payload);
 
             toast.success(response.data.message || "Issue slip saved successfully");
-            if (overStock.length > 0) {
-                toast(`Issue Qty is more than the hand stock for: ${overStock.join(", ")}`, {
-                    icon: "⚠️",
-                    duration: 6000,
-                });
-            }
             if (hasLoadedIssues) {
                 setHasLoadedIssues(false);
                 await fetchAllIssues(false, true);

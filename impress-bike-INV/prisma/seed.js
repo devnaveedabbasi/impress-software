@@ -23,6 +23,8 @@ const operations = [
   "sale_gate_pass",
   "rejection_return_to_vendor",
   "issue_from_line",
+  "item_return_from_department",
+  "item_ledger",
 ];
 
 const actions = ["view", "create", "update", "delete"];

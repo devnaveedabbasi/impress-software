@@ -2,6 +2,15 @@ import jwt from "jsonwebtoken";
 import prisma, { getInactiveDatabaseClient } from "../config/prisma.js";
 import config from "../config/index.js";
 
+// The signed-in user (with role and permissions) is read from the database on every request, which is slow when
+// the database is far away. A few seconds of memory removes most of those reads. Login / logout clear it.
+const USER_CACHE_MS = 10000;
+const userCache = new Map();
+export const clearAuthCache = (userId) => {
+  if (userId === undefined) userCache.clear();
+  else userCache.delete(Number(userId));
+};
+
 const authorizeToken = async (req, res, next) => {
   try {
     const authHeader = req.headers.authorization;
@@ -17,8 +26,6 @@ const authorizeToken = async (req, res, next) => {
 
     const decoded = jwt.verify(token, config.jwt.secret);
 
-    console.log("DECODED TOKEN:", decoded);
-
 
     if (!decoded.userId) {
       return res.status(401).json({
@@ -27,7 +34,10 @@ const authorizeToken = async (req, res, next) => {
       });
     }
 
-    const user = await prisma.user.findUnique({
+    const cachedUser = userCache.get(Number(decoded.userId));
+    const fresh = cachedUser && Date.now() - cachedUser.at < USER_CACHE_MS && cachedUser.user.token === token;
+
+    const user = fresh ? { ...cachedUser.user } : await prisma.user.findUnique({
       where: {
         id: Number(decoded.userId),
       },
@@ -91,6 +101,7 @@ const authorizeToken = async (req, res, next) => {
       });
     }
 
+    userCache.set(Number(user.id), { at: Date.now(), user: { ...user } });
     req.user = user;
 
     next();

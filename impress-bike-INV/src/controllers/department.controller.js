@@ -136,6 +136,15 @@ const deleteDepartment = asyncHandler(async (req, res) => {
         throw new ApiError(400, "Department id is required");
     }
 
+    const usedInIssues = await prisma.storeIssue.count({ where: { departmentId: Number(id) } });
+    const usedInReturns = await prisma.itemReturn.count({ where: { departmentId: Number(id) } });
+    if (usedInIssues + usedInReturns > 0) {
+        throw new ApiError(
+            400,
+            `This department is used in ${usedInIssues} Issue slip(s) and ${usedInReturns} Item Return slip(s) and cannot be deleted`
+        );
+    }
+
     await prisma.department.delete({ where: { id: Number(id) } });
 
     return res.status(200).json(new ApiResponse(200, null, "Department deleted successfully"));

@@ -65,6 +65,9 @@ export const SYNC_MODELS = [
   "rejectionReturnItem", // must come after "rejectionReturnToVendor" and "inventory" (foreign keys)
   "storeIssue", // must come after "department" and "color" (foreign keys)
   "storeIssueItem", // must come after "storeIssue" and "inventory" (foreign keys)
+  "itemReturn", // must come after "department" (foreign key)
+  "itemReturnItem", // must come after "itemReturn" and "inventory" (foreign keys)
+  "stockMovement", // must come after "inventory" (foreign key)
 ];
 
 const COMPOSITE_KEYS = {
@@ -416,6 +419,7 @@ async function syncSafeRecordsInternal(options = { fullScan: false }) {
   });
 
   console.info(`[Sync] Delta sync completed successfully at ${lastSyncAt}`);
+
   return results;
 }
 

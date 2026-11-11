@@ -5,6 +5,7 @@ import prisma, {
     getActiveDatabaseClient,
     getActiveDatabaseName,
 } from "../config/prisma.js";
+import { getStockInHand, replaceMovements, removeMovements, TX_OPTIONS } from "../services/stock.service.js";
 
 // The id of the record is the Requisition Slip No. Every slip is returned with its department, color and item rows.
 const issueInclude = {
@@ -46,19 +47,34 @@ const assertLinksExist = async ({ departmentId, colorId, items }) => {
     }
 };
 
-// Upm (units per bike) and Hand Stock are read by the server, the client cannot choose them
+// Upm (units per bike) and Hand Stock are read by the server, the client cannot choose them.
+// Hand stock comes from the stock ledger (inventory master + movements).
 const readItemFacts = async (inventoryIds) => {
-    const [inventories, stocks] = await Promise.all([
-        prisma.inventory.findMany({ where: { id: { in: inventoryIds } }, select: { id: true, unitPerBike: true } }),
-        prisma.inventoryStock.groupBy({
-            by: ["inventoryId"],
-            where: { inventoryId: { in: inventoryIds } },
-            _sum: { qty: true },
-        }),
+    const [inventories, handStock] = await Promise.all([
+        prisma.inventory.findMany({ where: { id: { in: inventoryIds } }, select: { id: true, itemName: true, unitPerBike: true } }),
+        getStockInHand(inventoryIds),
     ]);
     const upm = new Map(inventories.map((row) => [row.id, row.unitPerBike || 0]));
-    const handStock = new Map(stocks.map((row) => [row.inventoryId, row._sum.qty || 0]));
-    return { upm, handStock };
+    const names = new Map(inventories.map((row) => [row.id, row.itemName]));
+    return { upm, handStock, names };
+};
+
+// An item cannot be issued for more than the stock in hand. When a slip is edited, what it issued before
+// goes back first (alreadyIssued), because the new quantity replaces the old one.
+const assertEnoughStock = (items, facts, alreadyIssued = new Map()) => {
+    const problems = [];
+    items.forEach((item, index) => {
+        const available = (facts.handStock.get(item.inventoryId) || 0) + (alreadyIssued.get(item.inventoryId) || 0);
+        if (item.issueQty > available) {
+            problems.push({
+                field: `items.${index}.issueQty`,
+                message: `${facts.names.get(item.inventoryId) || "Item"}: Issue Qty (${item.issueQty}) is more than the hand stock (${available})`,
+            });
+        }
+    });
+    if (problems.length > 0) {
+        throw new ApiError(400, problems[0].message, problems);
+    }
 };
 
 const normalizeItems = (items) =>
@@ -67,6 +83,17 @@ const normalizeItems = (items) =>
         issueQty: Number(item.issueQty),
         purpose: item.purpose || "",
     }));
+
+// The issued parts leave the store: one negative ledger line per item
+const writeMovements = (tx, issue, userId) =>
+    replaceMovements(tx, {
+        sourceType: "STORE_ISSUE",
+        sourceId: issue.id,
+        date: issue.date,
+        rows: issue.items.map((item) => ({ inventoryId: item.inventoryId, qty: -item.issueQty })),
+        userId,
+        note: `Store Issuance #${issue.id}`,
+    });
 
 const getAllStoreIssues = asyncHandler(async (req, res) => {
     const issues = await prisma.storeIssue.findMany({
@@ -100,32 +127,38 @@ const createStoreIssue = asyncHandler(async (req, res) => {
 
     await assertLinksExist({ departmentId, colorId, items });
     const facts = await readItemFacts(items.map((item) => item.inventoryId));
+    assertEnoughStock(items, facts);
     const department = await prisma.department.findUnique({ where: { id: departmentId }, select: { name: true } });
 
     // Sync PostgreSQL auto-increment sequences
     await syncSequence("StoreIssue");
     await syncSequence("StoreIssueItem");
 
-    const issue = await prisma.storeIssue.create({
-        data: {
-            date: new Date(date),
-            departmentId,
-            colorId,
-            bikeQty: Number(bikeQty),
-            createdById: req.user?.id,
-            items: {
-                create: items.map((item) => ({
-                    inventoryId: item.inventoryId,
-                    issueQty: item.issueQty,
-                    // The purpose is the department unless the user wrote something else
-                    purpose: item.purpose || department?.name || "",
-                    upm: facts.upm.get(item.inventoryId) || 0,
-                    handStock: facts.handStock.get(item.inventoryId) || 0,
-                })),
+    // The slip and its stock movements are saved together, or not at all
+    const issue = await getActiveDatabaseClient().$transaction(async (tx) => {
+        const created = await tx.storeIssue.create({
+            data: {
+                date: new Date(date),
+                departmentId,
+                colorId,
+                bikeQty: Number(bikeQty),
+                createdById: req.user?.id,
+                items: {
+                    create: items.map((item) => ({
+                        inventoryId: item.inventoryId,
+                        issueQty: item.issueQty,
+                        // The purpose is the department unless the user wrote something else
+                        purpose: item.purpose || department?.name || "",
+                        upm: facts.upm.get(item.inventoryId) || 0,
+                        handStock: facts.handStock.get(item.inventoryId) || 0,
+                    })),
+                },
             },
-        },
-        include: issueInclude,
-    });
+            include: issueInclude,
+        });
+        await writeMovements(tx, created, req.user?.id);
+        return created;
+    }, TX_OPTIONS);
 
     return res.status(201).json(new ApiResponse(201, issue, "Store issue created successfully"));
 });
@@ -152,7 +185,11 @@ const updateStoreIssue = asyncHandler(async (req, res) => {
     await assertLinksExist({ departmentId: data.departmentId, colorId: data.colorId, items });
 
     const facts = items ? await readItemFacts(items.map((item) => item.inventoryId)) : null;
-    if (items) await syncSequence("StoreIssueItem");
+    if (items) {
+        const previous = await prisma.storeIssueItem.findMany({ where: { storeIssueId: issueId } });
+        assertEnoughStock(items, facts, new Map(previous.map((row) => [row.inventoryId, row.issueQty])));
+        await syncSequence("StoreIssueItem");
+    }
 
     let purposeDefault = existing.department?.name || "";
     if (data.departmentId !== undefined && data.departmentId !== existing.departmentId) {
@@ -197,8 +234,10 @@ const updateStoreIssue = asyncHandler(async (req, res) => {
             }
         }
 
-        return tx.storeIssue.findUnique({ where: { id: issueId }, include: issueInclude });
-    });
+        const updated = await tx.storeIssue.findUnique({ where: { id: issueId }, include: issueInclude });
+        await writeMovements(tx, updated, req.user?.id);
+        return updated;
+    }, TX_OPTIONS);
 
     return res.status(200).json(new ApiResponse(200, issue, "Store issue updated successfully"));
 });
@@ -211,8 +250,11 @@ const deleteStoreIssue = asyncHandler(async (req, res) => {
         throw new ApiError(404, "Store issue not found");
     }
 
-    // Item rows are removed automatically (onDelete: Cascade)
-    await prisma.storeIssue.delete({ where: { id: issueId } });
+    // The stock goes back: the ledger lines of the slip are removed with it. Item rows are removed automatically.
+    await getActiveDatabaseClient().$transaction(async (tx) => {
+        await removeMovements(tx, "STORE_ISSUE", issueId);
+        await tx.storeIssue.delete({ where: { id: issueId } });
+    }, TX_OPTIONS);
 
     return res.status(200).json(new ApiResponse(200, null, "Store issue deleted successfully"));
 });

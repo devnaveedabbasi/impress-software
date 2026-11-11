@@ -25,6 +25,8 @@ export const ACCOUNT_CODES = "/account-codes";
 export const SALE_GATE_PASSES = "/sale-gate-passes";
 export const REJECTION_RETURN_TO_VENDOR = "/rejection-returns-to-vendor";
 export const STORE_ISSUES = "/store-issues";
+export const ITEM_RETURNS = "/item-returns";
+export const STOCK_LEDGER = "/stock/ledger";
 
 // Sync APIs (Offline <-> Online)
 export const SYNC_STATUS = "/sync/status";

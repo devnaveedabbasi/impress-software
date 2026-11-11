@@ -4,6 +4,7 @@ import prisma, {
 } from "../config/prisma.js";
 import { ApiError } from "../utils/apiError.js";
 import { ApiResponse } from "../utils/apiResponse.js";
+import { getStockInHand } from "../services/stock.service.js";
 import asyncHandler from "../utils/asyncHandler.js";
 
 const isInventoryConflict = (error) => {
@@ -77,7 +78,10 @@ const getAllInventories = asyncHandler(async (req, res) => {
         orderBy: { id: "asc" },
         include: inventoryInclude,
     });
-    return res.status(200).json(new ApiResponse(200, inventories, "Inventories fetched successfully"));
+    // stockInHand = the stock of the inventory master + the stock ledger (all stations and colors together)
+    const stock = await getStockInHand(inventories.map((item) => item.id));
+    const withStock = inventories.map((item) => ({ ...item, stockInHand: stock.get(item.id) ?? 0 }));
+    return res.status(200).json(new ApiResponse(200, withStock, "Inventories fetched successfully"));
 });
 
 const getByIdInventory = asyncHandler(async (req, res) => {
@@ -93,7 +97,10 @@ const getByIdInventory = asyncHandler(async (req, res) => {
     if (!inventory) {
         throw new ApiError(404, "Inventory not found");
     }
-    return res.status(200).json(new ApiResponse(200, inventory, "Inventory fetched successfully"));
+    const stock = await getStockInHand([inventory.id]);
+    return res
+        .status(200)
+        .json(new ApiResponse(200, { ...inventory, stockInHand: stock.get(inventory.id) ?? 0 }, "Inventory fetched successfully"));
 });
 
 const createInventory = asyncHandler(async (req, res) => {
@@ -233,6 +240,15 @@ const deleteInventory = asyncHandler(async (req, res) => {
         throw new ApiError(
             400,
             `This item is used in ${usedInReturns} Rejection Return record(s) and cannot be deleted`
+        );
+    }
+
+    const usedInIssueSlips = await prisma.storeIssueItem.count({ where: { inventoryId: Number(id) } });
+    const usedInItemReturns = await prisma.itemReturnItem.count({ where: { inventoryId: Number(id) } });
+    if (usedInIssueSlips + usedInItemReturns > 0) {
+        throw new ApiError(
+            400,
+            `This item is used in ${usedInIssueSlips} Issue slip(s) and ${usedInItemReturns} Item Return slip(s) and cannot be deleted`
         );
     }
 

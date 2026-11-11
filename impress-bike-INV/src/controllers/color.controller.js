@@ -139,6 +139,11 @@ const deleteColor = asyncHandler(async (req, res) => {
         );
     }
 
+    const usedInIssues = await prisma.storeIssue.count({ where: { colorId } });
+    if (usedInIssues > 0) {
+        throw new ApiError(400, `This color is used in ${usedInIssues} Issue slip(s) and cannot be deleted`);
+    }
+
     await prisma.color.delete({ where: { id: colorId } });
 
     return res.status(200).json(new ApiResponse(200, null, "Color deleted successfully"));

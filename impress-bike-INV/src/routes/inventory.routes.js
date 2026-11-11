@@ -23,7 +23,10 @@ router.get(
         "rejection_return_to_vendor:update",
         "issue_from_line:view",
         "issue_from_line:create",
-        "issue_from_line:update"
+        "issue_from_line:update",
+        "item_return_from_department:view",
+        "item_return_from_department:create",
+        "item_return_from_department:update"
     ),
     inventoryController.getAllInventories
 );

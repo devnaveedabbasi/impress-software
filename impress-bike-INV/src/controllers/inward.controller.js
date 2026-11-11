@@ -6,6 +6,7 @@ import prisma, {
     getActiveDatabaseClient,
     getActiveDatabaseName,
 } from "../config/prisma.js";
+import { replaceMovements, removeMovements, TX_OPTIONS } from "../services/stock.service.js";
 
 // Every inward is returned with its item rows and the linked Inventory item
 const inwardInclude = {
@@ -45,6 +46,17 @@ const assertInventoryExists = async (items) => {
         throw new ApiError(400, `Inventory item(s) not found: ${missing.join(", ")}`);
     }
 };
+
+// Only the OK quantity goes to the stock: the rejected quantity is not usable stock. One + ledger line per item.
+const writeMovements = (tx, inward, userId) =>
+    replaceMovements(tx, {
+        sourceType: "INWARD",
+        sourceId: inward.id,
+        date: inward.date,
+        rows: inward.items.map((item) => ({ inventoryId: item.inventoryId, qty: item.okQty })),
+        userId,
+        note: `Inward #${inward.id} (GRIR ${inward.GRIRNo})`,
+    });
 
 const toNullableNumber = (value) =>
     value === undefined || value === null || value === "" || Number(value) === 0 ? null : Number(value);
@@ -93,21 +105,26 @@ const createInward = asyncHandler(async (req, res) => {
         `);
     }
 
-    const inward = await prisma.inward.create({
-        data: {
-            date: new Date(date),
-            Type,
-            purchaseOrderId: toNullableNumber(purchaseOrderId),
-            quotationId: toNullableNumber(quotationId),
-            GRIRNo: Number(GRIRNo),
-            DCNo: Number(DCNo),
-            billNO: toNullableNumber(billNO),
-            detail,
-            createdById: req.user?.id,
-            items: { create: items },
-        },
-        include: inwardInclude,
-    });
+    // The inward and its stock movements are saved together, or not at all
+    const inward = await client.$transaction(async (tx) => {
+        const created = await tx.inward.create({
+            data: {
+                date: new Date(date),
+                Type,
+                purchaseOrderId: toNullableNumber(purchaseOrderId),
+                quotationId: toNullableNumber(quotationId),
+                GRIRNo: Number(GRIRNo),
+                DCNo: Number(DCNo),
+                billNO: toNullableNumber(billNO),
+                detail,
+                createdById: req.user?.id,
+                items: { create: items },
+            },
+            include: inwardInclude,
+        });
+        await writeMovements(tx, created, req.user?.id);
+        return created;
+    }, TX_OPTIONS);
 
     return res.status(201).json(new ApiResponse(201, inward, "Inward created successfully"));
 });
@@ -161,8 +178,10 @@ const updateInward = asyncHandler(async (req, res) => {
             }
         }
 
-        return tx.inward.findUnique({ where: { id: inwardId }, include: inwardInclude });
-    });
+        const updated = await tx.inward.findUnique({ where: { id: inwardId }, include: inwardInclude });
+        await writeMovements(tx, updated, req.user?.id);
+        return updated;
+    }, TX_OPTIONS);
 
     return res.status(200).json(new ApiResponse(200, inward, "Inward updated successfully"));
 });
@@ -175,8 +194,11 @@ const deleteInward = asyncHandler(async (req, res) => {
         throw new ApiError(404, "Inward not found");
     }
 
-    // Item rows are removed automatically (onDelete: Cascade)
-    await prisma.inward.delete({ where: { id: Number(id) } });
+    // The ledger lines of the inward are removed with it. Item rows are removed automatically (onDelete: Cascade)
+    await getActiveDatabaseClient().$transaction(async (tx) => {
+        await removeMovements(tx, "INWARD", Number(id));
+        await tx.inward.delete({ where: { id: Number(id) } });
+    }, TX_OPTIONS);
 
     return res.status(200).json(new ApiResponse(200, null, "Inward deleted successfully"));
 });

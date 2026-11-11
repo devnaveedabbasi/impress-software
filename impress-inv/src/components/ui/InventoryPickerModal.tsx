@@ -59,15 +59,20 @@ export function InventoryPickerModal({
               departmentId?: number;
               unitPerBike?: number;
               stocks?: { qty: number }[];
+              stockInHand?: number;
             }) => ({
               id: item.id,
               itemName: item.itemName,
               categoryName: item.category?.name || "-",
               departmentId: item.departmentId,
               unitPerBike: item.unitPerBike ?? 0,
-              stock: Array.isArray(item.stocks)
-                ? item.stocks.reduce((sum, row) => sum + (Number(row.qty) || 0), 0)
-                : 0,
+              // stockInHand already includes the stock movements (inward, gate pass, issue, return)
+              stock:
+                typeof item.stockInHand === "number"
+                  ? item.stockInHand
+                  : Array.isArray(item.stocks)
+                    ? item.stocks.reduce((sum, row) => sum + (Number(row.qty) || 0), 0)
+                    : 0,
             })
           )
         );

@@ -210,6 +210,7 @@ model Department {
   updatedAt   DateTime     @updatedAt
   inventories Inventory[]
   storeIssues StoreIssue[]
+  itemReturns ItemReturn[]
 }
 
 // 09 Station Manegment
@@ -262,6 +263,8 @@ model Inventory {
   inwardItems          InwardItem[]
   stocks               InventoryStock[]
   storeIssueItems      StoreIssueItem[]
+  itemReturnItems      ItemReturnItem[]
+  stockMovements       StockMovement[]
 }
 
 // 06.1 Inventory stock rows — one row per (station, color) with its quantity
@@ -504,3 +507,59 @@ model StoreIssueItem {
   @@unique([storeIssueId, inventoryId])
   @@index([inventoryId])
 }
+
+// 14 Item Return from Department ("Rejection Received"): parts a department gives back to the store.
+// "id" is the Requisition Slip No (generated automatically).
+model ItemReturn {
+  id           Int        @id @default(autoincrement())
+  date         DateTime
+  departmentId Int
+  department   Department @relation(fields: [departmentId], references: [id])
+
+  items ItemReturnItem[]
+
+  createdById Int?
+  updatedById Int?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([departmentId])
+}
+
+// 14.1 Item Return item rows — each row is linked to an Inventory item
+model ItemReturnItem {
+  id           Int        @id @default(autoincrement())
+  itemReturnId Int
+  itemReturn   ItemReturn @relation(fields: [itemReturnId], references: [id], onDelete: Cascade)
+  inventoryId  Int
+  inventory    Inventory  @relation(fields: [inventoryId], references: [id])
+  recvdQty     Int
+  purpose      String     @default("")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([itemReturnId, inventoryId])
+  @@index([inventoryId])
+}
+
+// 15 Stock Movement ledger: every document that moves stock writes its lines here (+ in, - out).
+// Stock in hand = the stock of the Inventory master + the total of these movements.
+// The id is a cuid (not a counter) so rows made on LOCAL and on LIVE can never clash when they are synced.
+model StockMovement {
+  id          String    @id @default(cuid())
+  date        DateTime
+  inventoryId Int
+  inventory   Inventory @relation(fields: [inventoryId], references: [id])
+  qty         Int
+  sourceType  String // INWARD | SALE_GATE_PASS | STORE_ISSUE | ITEM_RETURN
+  sourceId    Int
+  note        String    @default("")
+  createdById Int?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @default(now()) @updatedAt
+
+  @@index([inventoryId, date])
+  @@index([sourceType, sourceId])
+}
+

@@ -6,6 +6,7 @@ import { ApiError } from "../utils/apiError.js";
 import { comparePassword, hashPassword } from "../utils/password.js";
 import { signToken } from "../utils/jwt.js";
 import { mapUserPermissions } from "./user.controller.js";
+import { clearAuthCache } from "../middlewares/auth.middleware.js";
 
 // The active database (LOCAL or LIVE) can switch at any time, so the session token is written to BOTH
 // databases. Otherwise a token saved while LIVE was active is unknown to LOCAL and the user is logged out
@@ -15,6 +16,7 @@ const OTHER_DATABASE_TIMEOUT_MS = 4000;
 const saveUserToken = async (userId, token) => {
     // Active database must succeed (login fails otherwise, like before)
     await prisma.user.update({ where: { id: userId }, data: { token } });
+    clearAuthCache(userId);
 
     const other = getInactiveDatabaseClient();
     if (!other) return;

@@ -5,6 +5,7 @@ import prisma, {
     getActiveDatabaseClient,
     getActiveDatabaseName,
 } from "../config/prisma.js";
+import { getStockInHand, replaceMovements, removeMovements, TX_OPTIONS } from "../services/stock.service.js";
 
 const saleGatePassInclude = {
     items: {
@@ -54,15 +55,19 @@ const assertInventoryExists = async (items) => {
     }
 };
 
-// Stock in hand = the total quantity of the item over all its stations and colors
-const readStockInHand = async (inventoryIds) => {
-    const grouped = await prisma.inventoryStock.groupBy({
-        by: ["inventoryId"],
-        where: { inventoryId: { in: inventoryIds } },
-        _sum: { qty: true },
+// Stock in hand = inventory master stock + the stock ledger (see stock.service.js)
+const readStockInHand = (inventoryIds) => getStockInHand(inventoryIds);
+
+// The items leave the store: one negative ledger line per item
+const writeMovements = (tx, gatePass, userId) =>
+    replaceMovements(tx, {
+        sourceType: "SALE_GATE_PASS",
+        sourceId: gatePass.id,
+        date: gatePass.date,
+        rows: gatePass.items.map((item) => ({ inventoryId: item.inventoryId, qty: -item.qty })),
+        userId,
+        note: `Sale Gate Pass #${gatePass.id}`,
     });
-    return new Map(grouped.map((row) => [row.inventoryId, row._sum.qty || 0]));
-};
 
 // Bill No is optional
 const normalizeBill = (value) => (value === undefined || value === null || value === "" ? null : Number(value));
@@ -113,24 +118,29 @@ const createSaleGatePass = asyncHandler(async (req, res) => {
         `);
     }
 
-    const saleGatePass = await prisma.saleGatePass.create({
-        data: {
-            date: new Date(date),
-            accountName,
-            billNO: normalizeBill(billNO),
-            throughBy: throughBy || "",
-            remarks: remarks || "",
-            vehicleNo: vehicleNo || "",
-            createdById: req.user?.id,
-            items: {
-                create: items.map((item) => ({
-                    ...item,
-                    stockInHand: stockByInventory.get(item.inventoryId) || 0,
-                })),
+    // The gate pass and its stock movements are saved together, or not at all
+    const saleGatePass = await getActiveDatabaseClient().$transaction(async (tx) => {
+        const created = await tx.saleGatePass.create({
+            data: {
+                date: new Date(date),
+                accountName,
+                billNO: normalizeBill(billNO),
+                throughBy: throughBy || "",
+                remarks: remarks || "",
+                vehicleNo: vehicleNo || "",
+                createdById: req.user?.id,
+                items: {
+                    create: items.map((item) => ({
+                        ...item,
+                        stockInHand: stockByInventory.get(item.inventoryId) || 0,
+                    })),
+                },
             },
-        },
-        include: saleGatePassInclude,
-    });
+            include: saleGatePassInclude,
+        });
+        await writeMovements(tx, created, req.user?.id);
+        return created;
+    }, TX_OPTIONS);
 
     return res.status(201).json(new ApiResponse(201, saleGatePass, "Sale Gate Pass created successfully"));
 });
@@ -182,11 +192,13 @@ const updateSaleGatePass = asyncHandler(async (req, res) => {
             });
         }
 
-        return tx.saleGatePass.findUnique({
+        const updated = await tx.saleGatePass.findUnique({
             where: { id: Number(id) },
             include: saleGatePassInclude,
         });
-    });
+        await writeMovements(tx, updated, req.user?.id);
+        return updated;
+    }, TX_OPTIONS);
 
     return res.status(200).json(new ApiResponse(200, saleGatePass, "Sale Gate Pass updated successfully"));
 });
@@ -199,7 +211,11 @@ const deleteSaleGatePass = asyncHandler(async (req, res) => {
         throw new ApiError(404, "Sale Gate Pass not found");
     }
 
-    await prisma.saleGatePass.delete({ where: { id: Number(id) } });
+    // The stock goes back: the ledger lines of the gate pass are removed with it. Item rows are removed automatically.
+    await getActiveDatabaseClient().$transaction(async (tx) => {
+        await removeMovements(tx, "SALE_GATE_PASS", Number(id));
+        await tx.saleGatePass.delete({ where: { id: Number(id) } });
+    }, TX_OPTIONS);
 
     return res.status(200).json(new ApiResponse(200, null, "Sale Gate Pass deleted successfully"));
 });
