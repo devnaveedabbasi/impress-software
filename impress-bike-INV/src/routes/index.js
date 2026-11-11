@@ -18,6 +18,7 @@ import quotationRoutes from "./quotation.routes.js";
 import purchaseOrderRoutes from "./purchase-order.routes.js";
 import saleGatePassRoutes from "./sale-gate-pass.routes.js";
 import rejectionReturnRoutes from "./rejection-return-to-vendor.routes.js";
+import storeIssueRoutes from "./store-issue.routes.js";
 import syncRoutes from "./sync.routes.js";
 
 const router = Router();
@@ -41,6 +42,7 @@ router.use("/quotations", quotationRoutes);
 router.use("/purchase-orders", purchaseOrderRoutes);
 router.use("/sale-gate-passes", saleGatePassRoutes);
 router.use("/rejection-returns-to-vendor", rejectionReturnRoutes);
+router.use("/store-issues", storeIssueRoutes);
 router.use("/sync", syncRoutes);
 
 export default router;

@@ -7,11 +7,15 @@ import { LabeledSelect } from "@/components/ui/LabeledSelect";
 import { Button } from "@/components/ui/Button";
 import useDebounce from "@/hooks/useDebounce";
 import { quotationSchema, type QuotationFormValues } from "@/lib/validations/master";
-import { QUOTATIONS, VENDORS, INVENTORY } from "@/utlis/apiRoutes";
+import { QUOTATIONS, VENDORS } from "@/utlis/apiRoutes";
 import api from "@/lib/axios";
 import toast from "react-hot-toast";
 import { usePermissions } from "@/hooks/usePermissions";
 import { ViewAllModal, type ViewAllColumn } from "@/components/ui/ViewAllModal";
+import { InventoryPickerModal, type InventoryPickItem } from "@/components/ui/InventoryPickerModal";
+import { RowDeleteButton, deletableRowClassName } from "@/components/ui/RowDeleteButton";
+import { AddRowButton } from "@/components/ui/AddRowButton";
+import { DetailField } from "@/components/ui/DetailField";
 
 type QuotationRow = {
     id: number;
@@ -34,6 +38,13 @@ type ApiError = {
     };
 };
 
+const MIN_ROWS = 10;
+const padRows = <T,>(rows: T[], makeRow: () => T): T[] => {
+    const padded = [...rows];
+    while (padded.length < MIN_ROWS) padded.push(makeRow());
+    return padded;
+};
+
 const defaultRow = () => ({ itemName: "", oldRate: "", proposedRate: "", approvedRate: "" });
 const initialValues: QuotationFormValues = {
     id: "",
@@ -47,7 +58,7 @@ export default function QuotationPage() {
     const [isNewMode, setIsNewMode] = useState(true);
     const [isEditing, setIsEditing] = useState(true);
     const [vendors, setVendors] = useState<{ label: string; value: string }[]>([]);
-    const [inventoryItems, setInventoryItems] = useState<{ label: string; value: string }[]>([]);
+    const [pickerRowIndex, setPickerRowIndex] = useState<number | null>(null);
 
     const { hasPermission } = usePermissions();
     const canCreate = hasPermission("quotation", "create");
@@ -79,21 +90,14 @@ export default function QuotationPage() {
     const fetchOptions = async () => {
         setIsOptionsLoading(true);
         try {
-            const [vendorRes, invRes] = await Promise.all([
-                api.get(VENDORS),
-                api.get(INVENTORY),
-            ]);
+            const vendorRes = await api.get(VENDORS);
             setVendors((vendorRes.data.data || []).map((v: any) => ({
                 label: v.vendorName || v.name,
                 value: String(v.id),
             })));
-            setInventoryItems((invRes.data.data || []).map((i: any) => ({
-                label: i.itemName,
-                value: i.itemName,
-            })));
         } catch (error) {
             console.error("Failed to fetch dropdown options", error);
-            toast.error("Failed to load dropdown options");
+            toast.error("Failed to load vendors");
         } finally {
             setIsOptionsLoading(false);
         }
@@ -131,15 +135,12 @@ export default function QuotationPage() {
             approvedRate: q.approvedRate?.[i] !== undefined && q.approvedRate?.[i] !== null ? String(q.approvedRate[i]) : "",
         }));
 
-        while (fetchedRows.length < 10) fetchedRows.push(defaultRow());
-        if (fetchedRows.length > 10) fetchedRows.length = 10;
-
         return {
             id: String(q.id),
             date: q.date ? new Date(q.date).toISOString().split("T")[0] : new Date().toISOString().split("T")[0],
             vendorId: String(q.vendorId ?? ""),
             remarks: q.remarks || "",
-            items: fetchedRows,
+            items: padRows(fetchedRows, defaultRow),
         };
     };
 
@@ -342,6 +343,31 @@ export default function QuotationPage() {
         setValue("items", currentItems, { shouldDirty: true, shouldValidate: true });
     };
 
+    const rowHasData = (row: (typeof values.items)[number]) =>
+        !!(row.itemName || row.oldRate || row.proposedRate || row.approvedRate);
+
+    const removeItemRow = (index: number) => {
+        const remaining = values.items.filter((_, i) => i !== index);
+        setValue("items", padRows(remaining, defaultRow), { shouldDirty: true, shouldValidate: true });
+    };
+
+    const addItemRow = () => {
+        setValue("items", [...values.items, defaultRow()], { shouldDirty: true });
+    };
+
+    const handleItemSelect = (item: InventoryPickItem) => {
+        if (pickerRowIndex === null) return;
+        const duplicateIndex = values.items.findIndex(
+            (row, i) => i !== pickerRowIndex && (row.itemName ?? "").trim().toLowerCase() === item.itemName.trim().toLowerCase()
+        );
+        if (duplicateIndex !== -1) {
+            toast.error(`"${item.itemName}" is already added in row ${duplicateIndex + 1}`);
+            return;
+        }
+        updateItemRow(pickerRowIndex, "itemName", item.itemName);
+        setPickerRowIndex(null);
+    };
+
     return (
         <section className="mx-auto mt-10 w-full max-w-5xl bg-form-bg p-8 shadow-sm">
             <h1 className="mb-10 text-center text-4xl font-medium text-black tracking-wide">
@@ -403,17 +429,20 @@ export default function QuotationPage() {
                         placeholder={isOptionsLoading ? "Loading vendors..." : "Select Vendor"}
                     />
 
-                    <LabeledField
+                    <DetailField
                         label="Remarks"
-                        value={values.remarks}
-                        onChange={(e) =>
-                            setValue("remarks", e.target.value, {
+                        value={values.remarks ?? ""}
+                        onChange={(text) =>
+                            setValue("remarks", text, {
                                 shouldDirty: true,
                                 shouldValidate: true,
                             })
                         }
                         error={errors.remarks?.message}
                         disabled={!isEditing}
+                        required
+                        maxLength={255}
+                        placeholder="Click to add remarks"
                         wrapperClassName="md:col-span-2"
                     />
                 </div>
@@ -438,21 +467,24 @@ export default function QuotationPage() {
                         </thead>
                         <tbody>
                             {values.items.map((row, index) => (
-                                <tr key={index} className="border-b border-zinc-300 last:border-b-0">
+                                <tr key={index} className={deletableRowClassName}>
                                     <td className="border-r border-zinc-300 p-0">
-                                        <select
+                                        <input
+                                            type="text"
                                             value={row.itemName}
-                                            onChange={(e) => updateItemRow(index, "itemName", e.target.value)}
+                                            readOnly
+                                            onClick={() => isEditing && setPickerRowIndex(index)}
+                                            onKeyDown={(e) => {
+                                                if (isEditing && (e.key === "Enter" || e.key === " ")) {
+                                                    e.preventDefault();
+                                                    setPickerRowIndex(index);
+                                                }
+                                            }}
+                                            placeholder={isEditing ? "Click to select item" : ""}
                                             disabled={!isEditing}
-                                            className="w-full bg-transparent px-2 py-1.5 text-[13px] outline-none disabled:bg-[#f3f4f6] disabled:text-zinc-500"
-                                        >
-                                            <option value="">Select Item</option>
-                                            {inventoryItems.map((item) => (
-                                                <option key={item.value} value={item.value}>
-                                                    {item.label}
-                                                </option>
-                                            ))}
-                                        </select>
+                                            title={isEditing ? "Click to select item from inventory" : undefined}
+                                            className="w-full cursor-pointer bg-transparent px-2 py-1.5 text-[13px] outline-none placeholder:text-zinc-400 hover:bg-primary-50 disabled:cursor-default disabled:bg-[#f3f4f6] disabled:text-zinc-500"
+                                        />
                                     </td>
                                     <td className="border-r border-zinc-300 p-0">
                                         <input
@@ -474,7 +506,7 @@ export default function QuotationPage() {
                                             className="w-full bg-transparent px-2 py-1.5 text-center text-[13px] outline-none disabled:bg-[#f3f4f6] disabled:text-zinc-500"
                                         />
                                     </td>
-                                    <td className="p-0">
+                                    <td className="relative p-0">
                                         <input
                                             type="number"
                                             value={row.approvedRate}
@@ -483,11 +515,20 @@ export default function QuotationPage() {
                                             min={0}
                                             className="w-full bg-transparent px-2 py-1.5 text-center text-[13px] outline-none disabled:bg-[#f3f4f6] disabled:text-zinc-500"
                                         />
+                                        {isEditing && rowHasData(row) && (
+                                            <RowDeleteButton rowNumber={index + 1} onClick={() => removeItemRow(index)} />
+                                        )}
                                     </td>
                                 </tr>
                             ))}
                         </tbody>
                     </table>
+                </div>
+                <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs text-zinc-500">
+                        {isEditing ? "Tip: hover a row and click the trash icon to remove it" : ""}
+                    </span>
+                    <AddRowButton onClick={addItemRow} disabled={!isEditing} />
                 </div>
                 {errors.items && (
                     <p className="mt-1.5 text-xs text-red-500">{errors.items.message}</p>
@@ -537,6 +578,13 @@ export default function QuotationPage() {
                     </Button>
                 </div>
             </form>
+
+            <InventoryPickerModal
+                isOpen={pickerRowIndex !== null}
+                title={`Select Item${pickerRowIndex !== null ? ` (Row ${pickerRowIndex + 1})` : ""}`}
+                onClose={() => setPickerRowIndex(null)}
+                onSelect={handleItemSelect}
+            />
 
             <ViewAllModal
                 key={isViewAllOpen ? "open" : "closed"}

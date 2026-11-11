@@ -16,7 +16,7 @@ router.route("/next-id")
     .get(checkPermission("purchase_order:view", "purchase_order:create"), purchaseOrderController.getNextIdPurchaseOrder);
 
 router.route("/balance-report")
-    .get(checkPermission("purchase_order:view", "inward_quality_control:view"), purchaseOrderController.getPurchaseOrderBalanceReport);
+    .get(checkPermission("purchase_order:view", "inward_quality_control:view", "inward_quality_control_report:view"), purchaseOrderController.getPurchaseOrderBalanceReport);
 
 router.route("/:id")
     .get(checkPermission("purchase_order:view", "inward_quality_control:view", "inward_quality_control:create"), validate(purchaseOrderIdSchema), purchaseOrderController.getByIdPurchaseOrder)

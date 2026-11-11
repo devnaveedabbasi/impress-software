@@ -9,7 +9,7 @@ const router = Router();
 router.use(authorizeToken);
 
 // Inventory users need the color list for the inventory form dropdown
-router.get("/", checkPermission("color:view", "inventory:view", "inventory:create", "inventory:update"), colorController.getAllColors);
+router.get("/", checkPermission("color:view", "inventory:view", "inventory:create", "inventory:update", "issue_from_line:view", "issue_from_line:create", "issue_from_line:update"), colorController.getAllColors);
 router.get("/next-id", checkPermission("color:view", "color:create"), colorController.getNextIdColor);
 router.get("/:id", checkPermission("color:view"), validate(colorIdSchema), colorController.getByIdColor);
 router.post("/", checkPermission("color:create"), validate(createColorSchema), colorController.createColor);

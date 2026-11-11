@@ -1,4 +1,5 @@
 import "dotenv/config";
+import { AsyncLocalStorage } from "node:async_hooks";
 import pg from "pg";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "../../generated/prisma/client.js";
@@ -52,7 +53,33 @@ let cloudHealthCache = null;
 let cloudHealthCheckedAt = 0;
 let cloudHealthCheck = null;
 
-function isConnectionError(error) {
+// Which database a request uses depends on who sends it:
+//  - WEB (browser): always the LIVE (cloud) database. It never falls back to LOCAL.
+//  - DESKTOP software: LIVE when it is reachable, otherwise LOCAL (offline mode).
+// Work that does not come from an HTTP request (startup, sync, scripts) has no context and follows the
+// desktop behaviour.
+const requestContext = new AsyncLocalStorage();
+
+export function runWithClientType(isDesktop, callback) {
+  return requestContext.run({ isDesktop }, callback);
+}
+
+function isWebRequest() {
+  const store = requestContext.getStore();
+  return Boolean(store) && !store.isDesktop;
+}
+
+function resolveClient() {
+  if (isWebRequest()) {
+    // Web is always LIVE. LOCAL is used only when no cloud database is configured at all.
+    return prismaCloud
+      ? { client: prismaCloud, name: "live", isWeb: true }
+      : { client: prismaLocal, name: "local", isWeb: true };
+  }
+  return { client: activeClient, name: activeDatabase, isWeb: false };
+}
+
+export function isConnectionError(error) {
   const connectionCodes = [
     "ECONNREFUSED",
     "ECONNRESET",
@@ -114,11 +141,19 @@ export async function refreshActiveDatabase() {
 }
 
 export function getActiveDatabaseClient() {
-  return activeClient;
+  return resolveClient().client;
 }
 
 export function getActiveDatabaseName() {
-  return activeDatabase;
+  return resolveClient().name;
+}
+
+// The other database (LOCAL when LIVE is active and vice versa), or null when there is only one.
+// Web requests never touch LOCAL, so for them there is no other database.
+export function getInactiveDatabaseClient() {
+  if (isWebRequest()) return null;
+  if (!prismaCloud || prismaCloud === prismaLocal) return null;
+  return activeClient === prismaLocal ? prismaCloud : prismaLocal;
 }
 
 export async function startDatabaseMonitor(intervalMs = 60000) {
@@ -144,9 +179,11 @@ const activePrisma = new Proxy(
         {
           get(_modelTarget, modelMethod) {
             return (...args) => {
-              const model = activeClient[property];
+              const { client, isWeb } = resolveClient();
+              const model = client[property];
               return model[modelMethod](...args).catch(async (error) => {
-                if (activeDatabase !== "live" || !isConnectionError(error)) {
+                // Web requests never fall back to LOCAL, a LIVE failure is reported to the user
+                if (isWeb || activeDatabase !== "live" || !isConnectionError(error)) {
                   throw error;
                 }
 

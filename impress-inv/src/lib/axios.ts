@@ -17,6 +17,11 @@ axiosInstance.interceptors.request.use(
       if (token) {
         config.headers.Authorization = `Bearer ${token}`;
       }
+      // The desktop software marks its requests so the backend can use LIVE first and LOCAL when offline.
+      // Requests without this marker (web browser) always use the LIVE database.
+      if ((window as any).appConfig?.isElectron) {
+        config.headers["X-Requested-With"] = "impress-desktop";
+      }
     }
     return config;
   },
@@ -43,7 +48,16 @@ axiosInstance.interceptors.response.use(
       data: error.response?.data,
       message: error.message,
     });
-    if (error.response?.status === 401 && typeof window !== "undefined") {
+    // A wrong password on the login form is a 401 too, but it is not an expired session: do not log out for it
+    const isLoginRequest = String(error.config?.url || "").includes("/auth/login");
+    if (error.response?.status === 401 && typeof window !== "undefined" && !isLoginRequest) {
+      // A request that was sent with an older token must not log out a newer login
+      const sentAuthorization = error.config?.headers?.Authorization;
+      const currentToken = localStorage.getItem("token");
+      if (sentAuthorization && currentToken && sentAuthorization !== `Bearer ${currentToken}`) {
+        return Promise.reject(error);
+      }
+
       const sessionReplaced = error.response?.data?.code === "SESSION_REPLACED";
       localStorage.removeItem("token");
       window.dispatchEvent(

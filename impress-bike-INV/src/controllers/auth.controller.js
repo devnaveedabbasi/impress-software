@@ -1,4 +1,4 @@
-import prisma from "../config/prisma.js";
+import prisma, { getInactiveDatabaseClient } from "../config/prisma.js";
 import asyncHandler from "../utils/asyncHandler.js";
 import config from "../config/index.js";
 import { ApiResponse } from "../utils/apiResponse.js";
@@ -6,6 +6,30 @@ import { ApiError } from "../utils/apiError.js";
 import { comparePassword, hashPassword } from "../utils/password.js";
 import { signToken } from "../utils/jwt.js";
 import { mapUserPermissions } from "./user.controller.js";
+
+// The active database (LOCAL or LIVE) can switch at any time, so the session token is written to BOTH
+// databases. Otherwise a token saved while LIVE was active is unknown to LOCAL and the user is logged out
+// as soon as the backend switches database. The other database is best effort: it may be unreachable.
+const OTHER_DATABASE_TIMEOUT_MS = 4000;
+
+const saveUserToken = async (userId, token) => {
+    // Active database must succeed (login fails otherwise, like before)
+    await prisma.user.update({ where: { id: userId }, data: { token } });
+
+    const other = getInactiveDatabaseClient();
+    if (!other) return;
+
+    const write = other.user
+        .update({ where: { id: userId }, data: { token } })
+        .catch((error) => {
+            // P2025 = the user does not exist in the other database yet (not synced), nothing to update
+            if (error?.code !== "P2025") {
+                console.warn("[Auth] Could not save session token in the other database:", error.message);
+            }
+        });
+    const timeout = new Promise((resolve) => setTimeout(resolve, OTHER_DATABASE_TIMEOUT_MS));
+    await Promise.race([write, timeout]);
+};
 
 const register = asyncHandler(async (req, res) => {
 
@@ -171,11 +195,8 @@ const login = asyncHandler(async (req, res) => {
         user.role ? [user.role.name] : []
     );
 
-    // Token save karo
-    await prisma.user.update({
-        where: { id: user.id },
-        data: { token },
-    });
+    // Token save karo (dono databases mein)
+    await saveUserToken(user.id, token);
 
     const userResponse = {
         id: user.id,
@@ -225,10 +246,7 @@ const logout = asyncHandler(async (req, res) => {
     if (!user) {
         throw new ApiError(404, "User not found");
     }
-    await prisma.user.update({
-        where: { id: user.id },
-        data: { token: null },
-    });
+    await saveUserToken(user.id, null);
     return res.status(200).json(
         new ApiResponse(
             200,

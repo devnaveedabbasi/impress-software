@@ -44,7 +44,7 @@ const headerFields = {
     GRIRNo: z.coerce.number().min(1, "GRIRNo is required"),
     DCNo: z.coerce.number().min(1, "DCNo is required"),
     billNO: z.coerce.number().nullable().optional(),
-    detail: z.string().min(1, "Detail is required"),
+    detail: z.string().trim().min(3, "Detail must be at least 3 characters").max(255, "Detail must be at most 255 characters"),
 };
 
 export const createInwardSchema = z.object({

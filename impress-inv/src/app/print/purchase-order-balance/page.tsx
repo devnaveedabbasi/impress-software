@@ -1,20 +1,20 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import api from "@/lib/axios";
 import { VENDORS, PURCHASE_ORDERS } from "@/utlis/apiRoutes";
-import toast from "react-hot-toast";
 import { usePermissions } from "@/hooks/usePermissions";
 import { useSearchParams } from "next/navigation";
+import { usePrintReport } from "@/hooks/usePrintReport";
+import { PrintStatus } from "@/components/print/PrintStatus";
 
 export default function PurchaseOrderBalancePrintPage() {
     const searchParams = useSearchParams();
     const { hasPermission } = usePermissions();
-    const canView = hasPermission("purchaseOrder", "view");
+    const canView =
+        hasPermission("purchase_order", "view") || hasPermission("inward_quality_control_report", "view");
 
     const [vendors, setVendors] = useState<{ label: string; value: string }[]>([]);
-    const [reportData, setReportData] = useState<any[]>([]);
-    const [isLoading, setIsLoading] = useState(true);
 
     const vendorId = searchParams.get("vendorId") || "";
     const fromDate = searchParams.get("fromDate") || "";
@@ -38,35 +38,29 @@ export default function PurchaseOrderBalancePrintPage() {
         fetchVendors();
     }, []);
 
-    useEffect(() => {
-        const fetchReport = async () => {
-            if (!canView) {
-                toast.error("You do not have permission to view this report.");
-                setIsLoading(false);
-                return;
-            }
-            try {
-                const params = new URLSearchParams();
-                if (vendorId) params.append("vendorId", vendorId);
-                if (fromDate) params.append("fromDate", fromDate);
-                if (toDate) params.append("toDate", toDate);
-                if (itemName) params.append("itemName", itemName);
+    // The filters of this report (the same address always gives the same query)
+    const reportParams = useMemo(() => {
+        const params = new URLSearchParams();
+        if (vendorId) params.set("vendorId", vendorId);
+        if (fromDate) params.set("fromDate", fromDate);
+        if (toDate) params.set("toDate", toDate);
+        if (itemName) params.set("itemName", itemName);
+        return params.toString();
+    }, [vendorId, fromDate, toDate, itemName]);
 
-                const { data } = await api.get(`${PURCHASE_ORDERS}/balance-report?${params.toString()}`);
-                setReportData(data.data || []);
-            } catch (error: any) {
-                if (error.response?.status === 403) {
-                    toast.error(error.response?.data?.message || "Access denied.");
-                } else {
-                    toast.error("Failed to fetch report data");
-                }
-            } finally {
-                setIsLoading(false);
-                setTimeout(() => window.print(), 500);
-            }
-        };
-        fetchReport();
-    }, [vendorId, fromDate, toDate, itemName, canView]);
+    const {
+        rows: reportData,
+        total: totalRows,
+        truncated,
+        state: reportState,
+        errorMessage,
+        retry,
+    } = usePrintReport<any>({
+        url: `${PURCHASE_ORDERS}/balance-report`,
+        params: reportParams,
+        canView,
+        maxRows: 2000,
+    });
 
     const groupedByPo = reportData.reduce((acc: any, row: any) => {
         const key = row.poId;
@@ -75,8 +69,8 @@ export default function PurchaseOrderBalancePrintPage() {
         return acc;
     }, {});
 
-    if (isLoading) {
-        return <div className="p-10 text-center text-black">Loading report data...</div>;
+    if (reportState !== "ready") {
+        return <PrintStatus state={reportState} message={errorMessage} onRetry={retry} />;
     }
 
     const selectedVendorName = vendorId ? vendors.find(v => v.value === vendorId)?.label : null;
@@ -97,6 +91,14 @@ export default function PurchaseOrderBalancePrintPage() {
                     </p>
                 )}
             </div>
+
+            {truncated && (
+                <p className="mb-4 border border-zinc-400 bg-form-bg p-2 text-center text-[13px] text-black">
+                    Showing the first {new Set(reportData.map((row: any) => row.poId)).size.toLocaleString()} of{" "}
+                    {totalRows.toLocaleString()} purchase orders. Narrow the filters (dates, vendor, item) to print
+                    everything.
+                </p>
+            )}
 
             {Object.keys(groupedByPo).length === 0 ? (
                 <p className="text-center text-[13px] text-black">No records found</p>

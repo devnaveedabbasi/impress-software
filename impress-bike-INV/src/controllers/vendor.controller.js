@@ -190,6 +190,14 @@ const deleteVendor = asyncHandler(async (req, res) => {
         throw new ApiError(404, "Vendor not found");
     }
 
+    const usedInReturns = await prisma.rejectionReturnToVendor.count({ where: { vendorId: Number(id) } });
+    if (usedInReturns > 0) {
+        throw new ApiError(
+            400,
+            `This vendor is used in ${usedInReturns} Rejection Return record(s) and cannot be deleted`
+        );
+    }
+
     const vendor = await prisma.vendor.delete({
         where: { id: Number(id) },
     });

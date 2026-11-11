@@ -6,17 +6,59 @@ import prisma, {
     getActiveDatabaseName,
 } from "../config/prisma.js";
 
+// The id of the record is the Claim Note No. Every record is returned with its vendor and item rows.
+const returnInclude = {
+    vendor: { select: { id: true, vendorName: true } },
+    items: {
+        orderBy: { id: "asc" },
+        include: { inventory: { select: { id: true, itemName: true } } },
+    },
+};
+
+const syncSequence = (table) =>
+    getActiveDatabaseClient().$executeRawUnsafe(`
+        SELECT setval(
+            pg_get_serial_sequence('"${table}"', 'id'),
+            COALESCE((SELECT MAX(id) FROM "${table}"), 1),
+            EXISTS(SELECT 1 FROM "${table}")
+        )
+    `);
+
+// Return a clear 400 instead of a foreign key error when the vendor / an inventory item does not exist
+const assertVendorExists = async (vendorId) => {
+    const vendor = await prisma.vendor.findUnique({ where: { id: vendorId }, select: { id: true } });
+    if (!vendor) throw new ApiError(400, "Vendor not found");
+};
+
+const assertInventoryExists = async (items) => {
+    const ids = [...new Set(items.map((item) => item.inventoryId))];
+    const found = await prisma.inventory.findMany({ where: { id: { in: ids } }, select: { id: true } });
+    const foundIds = new Set(found.map((item) => item.id));
+    const missing = ids.filter((id) => !foundIds.has(id));
+    if (missing.length > 0) {
+        throw new ApiError(400, `Inventory item(s) not found: ${missing.join(", ")}`);
+    }
+};
+
+const normalizeItems = (items) =>
+    items.map((item) => ({
+        inventoryId: Number(item.inventoryId),
+        rej: Number(item.rej),
+        report: item.report || "",
+    }));
+
 const getAllRejectionReturns = asyncHandler(async (req, res) => {
     const rejectionReturns = await prisma.rejectionReturnToVendor.findMany({
-        orderBy: { id: "asc" }
+        include: returnInclude,
+        orderBy: { id: "asc" },
     });
     return res.status(200).json(new ApiResponse(200, rejectionReturns, "Rejection Returns fetched successfully"));
 });
 
 const getByIdRejectionReturn = asyncHandler(async (req, res) => {
-    const { id } = req.params;
     const rejectionReturn = await prisma.rejectionReturnToVendor.findUnique({
-        where: { id: Number(id) }
+        where: { id: Number(req.params.id) },
+        include: returnInclude,
     });
 
     if (!rejectionReturn) {
@@ -26,90 +68,108 @@ const getByIdRejectionReturn = asyncHandler(async (req, res) => {
 });
 
 const createRejectionReturn = asyncHandler(async (req, res) => {
-    const { 
-        claimNoteId, date, vendorName, address, contactNo, saleTaxNo, 
-        transport, builtyNo, bookNo, receivedBy, itemName, rej, report 
-    } = req.body;
+    const { date, vendorId, address, contactNo, saleTaxNo, transport, builtyNo, bookNo, receivedBy } = req.body;
+    const items = normalizeItems(req.body.items);
 
     console.log(
-        `[RejectionReturnToVendor] Creating Return for "${vendorName}" in ${getActiveDatabaseName().toUpperCase()} database`
+        `[RejectionReturnToVendor] Creating Return for vendor ${vendorId} in ${getActiveDatabaseName().toUpperCase()} database`
     );
 
-    // Sync PostgreSQL auto-increment sequence
-    await getActiveDatabaseClient().$executeRaw`
-        SELECT setval(
-            pg_get_serial_sequence('"RejectionReturnToVendor"', 'id'),
-            COALESCE((SELECT MAX(id) FROM "RejectionReturnToVendor"), 1),
-            EXISTS(SELECT 1 FROM "RejectionReturnToVendor")
-        )
-    `;
+    await assertVendorExists(Number(vendorId));
+    await assertInventoryExists(items);
+
+    // Sync PostgreSQL auto-increment sequences
+    await syncSequence("RejectionReturnToVendor");
+    await syncSequence("RejectionReturnItem");
 
     const rejectionReturn = await prisma.rejectionReturnToVendor.create({
         data: {
-            claimNoteId: Number(claimNoteId),
             date: new Date(date),
-            vendorName,
+            vendorId: Number(vendorId),
             address,
             contactNo,
             saleTaxNo,
             transport,
-            builtyNo,
-            bookNo,
+            builtyNo: builtyNo || "",
+            bookNo: bookNo || "",
             receivedBy,
-            itemName,
-            rej: rej.map(Number),
-            report,
-            createdById: req.user?.id
-        }
+            createdById: req.user?.id,
+            items: { create: items },
+        },
+        include: returnInclude,
     });
 
     return res.status(201).json(new ApiResponse(201, rejectionReturn, "Rejection Return created successfully"));
 });
 
 const updateRejectionReturn = asyncHandler(async (req, res) => {
-    const { id } = req.params;
-    const { 
-        claimNoteId, date, vendorName, address, contactNo, saleTaxNo, 
-        transport, builtyNo, bookNo, receivedBy, itemName, rej, report 
-    } = req.body;
+    const returnId = Number(req.params.id);
+    const body = req.body;
 
-    const existingRecord = await prisma.rejectionReturnToVendor.findUnique({ where: { id: Number(id) } });
-    if (!existingRecord) {
+    const existing = await prisma.rejectionReturnToVendor.findUnique({ where: { id: returnId } });
+    if (!existing) {
         throw new ApiError(404, "Rejection Return not found");
     }
 
-    const rejectionReturn = await prisma.rejectionReturnToVendor.update({
-        where: { id: Number(id) },
-        data: {
-            claimNoteId: claimNoteId !== undefined ? Number(claimNoteId) : existingRecord.claimNoteId,
-            date: date !== undefined ? new Date(date) : existingRecord.date,
-            vendorName: vendorName !== undefined ? vendorName : existingRecord.vendorName,
-            address: address !== undefined ? address : existingRecord.address,
-            contactNo: contactNo !== undefined ? contactNo : existingRecord.contactNo,
-            saleTaxNo: saleTaxNo !== undefined ? saleTaxNo : existingRecord.saleTaxNo,
-            transport: transport !== undefined ? transport : existingRecord.transport,
-            builtyNo: builtyNo !== undefined ? builtyNo : existingRecord.builtyNo,
-            bookNo: bookNo !== undefined ? bookNo : existingRecord.bookNo,
-            receivedBy: receivedBy !== undefined ? receivedBy : existingRecord.receivedBy,
-            itemName: itemName !== undefined ? itemName : existingRecord.itemName,
-            rej: rej !== undefined ? rej.map(Number) : existingRecord.rej,
-            report: report !== undefined ? report : existingRecord.report,
-            updatedById: req.user?.id
+    const data = { updatedById: req.user?.id };
+    if (body.date !== undefined) data.date = new Date(body.date);
+    if (body.vendorId !== undefined) {
+        await assertVendorExists(Number(body.vendorId));
+        data.vendorId = Number(body.vendorId);
+    }
+    for (const field of ["address", "contactNo", "saleTaxNo", "transport", "builtyNo", "bookNo", "receivedBy"]) {
+        if (body[field] !== undefined) data[field] = body[field];
+    }
+
+    const items = body.items !== undefined ? normalizeItems(body.items) : null;
+    if (items) {
+        await assertInventoryExists(items);
+        await syncSequence("RejectionReturnItem");
+    }
+
+    const rejectionReturn = await getActiveDatabaseClient().$transaction(async (tx) => {
+        await tx.rejectionReturnToVendor.update({ where: { id: returnId }, data });
+
+        if (items) {
+            // Rows that stay are updated, new rows are added, removed rows are deleted
+            const existingItems = await tx.rejectionReturnItem.findMany({ where: { rejectionReturnId: returnId } });
+            const existingByInventory = new Map(existingItems.map((row) => [row.inventoryId, row]));
+            const keepIds = new Set(items.map((item) => item.inventoryId));
+
+            const removedIds = existingItems.filter((row) => !keepIds.has(row.inventoryId)).map((row) => row.id);
+            if (removedIds.length > 0) {
+                await tx.rejectionReturnItem.deleteMany({ where: { id: { in: removedIds } } });
+            }
+
+            for (const item of items) {
+                const current = existingByInventory.get(item.inventoryId);
+                if (current) {
+                    await tx.rejectionReturnItem.update({
+                        where: { id: current.id },
+                        data: { rej: item.rej, report: item.report },
+                    });
+                } else {
+                    await tx.rejectionReturnItem.create({ data: { ...item, rejectionReturnId: returnId } });
+                }
+            }
         }
+
+        return tx.rejectionReturnToVendor.findUnique({ where: { id: returnId }, include: returnInclude });
     });
 
     return res.status(200).json(new ApiResponse(200, rejectionReturn, "Rejection Return updated successfully"));
 });
 
 const deleteRejectionReturn = asyncHandler(async (req, res) => {
-    const { id } = req.params;
+    const returnId = Number(req.params.id);
 
-    const existingRecord = await prisma.rejectionReturnToVendor.findUnique({ where: { id: Number(id) } });
-    if (!existingRecord) {
+    const existing = await prisma.rejectionReturnToVendor.findUnique({ where: { id: returnId } });
+    if (!existing) {
         throw new ApiError(404, "Rejection Return not found");
     }
 
-    await prisma.rejectionReturnToVendor.delete({ where: { id: Number(id) } });
+    // Item rows are removed automatically (onDelete: Cascade)
+    await prisma.rejectionReturnToVendor.delete({ where: { id: returnId } });
 
     return res.status(200).json(new ApiResponse(200, null, "Rejection Return deleted successfully"));
 });
@@ -126,11 +186,7 @@ const getNextIdRejectionReturn = asyncHandler(async (req, res) => {
 
     res.set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
     return res.status(200).json(
-        new ApiResponse(
-            200,
-            { nextId },
-            "Next ID fetched successfully"
-        )
+        new ApiResponse(200, { nextId }, "Next Claim Note No fetched successfully")
     );
 });
 

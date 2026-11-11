@@ -20,7 +20,7 @@ export const createPurchaseOrderSchema = z.object({
         date: z.coerce.date({ required_error: "Date is required", invalid_type_error: "Date must be valid" }),
         vendorId: z.coerce.number({ required_error: "Vendor ID is required", invalid_type_error: "Vendor ID must be a number" }),
         validity: z.string().min(1, "Validity is required"),
-        instruction: z.string().min(1, "Instruction is required"),
+        instruction: z.string().trim().min(1, "Instruction is required").max(255, "Instruction must be at most 255 characters"),
         quotationId: z.coerce.number({ required_error: "Quotation ID is required", invalid_type_error: "Quotation ID must be a number" }),
         
         ...rowDataBody,

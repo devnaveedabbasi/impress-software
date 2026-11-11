@@ -1,6 +1,7 @@
 import { ApiError } from "../utils/apiError.js";
 import { ApiResponse } from "../utils/apiResponse.js";
 import asyncHandler from "../utils/asyncHandler.js";
+import { parsePaging, pagingMeta, buildDateRange, parseVendorId } from "../utils/reportQuery.js";
 import prisma, {
     getActiveDatabaseClient,
     getActiveDatabaseName,
@@ -141,65 +142,80 @@ const getNextIdPurchaseOrder = asyncHandler(async (req, res) => {
 
 const getPurchaseOrderBalanceReport = asyncHandler(async (req, res) => {
     const { vendorId, fromDate, toDate, itemName } = req.query;
+    const paging = parsePaging(req.query);
 
+    // Purchase orders are read page by page; the received qty is then loaded only for this page
     const where = {};
-    if (fromDate || toDate) {
-        where.date = {};
-        if (fromDate) where.date.gte = new Date(fromDate);
-        if (toDate) where.date.lte = new Date(toDate);
-    }
-    if (vendorId) where.vendorId = Number(vendorId);
+    const date = buildDateRange({ fromDate, toDate });
+    if (date) where.date = date;
+    const vendor = parseVendorId(vendorId);
+    if (vendor) where.vendorId = vendor;
+    if (itemName) where.itemName = { has: String(itemName) };
 
-    const purchaseOrders = await prisma.purchaseOrder.findMany({
-        where,
-        include: { vendor: true },
-        orderBy: { date: 'asc' }
-    });
+    const [total, purchaseOrders] = await Promise.all([
+        prisma.purchaseOrder.count({ where }),
+        prisma.purchaseOrder.findMany({
+            where,
+            include: { vendor: true },
+            orderBy: { id: "asc" },
+            skip: paging.skip,
+            take: paging.limit,
+        }),
+    ]);
 
     const poIds = purchaseOrders.map((po) => po.id);
+    const receivedItems = poIds.length
+        ? await prisma.inwardItem.findMany({
+            where: { inward: { purchaseOrderId: { in: poIds } } },
+            select: {
+                recQty: true,
+                inventory: { select: { itemName: true } },
+                inward: { select: { purchaseOrderId: true } },
+            },
+        })
+        : [];
 
-    // Sum received quantity per (purchaseOrderId, itemName) across all matching Inward records
-    const inwards = await prisma.inward.findMany({
-        where: { purchaseOrderId: { in: poIds } },
-        include: { items: { include: { inventory: { select: { itemName: true } } } } }
-    });
-
-    // PO rows store the item name, inward rows are linked to Inventory — match on the inventory item name
+    // PO rows store the item name, inward rows are linked to Inventory: match on the item name
     const normalizeName = (name) => String(name || "").trim().toLowerCase();
-    const receivedByPoAndItem = {};
-    for (const inward of inwards) {
-        for (const item of inward.items || []) {
-            const key = `${inward.purchaseOrderId}::${normalizeName(item.inventory?.itemName)}`;
-            receivedByPoAndItem[key] = (receivedByPoAndItem[key] || 0) + (item.recQty || 0);
-        }
+    const receivedByPoAndItem = new Map();
+    for (const item of receivedItems) {
+        const key = `${item.inward.purchaseOrderId}::${normalizeName(item.inventory?.itemName)}`;
+        receivedByPoAndItem.set(key, (receivedByPoAndItem.get(key) || 0) + (item.recQty || 0));
     }
 
-    const flattenedReport = [];
+    const report = [];
     for (const po of purchaseOrders) {
         if (!Array.isArray(po.itemName)) continue;
 
-        for (let i = 0; i < po.itemName.length; i++) {
-            const rowItemName = po.itemName[i];
-            if (itemName && rowItemName !== itemName) continue;
+        // A PO can list the same item on several rows: add them up so the received qty is subtracted once
+        const orderedByItem = new Map();
+        po.itemName.forEach((name, i) => {
+            const key = normalizeName(name);
+            const entry = orderedByItem.get(key) || { itemName: name, orderedQty: 0 };
+            entry.orderedQty += po.quantity?.[i] || 0;
+            orderedByItem.set(key, entry);
+        });
 
-            const orderedQty = po.quantity?.[i] || 0;
-            const receivedQty = receivedByPoAndItem[`${po.id}::${normalizeName(rowItemName)}`] || 0;
-            const balanceQty = orderedQty - receivedQty;
-
-            flattenedReport.push({
+        for (const [key, entry] of orderedByItem) {
+            if (itemName && key !== normalizeName(itemName)) continue;
+            const receivedQty = receivedByPoAndItem.get(`${po.id}::${key}`) || 0;
+            report.push({
                 poId: po.id,
                 date: po.date,
                 vendorId: po.vendorId,
-                vendorName: po.vendor?.vendorName || 'Unknown Vendor',
-                itemName: rowItemName,
-                orderedQty,
+                vendorName: po.vendor?.vendorName || "Unknown Vendor",
+                itemName: entry.itemName,
+                orderedQty: entry.orderedQty,
                 receivedQty,
-                balanceQty
+                balanceQty: entry.orderedQty - receivedQty
             });
         }
     }
 
-    return res.status(200).json(new ApiResponse(200, flattenedReport, "Purchase Order balance report fetched successfully"));
+    return res.status(200).json({
+        ...new ApiResponse(200, report, "Purchase Order balance report fetched successfully"),
+        meta: pagingMeta(total, paging),
+    });
 });
 
 export default {

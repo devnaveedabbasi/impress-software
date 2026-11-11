@@ -1,6 +1,7 @@
 import { ApiError } from "../utils/apiError.js";
 import { ApiResponse } from "../utils/apiResponse.js";
 import asyncHandler from "../utils/asyncHandler.js";
+import { parsePaging, pagingMeta, buildDateRange, parseVendorId } from "../utils/reportQuery.js";
 import prisma, {
     getActiveDatabaseClient,
     getActiveDatabaseName,
@@ -198,57 +199,83 @@ const getNextIdInward = asyncHandler(async (req, res) => {
 
 const getInwardReport = asyncHandler(async (req, res) => {
     const { vendorId, fromDate, toDate, itemName, status } = req.query;
+    const paging = parsePaging(req.query);
 
-    const where = {};
-    if (fromDate || toDate) {
-        where.date = {};
-        if (fromDate) where.date.gte = new Date(fromDate);
-        if (toDate) where.date.lte = new Date(toDate);
-    }
-
-    if (vendorId) {
-        where.OR = [
-            { purchaseOrder: { vendorId: Number(vendorId) } },
-            { quotation: { vendorId: Number(vendorId) } }
+    // Filters are applied by the database, only the requested page is loaded
+    const inwardWhere = {};
+    const date = buildDateRange({ fromDate, toDate });
+    if (date) inwardWhere.date = date;
+    const vendor = parseVendorId(vendorId);
+    if (vendor) {
+        inwardWhere.OR = [
+            { purchaseOrder: { vendorId: vendor } },
+            { quotation: { vendorId: vendor } }
         ];
     }
 
-    const inwards = await prisma.inward.findMany({
-        where,
-        include: inwardInclude,
-        orderBy: { date: 'asc' }
+    const where = { inward: inwardWhere };
+    if (itemName) where.inventory = { itemName: String(itemName) };
+    if (status === "rejected") where.rejQty = { gt: 0 };
+    if (status === "ok") where.okQty = { gt: 0 };
+
+    const vendorSelect = { select: { vendor: { select: { id: true, vendorName: true } } } };
+    const [total, sums, rows] = await Promise.all([
+        prisma.inwardItem.count({ where }),
+        prisma.inwardItem.aggregate({ where, _sum: { recQty: true, rejQty: true, okQty: true } }),
+        prisma.inwardItem.findMany({
+            where,
+            skip: paging.skip,
+            take: paging.limit,
+            orderBy: [{ inward: { date: "asc" } }, { inwardId: "asc" }, { id: "asc" }],
+            include: {
+                inventory: { select: { itemName: true } },
+                inward: {
+                    select: {
+                        id: true,
+                        date: true,
+                        GRIRNo: true,
+                        DCNo: true,
+                        billNO: true,
+                        purchaseOrderId: true,
+                        quotationId: true,
+                        purchaseOrder: vendorSelect,
+                        quotation: vendorSelect,
+                    },
+                },
+            },
+        }),
+    ]);
+
+    const report = rows.map((item) => {
+        const vendorInfo = item.inward.purchaseOrder?.vendor || item.inward.quotation?.vendor || null;
+        return {
+            inwardId: item.inward.id,
+            date: item.inward.date,
+            grirNo: item.inward.GRIRNo,
+            dcNo: item.inward.DCNo,
+            billNo: item.inward.billNO,
+            poNo: item.inward.purchaseOrderId || item.inward.quotationId,
+            vendorName: vendorInfo?.vendorName || "Unknown Vendor",
+            vendorId: vendorInfo?.id || null,
+            inventoryId: item.inventoryId,
+            itemName: item.inventory?.itemName || "",
+            recQty: item.recQty,
+            rejQty: item.rejQty,
+            okQty: item.okQty
+        };
     });
 
-    const flattenedReport = [];
-    for (const inward of inwards) {
-        const vendor = inward.purchaseOrder?.vendor || inward.quotation?.vendor || null;
-
-        for (const item of inward.items || []) {
-            const rowItemName = item.inventory?.itemName || "";
-
-            if (itemName && rowItemName !== itemName) continue;
-            if (status === "rejected" && item.rejQty <= 0) continue;
-            if (status === "ok" && item.okQty <= 0) continue;
-
-            flattenedReport.push({
-                inwardId: inward.id,
-                date: inward.date,
-                grirNo: inward.GRIRNo,
-                dcNo: inward.DCNo,
-                billNo: inward.billNO,
-                poNo: inward.purchaseOrderId || inward.quotationId,
-                vendorName: vendor?.vendorName || 'Unknown Vendor',
-                vendorId: vendor?.id || null,
-                inventoryId: item.inventoryId,
-                itemName: rowItemName,
-                recQty: item.recQty,
-                rejQty: item.rejQty,
-                okQty: item.okQty
-            });
-        }
-    }
-
-    return res.status(200).json(new ApiResponse(200, flattenedReport, "Inward report fetched successfully"));
+    return res.status(200).json({
+        ...new ApiResponse(200, report, "Inward report fetched successfully"),
+        meta: {
+            ...pagingMeta(total, paging),
+            totals: {
+                recQty: sums._sum.recQty || 0,
+                rejQty: sums._sum.rejQty || 0,
+                okQty: sums._sum.okQty || 0,
+            },
+        },
+    });
 });
 
 export default {

@@ -1,0 +1,3 @@
+{
+  "ignore": ["sync_meta.json", "node_modules"]
+}

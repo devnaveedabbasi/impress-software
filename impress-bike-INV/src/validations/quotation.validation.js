@@ -17,7 +17,7 @@ export const createQuotationSchema = z.object({
     body: z.object({
         date: z.coerce.date({ required_error: "Date is required", invalid_type_error: "Date must be valid" }),
         vendorId: z.coerce.number({ required_error: "Vendor ID is required", invalid_type_error: "Vendor ID must be a number" }),
-        remarks: z.string().min(1, "Remarks are required"),
+        remarks: z.string().trim().min(1, "Remarks are required").max(255, "Remarks must be at most 255 characters"),
         ...rowDataBody,
     }).refine((data) => {
         const lengths = [data.itemName.length, data.oldRate.length, data.proposedRate.length, data.approvedRate.length];

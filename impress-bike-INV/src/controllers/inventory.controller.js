@@ -220,6 +220,22 @@ const deleteInventory = asyncHandler(async (req, res) => {
         );
     }
 
+    const usedInGatePasses = await prisma.saleGatePassItem.count({ where: { inventoryId: Number(id) } });
+    if (usedInGatePasses > 0) {
+        throw new ApiError(
+            400,
+            `This item is used in ${usedInGatePasses} Sale Gate Pass record(s) and cannot be deleted`
+        );
+    }
+
+    const usedInReturns = await prisma.rejectionReturnItem.count({ where: { inventoryId: Number(id) } });
+    if (usedInReturns > 0) {
+        throw new ApiError(
+            400,
+            `This item is used in ${usedInReturns} Rejection Return record(s) and cannot be deleted`
+        );
+    }
+
     await prisma.inventory.delete({ where: { id: Number(id) } });
 
     return res.status(200).json(new ApiResponse(200, null, "Inventory deleted successfully"));

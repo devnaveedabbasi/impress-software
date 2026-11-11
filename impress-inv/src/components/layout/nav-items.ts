@@ -26,7 +26,7 @@ export const NAV_ITEMS: NavItem[] = [
     children: [
       { label: "Inward Quality Control", href: "/store/inward-quality-control", operation: "inward_quality_control" },
       { label: "Inward Quality Control Report", href: "/store/inward-quality-control-report", operation: "inward_quality_control_report" },
-      { label: "Gate Pass for Sold Item", href: "/store/gate-pass-sold-item", operation: "gate_pass_sold_item" },
+      { label: "Gate Pass for Sold Item", href: "/store/gate-pass-sold-item", operation: "sale_gate_pass" },
       { label: "Rejection Return to Vendor", href: "/store/rejection-return-to-vendor", operation: "rejection_return_to_vendor" },
       { label: "Rejection Received from Dealer", href: "/store/rejection-received-from-dealer", operation: "rejection_received_from_dealer" },
       { label: "Issue from Line", href: "/store/issue-from-line", operation: "issue_from_line" },
@@ -66,7 +66,6 @@ export const NAV_ITEMS: NavItem[] = [
   {
     label: "Sales Department", children: [
       { label: "Purchase Order", href: "/sales/purchase-order", operation: "purchase_order" },
-      { label: "Sales Order", href: "/sales/sales-order", operation: "sales_order" },
       // { label: "Sales Invoice", href: "/sales/sales-invoice", operation: "sales_invoice" },
       { label: "Quotation", href: "/sales/quotation", operation: "quotation" },
       { label: "Sale Gate Pass", href: "/sales/sale-gate-pass", operation: "sale_gate_pass" },

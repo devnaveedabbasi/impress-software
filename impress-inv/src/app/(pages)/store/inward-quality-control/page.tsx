@@ -3,14 +3,17 @@
 import { useEffect, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { inwardSchema, type InwardFormValues } from "@/lib/validations/master";
-import { INWARDS, PURCHASE_ORDERS, VENDORS, INVENTORY } from "@/utlis/apiRoutes";
+import { INWARDS, PURCHASE_ORDERS, INVENTORY } from "@/utlis/apiRoutes";
 import api from "@/lib/axios";
 import toast from "react-hot-toast";
 import useDebounce from "@/hooks/useDebounce";
 import { usePermissions } from "@/hooks/usePermissions";
 import { ViewAllModal, type ViewAllColumn } from "@/components/ui/ViewAllModal";
 import { Button } from "@/components/ui/Button";
+import { AddRowButton } from "@/components/ui/AddRowButton";
 import { Icon } from "@iconify/react";
+import { TextDetailModal } from "@/components/ui/TextDetailModal";
+import { previewText } from "@/lib/text";
 
 type InwardRow = {
     id: number;
@@ -66,6 +69,7 @@ const padRows = <T,>(rows: T[], makeRow: () => T): T[] => {
 
 const normalizeName = (name: string | undefined | null) => String(name || "").trim().toLowerCase();
 
+
 const defaultRow = () => ({
     inventoryId: "",
     itemName: "",
@@ -95,18 +99,11 @@ export default function InwardQualityControlPage() {
     const [isEditing, setIsEditing] = useState(true);
     const [purchaseOrders, setPurchaseOrders] = useState<{ label: string; value: string }[]>([]);
 
-    // Print Modal State
-    const [showPrintModal, setShowPrintModal] = useState(false);
-    const [vendors, setVendors] = useState<{ label: string; value: string }[]>([]);
-    const [itemOptions, setItemOptions] = useState<{ label: string; value: string }[]>([]);
     const [inventoryRows, setInventoryRows] = useState<InventoryPickRow[]>([]);
     const [isInventoryLoading, setIsInventoryLoading] = useState(true);
     const [pickerRowIndex, setPickerRowIndex] = useState<number | null>(null);
-    const [printVendorId, setPrintVendorId] = useState("");
-    const [printFromDate, setPrintFromDate] = useState("");
-    const [printToDate, setPrintToDate] = useState("");
-    const [printItemName, setPrintItemName] = useState("");
-    const [printStatus, setPrintStatus] = useState("");
+    const [isPoLoading, setIsPoLoading] = useState(false);
+    const poRequestRef = useRef(0);
 
     const { hasPermission } = usePermissions();
     const canCreate = hasPermission("inward_quality_control", "create");
@@ -136,9 +133,8 @@ export default function InwardQualityControlPage() {
 
     const fetchOptions = async () => {
         try {
-            const [poRes, vendorRes, inventoryRes] = await Promise.allSettled([
+            const [poRes, inventoryRes] = await Promise.allSettled([
                 api.get(PURCHASE_ORDERS),
-                api.get(VENDORS),
                 api.get(INVENTORY),
             ]);
             if (poRes.status === "fulfilled") {
@@ -146,15 +142,6 @@ export default function InwardQualityControlPage() {
                     label: `PO-${po.id}`,
                     value: String(po.id),
                 })));
-            }
-            if (vendorRes.status === "fulfilled") {
-                setVendors([
-                    { label: "All Vendors", value: "" },
-                    ...(vendorRes.value.data.data || []).map((v: any) => ({
-                        label: v.vendorName || v.name,
-                        value: String(v.id),
-                    })),
-                ]);
             }
             if (inventoryRes.status === "fulfilled") {
                 const inventoryList = inventoryRes.value.data.data || [];
@@ -171,13 +158,6 @@ export default function InwardQualityControlPage() {
                             : 0,
                     }))
                 );
-                const names: string[] = Array.from(
-                    new Set(inventoryList.map((item: any) => item.itemName))
-                );
-                setItemOptions([
-                    { label: "All Items", value: "" },
-                    ...names.map((name) => ({ label: name, value: name })),
-                ]);
             }
         } catch (error) {
             console.error("Failed to fetch dropdown options", error);
@@ -415,38 +395,100 @@ export default function InwardQualityControlPage() {
         void fetchDebouncedId();
     }, [debouncedId, nextId, canView, inwards]);
 
-    const handlePOChange = async (val: string) => {
-        setValue("purchaseOrderId", val, { shouldDirty: true, shouldValidate: true });
-        if (!val) return;
+    const refreshPurchaseOrders = async () => {
         try {
-            const { data } = await api.get(`${PURCHASE_ORDERS}/${val}`);
+            const { data } = await api.get(PURCHASE_ORDERS);
+            setPurchaseOrders(
+                (data.data || []).map((po: { id: number }) => ({
+                    label: `PO-${po.id}`,
+                    value: String(po.id),
+                }))
+            );
+        } catch (error) {
+            console.error("Failed to refresh purchase orders", error);
+        }
+    };
+
+    const handlePOChange = async (val: string) => {
+        const poId = val.trim();
+        setValue("purchaseOrderId", poId, { shouldDirty: true, shouldValidate: true });
+        if (!poId) return;
+
+        // Only the latest request may update the form (user can click Find Po / change PO quickly)
+        const requestId = ++poRequestRef.current;
+        setIsPoLoading(true);
+        try {
+            // Load the PO and the latest inwards together, the received qty must not come from a stale cache
+            const [poResult, inwardsResult] = await Promise.allSettled([
+                api.get(`${PURCHASE_ORDERS}/${poId}`),
+                api.get(INWARDS),
+            ]);
+            if (requestId !== poRequestRef.current) return;
+
+            if (poResult.status === "rejected") {
+                const apiError = poResult.reason as ApiError;
+                if (apiError.response?.status === 404) {
+                    toast.error(`PO #${poId} not found`);
+                    setValue("purchaseOrderId", "", { shouldDirty: true });
+                    void refreshPurchaseOrders();
+                } else if (apiError.response?.status === 403) {
+                    toast.error(apiError.response?.data?.message || "You do not have permission to view this PO");
+                } else {
+                    toast.error(apiError.response?.data?.message || "Failed to load PO details");
+                }
+                return;
+            }
+
+            const data = poResult.value.data;
+            const inwardList: InwardRow[] =
+                inwardsResult.status === "fulfilled" ? inwardsResult.value.data.data || [] : inwards;
+
             if (data.data) {
                 const po = data.data;
 
-                // Qty already received against this PO in earlier inwards (excluding the record being edited)
-                const receivedByItem: Record<string, number> = {};
-                for (const inv of inwards) {
-                    if (String(inv.purchaseOrderId) !== String(val)) continue;
+                // Qty already received against this PO per inventory item in earlier inwards
+                // (the inward being edited is excluded, its own rows are loaded again)
+                const receivedByInventory = new Map<number, number>();
+                for (const inv of inwardList) {
+                    if (String(inv.purchaseOrderId) !== poId) continue;
                     if (!isNewMode && String(inv.id) === String(values.id)) continue;
                     for (const item of inv.items || []) {
-                        const key = normalizeName(item.inventory?.itemName);
-                        receivedByItem[key] = (receivedByItem[key] || 0) + (Number(item.recQty) || 0);
+                        receivedByInventory.set(
+                            item.inventoryId,
+                            (receivedByInventory.get(item.inventoryId) || 0) + (Number(item.recQty) || 0)
+                        );
                     }
                 }
 
-                // PO items are stored by name — link each one to its Inventory item by name
+                // A PO stores the item name (and a code), and can list the same item on several rows.
+                // Link every PO row to its inventory item and add up the ordered qty per inventory item.
                 const unmatched: string[] = [];
-                const fetchedRows = (po.itemName || []).map((name: string, i: number) => {
+                const groups = new Map<string, { inventoryId: string; itemName: string; ordered: number }>();
+                (po.itemName || []).forEach((name: string, i: number) => {
                     const ordered = Number(po.quantity?.[i]) || 0;
-                    const balance = Math.max(ordered - (receivedByItem[normalizeName(name)] || 0), 0);
-                    const inventoryItem = inventoryRows.find(
+                    const candidates = inventoryRows.filter(
                         (inventory) => normalizeName(inventory.itemName) === normalizeName(name)
                     );
-                    if (!inventoryItem) unmatched.push(name);
+                    const code = Number(po.code?.[i]);
+                    const inventoryItem = candidates.find((inventory) => inventory.id === code) ?? candidates[0];
+
+                    if (!inventoryItem) {
+                        unmatched.push(name);
+                        groups.set(`raw:${i}`, { inventoryId: "", itemName: name, ordered });
+                        return;
+                    }
+                    const key = `inv:${inventoryItem.id}`;
+                    const existing = groups.get(key);
+                    if (existing) existing.ordered += ordered;
+                    else groups.set(key, { inventoryId: String(inventoryItem.id), itemName: inventoryItem.itemName, ordered });
+                });
+
+                const fetchedRows = [...groups.values()].map((group) => {
+                    const received = group.inventoryId ? receivedByInventory.get(Number(group.inventoryId)) || 0 : 0;
                     return {
-                        inventoryId: inventoryItem ? String(inventoryItem.id) : "",
-                        itemName: inventoryItem?.itemName || name,
-                        poBalQty: String(balance),
+                        inventoryId: group.inventoryId,
+                        itemName: group.itemName,
+                        poBalQty: String(Math.max(group.ordered - received, 0)),
                         recQty: "",
                         rejQty: "",
                         okQty: "",
@@ -456,19 +498,27 @@ export default function InwardQualityControlPage() {
 
                 setValue("name", po.vendor?.vendorName || po.vendor?.name || "", { shouldDirty: true });
                 setValue("quotationId", String(po.quotationId || ""), { shouldDirty: true });
+                setValue("Type", "againstPO", { shouldDirty: true });
                 setValue("items", padRows(fetchedRows, defaultRow), { shouldDirty: true, shouldValidate: true });
-                if (unmatched.length > 0) {
+
+                if (fetchedRows.length === 0) {
+                    toast.error(`PO #${poId} has no items`);
+                } else if (fetchedRows.every((row: { poBalQty: string }) => Number(row.poBalQty) === 0)) {
+                    toast.error(`PO #${poId} is fully received, nothing is left to receive`, { duration: 5000 });
+                } else if (unmatched.length > 0) {
                     toast.error(
-                        `Not found in inventory: ${unmatched.join(", ")}. Click Item Name to select the correct item.`,
+                        `Not found in inventory: ${[...new Set(unmatched)].join(", ")}. Click Item Name to select the correct item.`,
                         { duration: 6000 }
                     );
                 } else {
-                    toast.success("PO details loaded");
+                    toast.success(`PO #${poId} loaded (${fetchedRows.length} item${fetchedRows.length === 1 ? "" : "s"})`);
                 }
             }
         } catch (error) {
             console.error("Failed to load PO details", error);
-            toast.error("Failed to load PO details");
+            if (requestId === poRequestRef.current) toast.error("Failed to load PO details");
+        } finally {
+            if (requestId === poRequestRef.current) setIsPoLoading(false);
         }
     };
 
@@ -478,6 +528,19 @@ export default function InwardQualityControlPage() {
             currentItems[index] = defaultRow();
         } else {
             const isQtyField = field === "recQty" || field === "rejQty" || field === "poBalQty";
+
+            if (isQtyField) {
+                // Quantities only make sense for a row that is linked to an inventory item
+                if (!currentItems[index].inventoryId) {
+                    toast.error(`Row ${index + 1}: Select Item Name first`, { id: `qty-limit-${index}` });
+                    return;
+                }
+                if (field === "rejQty" && !currentItems[index].recQty) {
+                    toast.error(`Row ${index + 1}: Enter Rec Qty first`, { id: `qty-limit-${index}` });
+                    return;
+                }
+            }
+
             // Qty fields accept whole positive numbers only
             const cleanValue = isQtyField ? value.replace(/\D/g, "").replace(/^0+(?=\d)/, "") : value;
             const newRow = { ...currentItems[index], [field]: cleanValue };
@@ -487,12 +550,16 @@ export default function InwardQualityControlPage() {
                 let rec = Number(newRow.recQty) || 0;
                 let rej = Number(newRow.rejQty) || 0;
 
-                // Rec Qty cannot be more than the PO balance (when the row came from a PO)
-                if (poBal > 0 && rec > poBal) {
+                // Rec Qty cannot be more than the PO balance. For a row loaded from a PO the limit also
+                // applies when the balance is 0 (already fully received); otherwise only when a balance is set.
+                const hasPoLimit = newRow.poBalQty !== "" && (isPoBalLocked || poBal > 0);
+                if (hasPoLimit && rec > poBal) {
                     rec = poBal;
-                    newRow.recQty = String(poBal);
+                    newRow.recQty = poBal > 0 ? String(poBal) : "";
                     toast.error(
-                        field === "poBalQty"
+                        poBal === 0
+                            ? `Row ${index + 1}: PO Bal Qty is 0, nothing is left to receive for this item`
+                            : field === "poBalQty"
                             ? `Row ${index + 1}: Rec Qty reduced to ${poBal} to match PO Bal Qty`
                             : `Row ${index + 1}: Rec Qty cannot be more than PO Bal Qty (${poBal})`,
                         { id: `qty-limit-${index}` }
@@ -522,18 +589,8 @@ export default function InwardQualityControlPage() {
 
     // Packing Detail modal
     const [packingRowIndex, setPackingRowIndex] = useState<number | null>(null);
-    const [packingDraft, setPackingDraft] = useState("");
-
-    const openPackingModal = (index: number) => {
-        setPackingDraft(values.items[index]?.packingDetail || "");
-        setPackingRowIndex(index);
-    };
-
-    const savePackingDetail = () => {
-        if (packingRowIndex === null) return;
-        updateItemRow(packingRowIndex, "packingDetail", packingDraft.trim());
-        setPackingRowIndex(null);
-    };
+    const [isDetailOpen, setIsDetailOpen] = useState(false);
+    const openPackingModal = (index: number) => setPackingRowIndex(index);
 
     // PO Bal Qty comes from the PO when an "Against PO" inward has a PO selected; otherwise the user enters it
     const isPoBalLocked = values.Type === "againstPO" && !!values.purchaseOrderId;
@@ -582,19 +639,13 @@ export default function InwardQualityControlPage() {
         { key: "stock", header: "Stock Qty" },
     ];
 
-    const buildPrintParams = (includeStatus = true) => {
-        const params = new URLSearchParams();
-        if (printVendorId) params.set("vendorId", printVendorId);
-        if (printFromDate) params.set("fromDate", printFromDate);
-        if (printToDate) params.set("toDate", printToDate);
-        if (printItemName) params.set("itemName", printItemName);
-        if (includeStatus && printStatus) params.set("status", printStatus);
-        return params;
-    };
-
-    const openPrint = (path: string, includeStatus = true) => {
-        window.open(`${path}?${buildPrintParams(includeStatus).toString()}`, "_blank");
-        setShowPrintModal(false);
+    // Print the currently opened (saved) entry as a slip. Filters/reports live on the Report page.
+    const handlePrint = () => {
+        if (isNewMode || !values.id) {
+            toast.error("Open a saved entry first (enter its Q.C No or use View All) to print it");
+            return;
+        }
+        window.open(`/print/inward-quality-control-slip?id=${values.id}`, "_blank");
     };
 
     return (
@@ -680,10 +731,15 @@ export default function InwardQualityControlPage() {
                         <select
                             value={values.purchaseOrderId}
                             onChange={(e) => handlePOChange(e.target.value)}
-                            disabled={!isEditing}
+                            disabled={!isEditing || isPoLoading}
                             className="border border-zinc-300 px-2 py-1 outline-none w-24 bg-white"
                         >
                             <option value="">Select</option>
+                            {/* Keep the loaded PO selectable even if the list was fetched before it was created */}
+                            {values.purchaseOrderId &&
+                                !purchaseOrders.some((po) => po.value === values.purchaseOrderId) && (
+                                    <option value={values.purchaseOrderId}>{values.purchaseOrderId}</option>
+                                )}
                             {purchaseOrders.map((po) => (
                                 <option key={po.value} value={po.value}>
                                     {po.value}
@@ -695,11 +751,23 @@ export default function InwardQualityControlPage() {
                     <div className="flex items-center">
                         <button
                             type="button"
-                            onClick={() => handlePOChange(values.purchaseOrderId ?? "")}
-                            disabled={!isEditing}
-                            className="bg-white border border-zinc-300 px-4 py-1 text-sm hover:bg-zinc-50 disabled:opacity-50"
+                            onClick={() => {
+                                if (!values.purchaseOrderId) {
+                                    toast.error("Select a PO# first");
+                                    return;
+                                }
+                                void handlePOChange(values.purchaseOrderId);
+                            }}
+                            disabled={!isEditing || isPoLoading}
+                            className="flex min-w-24 items-center justify-center gap-2 bg-white border border-zinc-300 px-4 py-1 text-sm hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50"
                         >
-                            Find Po
+                            {isPoLoading && (
+                                <span
+                                    aria-hidden
+                                    className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-current border-t-transparent"
+                                />
+                            )}
+                            {isPoLoading ? "Finding..." : "Find Po"}
                         </button>
                     </div>
                 </div>
@@ -772,23 +840,35 @@ export default function InwardQualityControlPage() {
                 )}
                 <div className="flex items-center gap-2 mb-6">
                     <label className="text-sm font-medium w-16">Details</label>
-                    <input
-                        type="text"
-                        value={values.detail}
-                        onChange={(e) =>
-                            setValue("detail", e.target.value, {
-                                shouldDirty: true,
-                                shouldValidate: true,
-                            })
-                        }
-                        disabled={!isEditing}
-                        className="border border-zinc-300 px-2 py-1 outline-none flex-1 bg-white"
-                    />
+                    {/* Shows the first few words only, a click opens the full text in a modal */}
+                    <button
+                        type="button"
+                        onClick={() => (isEditing || values.detail) && setIsDetailOpen(true)}
+                        title={values.detail || (isEditing ? "Click to add details" : undefined)}
+                        className={`border px-2 py-1 outline-none flex-1 bg-white text-left truncate min-h-[30px] ${
+                            errors.detail ? "border-red-400" : "border-zinc-300"
+                        } ${values.detail ? "text-black" : "text-zinc-400"} ${
+                            isEditing ? "cursor-pointer hover:bg-primary-50" : "cursor-default bg-[#f3f4f6]"
+                        }`}
+                    >
+                        {previewText(values.detail ?? "", 6, 50) || (isEditing ? "Click to add details" : " ")}
+                    </button>
                 </div>
 
                 {/* Table Section */}
-                <div className="bg-white mb-6 overflow-x-auto border border-zinc-300">
-                    <table className="w-full border-collapse text-[13px] text-black">
+                <div className="relative bg-white mb-6 overflow-x-auto border border-zinc-300" aria-busy={isPoLoading}>
+                    {isPoLoading && (
+                        <div className="absolute inset-0 z-10 flex items-center justify-center bg-white/70">
+                            <span className="flex items-center gap-2 text-sm text-zinc-700">
+                                <span
+                                    aria-hidden
+                                    className="h-4 w-4 animate-spin rounded-full border-2 border-primary-500 border-t-transparent"
+                                />
+                                Loading PO items...
+                            </span>
+                        </div>
+                    )}
+                    <table className="w-full table-fixed border-collapse text-[13px] text-black">
                         <thead>
                             <tr className="border-b border-zinc-300">
                                 <th className="border-r border-zinc-300 px-2 py-1 font-medium w-20">
@@ -818,18 +898,26 @@ export default function InwardQualityControlPage() {
                                     key={index}
                                     className="group border-b border-zinc-200 last:border-b-0 hover:bg-zinc-50 has-[.row-delete:hover]:bg-red-50 has-[.row-delete:focus-visible]:bg-red-50"
                                 >
-                                    <td className="border-r border-zinc-200 p-0">
+                                    <td className="relative border-r border-zinc-200 p-0">
                                         <input
                                             type="text"
                                             value={row.inventoryId}
                                             readOnly
                                             tabIndex={-1}
-                                            title="Inventory item code (set by selecting Item Name)"
+                                            title={
+                                                row.itemName && !row.inventoryId
+                                                    ? "Not linked to inventory, click Item Name to select it"
+                                                    : "Inventory item code (set by selecting Item Name)"
+                                            }
                                             disabled={!isEditing}
-                                            className={`w-full bg-transparent px-2 py-1 text-center outline-none disabled:bg-[#f3f4f6] ${
-                                                row.itemName && !row.inventoryId ? "bg-red-50" : ""
-                                            }`}
+                                            className="w-full bg-transparent px-2 py-1 text-center outline-none disabled:bg-[#f3f4f6]"
                                         />
+                                        {row.itemName && !row.inventoryId && (
+                                            <Icon
+                                                icon="mdi:alert-circle-outline"
+                                                className="pointer-events-none absolute right-1 top-1/2 h-4 w-4 -translate-y-1/2 text-red-500"
+                                            />
+                                        )}
                                     </td>
                                     <td className="border-r border-zinc-200 p-0">
                                         <input
@@ -862,10 +950,8 @@ export default function InwardQualityControlPage() {
                                                     ? "Loaded from the selected PO (remaining quantity)"
                                                     : "Enter the expected / balance quantity"
                                             }
-                                            disabled={!isEditing || !row.inventoryId}
-                                            className={`w-full bg-transparent px-2 py-1 text-center outline-none disabled:bg-[#f3f4f6] ${
-                                                isPoBalLocked ? "text-zinc-600" : ""
-                                            }`}
+                                            disabled={!isEditing}
+                                            className="w-full bg-transparent px-2 py-1 text-center outline-none disabled:bg-[#f3f4f6]"
                                         />
                                     </td>
                                     <td className="border-r border-zinc-200 p-0">
@@ -874,11 +960,11 @@ export default function InwardQualityControlPage() {
                                             inputMode="numeric"
                                             value={row.recQty}
                                             onChange={(e) => updateItemRow(index, "recQty", e.target.value)}
-                                            disabled={!isEditing || !row.inventoryId}
+                                            disabled={!isEditing}
                                             title={
                                                 !row.inventoryId
                                                     ? "Select Item Name first"
-                                                    : Number(row.poBalQty) > 0
+                                                    : row.poBalQty !== "" && (isPoBalLocked || Number(row.poBalQty) > 0)
                                                     ? `Max ${row.poBalQty} (PO Bal Qty)`
                                                     : undefined
                                             }
@@ -891,7 +977,7 @@ export default function InwardQualityControlPage() {
                                             inputMode="numeric"
                                             value={row.rejQty}
                                             onChange={(e) => updateItemRow(index, "rejQty", e.target.value)}
-                                            disabled={!isEditing || !row.recQty}
+                                            disabled={!isEditing}
                                             title={row.recQty ? `Max ${row.recQty} (Rec Qty)` : "Enter Rec Qty first"}
                                             className="w-full bg-transparent px-2 py-1 text-center outline-none disabled:bg-[#f3f4f6]"
                                         />
@@ -920,7 +1006,7 @@ export default function InwardQualityControlPage() {
                                                 isEditing ? "hover:bg-primary-50 focus-visible:bg-primary-50" : "bg-[#f3f4f6]"
                                             }`}
                                         >
-                                            {row.packingDetail || (isEditing ? "Click to add" : " ")}
+                                            {previewText(row.packingDetail ?? "") || (isEditing ? "Click to add" :" ")}
                                         </button>
 
                                         {/* Remove row: appears on row hover */}
@@ -945,14 +1031,7 @@ export default function InwardQualityControlPage() {
                     <span className="text-xs text-zinc-500">
                         {isEditing ? "Tip: hover a row and click the trash icon to remove it" : ""}
                     </span>
-                    <button
-                        type="button"
-                        onClick={addItemRow}
-                        disabled={!isEditing}
-                        className="border border-zinc-300 bg-white px-3 py-1 text-xs hover:bg-zinc-50 disabled:opacity-50"
-                    >
-                        + Add Row
-                    </button>
+                    <AddRowButton onClick={addItemRow} disabled={!isEditing} />
                 </div>
                 {errors.items && (
                     <p className="mb-4 text-xs text-red-500 text-center">{errors.items.message}</p>
@@ -1004,7 +1083,9 @@ export default function InwardQualityControlPage() {
                         type="button"
                         variant="secondary"
                         shape="rounded"
-                        onClick={() => setShowPrintModal(true)}
+                        onClick={handlePrint}
+                        disabled={isSubmitting || isNewMode || !canView}
+                        title={isNewMode ? "Open a saved entry to print it" : "Print this entry"}
                         className="border border-zinc-400 bg-white px-6 hover:bg-zinc-50"
                     >
                         Print
@@ -1044,200 +1125,42 @@ export default function InwardQualityControlPage() {
                 onRowSelect={handleInventorySelect}
             />
 
-            {/* Packing Detail Modal */}
-            {packingRowIndex !== null && (
-                <div
-                    className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
-                    role="dialog"
-                    aria-modal="true"
-                    aria-labelledby="packing-modal-title"
-                    onMouseDown={(e) => {
-                        if (e.target === e.currentTarget) setPackingRowIndex(null);
-                    }}
-                    onKeyDown={(e) => {
-                        if (e.key === "Escape") setPackingRowIndex(null);
-                        if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && isEditing) savePackingDetail();
-                    }}
-                >
-                    <div className="flex w-full max-w-lg flex-col overflow-hidden rounded-lg bg-white shadow-2xl">
-                        <div className="flex items-start justify-between gap-4 border-b border-zinc-200 px-5 py-4">
-                            <div>
-                                <h2 id="packing-modal-title" className="text-lg font-semibold text-zinc-900">
-                                    Packing Detail
-                                </h2>
-                                <p className="text-xs text-zinc-500">
-                                    Row {packingRowIndex + 1}
-                                    {values.items[packingRowIndex]?.itemName
-                                        ? ` · ${values.items[packingRowIndex].itemName}`
-                                        : ""}
-                                </p>
-                            </div>
-                            <button
-                                type="button"
-                                onClick={() => setPackingRowIndex(null)}
-                                aria-label="Close"
-                                className="text-2xl leading-none text-zinc-500 hover:text-zinc-900"
-                            >
-                                ×
-                            </button>
-                        </div>
+            {/* Packing Detail modal (optional text, max 255 characters) */}
+            <TextDetailModal
+                isOpen={packingRowIndex !== null}
+                title="Packing Detail"
+                subtitle={
+                    packingRowIndex !== null
+                        ? `Row ${packingRowIndex + 1}${values.items[packingRowIndex]?.itemName ? ` · ${values.items[packingRowIndex].itemName}` : ""}`
+                        : undefined
+                }
+                value={packingRowIndex !== null ? values.items[packingRowIndex]?.packingDetail ?? "" : ""}
+                readOnly={!isEditing}
+                maxLength={255}
+                placeholder="e.g. 5 cartons x 10 pcs, sealed, no damage"
+                onSave={(text) => {
+                    if (packingRowIndex !== null) updateItemRow(packingRowIndex, "packingDetail", text);
+                    setPackingRowIndex(null);
+                }}
+                onClose={() => setPackingRowIndex(null)}
+            />
 
-                        <div className="p-4">
-                            <textarea
-                                value={packingDraft}
-                                onChange={(e) => setPackingDraft(e.target.value.slice(0, 255))}
-                                readOnly={!isEditing}
-                                autoFocus
-                                rows={7}
-                                maxLength={255}
-                                placeholder="e.g. 5 cartons x 10 pcs, sealed, no damage"
-                                className="w-full resize-y rounded-md border border-zinc-300 px-3 py-2 text-sm text-zinc-900 outline-none focus:border-primary-400 read-only:bg-zinc-50"
-                            />
-                            <div className="mt-1 text-right text-xs text-zinc-500">{packingDraft.length}/255</div>
-                        </div>
-
-                        <div className="flex justify-end gap-2 border-t border-zinc-200 px-4 py-3">
-                            <Button
-                                type="button"
-                                size="sm"
-                                variant="outline"
-                                shape="rounded"
-                                onClick={() => setPackingRowIndex(null)}
-                            >
-                                {isEditing ? "Cancel" : "Close"}
-                            </Button>
-                            {isEditing && (
-                                <Button type="button" size="sm" shape="rounded" onClick={savePackingDetail}>
-                                    Done
-                                </Button>
-                            )}
-                        </div>
-                    </div>
-                </div>
-            )}
-
-            {/* Print Modal */}
-            {showPrintModal && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-                    <div className="w-full max-w-lg rounded border border-zinc-300 bg-white p-6 shadow-xl text-black">
-                        <div className="flex items-center justify-between border-b pb-2 mb-4">
-                            <h2 className="text-lg font-semibold">Print Inward QC Reports</h2>
-                            <button
-                                type="button"
-                                onClick={() => setShowPrintModal(false)}
-                                className="text-zinc-500 hover:text-black font-bold text-lg"
-                            >
-                                &times;
-                            </button>
-                        </div>
-
-                        <div className="space-y-3 text-sm">
-                            <div>
-                                <label className="block text-xs font-medium text-zinc-600 mb-1">
-                                    Filter by Vendor
-                                </label>
-                                <select
-                                    value={printVendorId}
-                                    onChange={(e) => setPrintVendorId(e.target.value)}
-                                    className="w-full border border-zinc-300 p-1.5 outline-none bg-white rounded"
-                                >
-                                    {vendors.map((v) => (
-                                        <option key={v.value} value={v.value}>
-                                            {v.label}
-                                        </option>
-                                    ))}
-                                </select>
-                            </div>
-
-                            <div className="grid grid-cols-2 gap-2">
-                                <div>
-                                    <label className="block text-xs font-medium text-zinc-600 mb-1">
-                                        From Date
-                                    </label>
-                                    <input
-                                        type="date"
-                                        value={printFromDate}
-                                        onChange={(e) => setPrintFromDate(e.target.value)}
-                                        className="w-full border border-zinc-300 p-1.5 outline-none bg-white rounded"
-                                    />
-                                </div>
-                                <div>
-                                    <label className="block text-xs font-medium text-zinc-600 mb-1">
-                                        To Date
-                                    </label>
-                                    <input
-                                        type="date"
-                                        value={printToDate}
-                                        onChange={(e) => setPrintToDate(e.target.value)}
-                                        className="w-full border border-zinc-300 p-1.5 outline-none bg-white rounded"
-                                    />
-                                </div>
-                            </div>
-
-                            <div>
-                                <label className="block text-xs font-medium text-zinc-600 mb-1">
-                                    Filter by Item
-                                </label>
-                                <select
-                                    value={printItemName}
-                                    onChange={(e) => setPrintItemName(e.target.value)}
-                                    className="w-full border border-zinc-300 p-1.5 outline-none bg-white rounded"
-                                >
-                                    {itemOptions.map((opt) => (
-                                        <option key={opt.value} value={opt.value}>
-                                            {opt.label}
-                                        </option>
-                                    ))}
-                                </select>
-                            </div>
-
-                            <div>
-                                <label className="block text-xs font-medium text-zinc-600 mb-1">
-                                    Row Status Filter
-                                </label>
-                                <select
-                                    value={printStatus}
-                                    onChange={(e) => setPrintStatus(e.target.value)}
-                                    className="w-full border border-zinc-300 p-1.5 outline-none bg-white rounded"
-                                >
-                                    <option value="">All Rows (Rejected + OK)</option>
-                                    <option value="rejected">Only Rejected Rows</option>
-                                    <option value="ok">Only OK Rows</option>
-                                </select>
-                            </div>
-                        </div>
-
-                        <div className="mt-6 flex flex-col gap-2">
-                            <Button
-                                type="button"
-                                shape="rounded"
-                                onClick={() => openPrint("/reports/inward", true)}
-                                className="w-full"
-                            >
-                                Open Inward Quality Control Report
-                            </Button>
-                            <Button
-                                type="button"
-                                variant="outline"
-                                shape="rounded"
-                                onClick={() => openPrint("/reports/purchase-order-balance", false)}
-                                className="w-full"
-                            >
-                                Open Purchase Order Balance Report
-                            </Button>
-                            <Button
-                                type="button"
-                                variant="secondary"
-                                shape="rounded"
-                                onClick={() => setShowPrintModal(false)}
-                                className="mt-1 w-full"
-                            >
-                                Cancel
-                            </Button>
-                        </div>
-                    </div>
-                </div>
-            )}
+            {/* Details modal (required, 3-255 characters) */}
+            <TextDetailModal
+                isOpen={isDetailOpen}
+                title="Details"
+                value={values.detail ?? ""}
+                readOnly={!isEditing}
+                required
+                minLength={3}
+                maxLength={255}
+                placeholder="Write the details of this inward entry"
+                onSave={(text) => {
+                    setValue("detail", text, { shouldDirty: true, shouldValidate: true });
+                    setIsDetailOpen(false);
+                }}
+                onClose={() => setIsDetailOpen(false)}
+            />
         </section>
     );
 }

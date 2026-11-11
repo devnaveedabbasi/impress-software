@@ -22,6 +22,7 @@ const operations = [
   "inward_quality_control_report",
   "sale_gate_pass",
   "rejection_return_to_vendor",
+  "issue_from_line",
 ];
 
 const actions = ["view", "create", "update", "delete"];

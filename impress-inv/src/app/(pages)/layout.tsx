@@ -13,12 +13,12 @@ export default function Layout({ children }: { children: ReactNode }) {
 
       <main className="relative min-h-[calc(100vh-57px)] px-4 py-8">
         <div className="absolute w-20 left-0 top-0 m-4">
-          <Image
+          {/* <Image
             src={Images.Logo}
             alt="Logo"
             width={100}
             height={100}
-          />
+          /> */}
         </div>
 
         <div className="mx-auto flex w-full max-w-7xl justify-center">

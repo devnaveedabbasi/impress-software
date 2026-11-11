@@ -8,7 +8,25 @@ const router = Router();
 
 router.use(authorizeToken);
 
-router.get("/", checkPermission("inventory:view", "inward_quality_control:view", "inward_quality_control:create"), inventoryController.getAllInventories);
+router.get(
+    "/",
+    checkPermission(
+        "inventory:view",
+        "inward_quality_control:view",
+        "inward_quality_control:create",
+        "inward_quality_control_report:view",
+        "sale_gate_pass:view",
+        "sale_gate_pass:create",
+        "sale_gate_pass:update",
+        "rejection_return_to_vendor:view",
+        "rejection_return_to_vendor:create",
+        "rejection_return_to_vendor:update",
+        "issue_from_line:view",
+        "issue_from_line:create",
+        "issue_from_line:update"
+    ),
+    inventoryController.getAllInventories
+);
 router.get("/next-id", checkPermission("inventory:view"), inventoryController.getNextIdInventory);
 router.get("/:id", checkPermission("inventory:view"), validate(inventoryIdSchema), inventoryController.getByIdInventory);
 router.post("/", checkPermission("inventory:create"), validate(createInventorySchema), inventoryController.createInventory);

@@ -60,7 +60,11 @@ export const SYNC_MODELS = [
   "inward",
   "inwardItem", // must come after "inward" and "inventory" (foreign keys)
   "saleGatePass",
+  "saleGatePassItem", // must come after "saleGatePass" and "inventory" (foreign keys)
   "rejectionReturnToVendor",
+  "rejectionReturnItem", // must come after "rejectionReturnToVendor" and "inventory" (foreign keys)
+  "storeIssue", // must come after "department" and "color" (foreign keys)
+  "storeIssueItem", // must come after "storeIssue" and "inventory" (foreign keys)
 ];
 
 const COMPOSITE_KEYS = {
@@ -86,19 +90,32 @@ function getWhere(modelName, item) {
   return { id: item.id };
 }
 
-function withoutIdentityAndDates(modelName, item) {
+// Session state must never be synced between databases: a user's login token belongs to the session that
+// created it. Copying it would overwrite a fresh token with an older one and log the user out.
+const SESSION_FIELDS = { user: ["token"] };
+
+function withoutSessionFields(modelName, item) {
+  const fields = SESSION_FIELDS[modelName];
+  if (!fields) return item;
   const result = { ...item };
-  delete result.id;
-  delete result.createdAt;
-  delete result.updatedAt;
-  for (const field of COMPOSITE_KEYS[modelName] || []) {
-    delete result[field];
-  }
+  for (const field of fields) delete result[field];
   return result;
 }
 
-function comparable(item) {
-  const result = { ...item };
+function withoutIdentityAndDates(modelName, item) {
+  const result = withoutSessionFields(modelName, item);
+  const copy = { ...result };
+  delete copy.id;
+  delete copy.createdAt;
+  delete copy.updatedAt;
+  for (const field of COMPOSITE_KEYS[modelName] || []) {
+    delete copy[field];
+  }
+  return copy;
+}
+
+function comparable(item, modelName) {
+  const result = { ...withoutSessionFields(modelName, item) };
   delete result.createdAt;
   delete result.updatedAt;
   return JSON.stringify(result);
@@ -184,7 +201,7 @@ export async function getModelComparison(modelName, options = { fullScan: false 
           where: getWhere(modelName, localItem),
         });
         if (existsInCloud) {
-          if (comparable(localItem) === comparable(existsInCloud)) {
+          if (comparable(localItem, modelName) === comparable(existsInCloud, modelName)) {
             syncedCount++;
           } else {
             conflicts.push({
@@ -203,7 +220,7 @@ export async function getModelComparison(modelName, options = { fullScan: false 
       continue;
     }
 
-    if (comparable(localItem) === comparable(cloudItem)) {
+    if (comparable(localItem, modelName) === comparable(cloudItem, modelName)) {
       syncedCount++;
     } else {
       conflicts.push({
@@ -283,7 +300,7 @@ export async function getFullSyncStatus(options = { fullScan: false }) {
 
 async function createIfMissing(client, modelName, item) {
   try {
-    await client[modelName].create({ data: item });
+    await client[modelName].create({ data: withoutSessionFields(modelName, item) });
   } catch (err) {
     // If already exists with unique constraint, try update
     if (err?.code === "P2002") {

@@ -8,7 +8,7 @@ const router = Router();
 
 router.use(authorizeToken);
 
-router.get("/", checkPermission("vendor:view"), vendorController.getAllVendors);
+router.get("/", checkPermission("vendor:view", "inward_quality_control_report:view", "rejection_return_to_vendor:view", "rejection_return_to_vendor:create", "rejection_return_to_vendor:update"), vendorController.getAllVendors);
 router.get("/next-id", checkPermission("vendor:view"), vendorController.getNextIdVendor);
 router.get("/:id", checkPermission("vendor:view"), validate(vendorIdSchema), vendorController.getByIdVendor);
 router.post("/", checkPermission("vendor:create"), validate(createVendorSchema), vendorController.createVendor);

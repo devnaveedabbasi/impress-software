@@ -180,12 +180,13 @@ model Vendor {
   amoutLimit     Int
   openingBalance Int
 
-  createdById    Int
-  updatedById    Int
-  createdAt      DateTime        @default(now())
-  updatedAt      DateTime        @updatedAt
-  quotations     Quotation[]
-  purchaseOrders PurchaseOrder[]
+  createdById      Int
+  updatedById      Int
+  createdAt        DateTime                  @default(now())
+  updatedAt        DateTime                  @updatedAt
+  quotations       Quotation[]
+  purchaseOrders   PurchaseOrder[]
+  rejectionReturns RejectionReturnToVendor[]
 }
 
 // 07 Category Manegment
@@ -201,13 +202,14 @@ model Category {
 
 // 08 Department Manegment
 model Department {
-  id          Int         @id @default(autoincrement())
-  name        String      @unique
+  id          Int          @id @default(autoincrement())
+  name        String       @unique
   createdById Int?
   updatedById Int?
-  createdAt   DateTime    @default(now())
-  updatedAt   DateTime    @updatedAt
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
   inventories Inventory[]
+  storeIssues StoreIssue[]
 }
 
 // 09 Station Manegment
@@ -230,6 +232,7 @@ model Color {
   createdAt       DateTime         @default(now())
   updatedAt       DateTime         @updatedAt
   inventoryStocks InventoryStock[]
+  storeIssues     StoreIssue[]
 }
 
 // 06 Inventory  Manegment
@@ -250,13 +253,15 @@ model Inventory {
   qty         Int[]
   unitPerBike Int
 
-  createdById    Int?
-  updatedById    Int?
-  createdAt      DateTime       @default(now())
-  updatedAt      DateTime       @updatedAt
-  saleGatePasses SaleGatePass[]
-  inwardItems    InwardItem[]
-  stocks         InventoryStock[]
+  createdById          Int?
+  updatedById          Int?
+  createdAt            DateTime              @default(now())
+  updatedAt            DateTime              @updatedAt
+  saleGatePassItems    SaleGatePassItem[]
+  rejectionReturnItems RejectionReturnItem[]
+  inwardItems          InwardItem[]
+  stocks               InventoryStock[]
+  storeIssueItems      StoreIssueItem[]
 }
 
 // 06.1 Inventory stock rows — one row per (station, color) with its quantity
@@ -383,44 +388,119 @@ model SaleGatePass {
   id          Int      @id @default(autoincrement())
   date        DateTime
   accountName String
-  billNO      Int
-  throughBy   String
-  remarks     String
-  vehicleNo   String
+  billNO      Int?
+  throughBy   String   @default("")
+  remarks     String   @default("")
+  vehicleNo   String   @default("")
 
-  code        Int[]
-  itemName    String[]
-  unit        Int[]
-  stockInHand Int[]
-  qty         Int[]
+  items SaleGatePassItem[]
 
-  createdById Int?
-  updatedById Int?
-  createdAt   DateTime   @default(now())
-  updatedAt   DateTime   @updatedAt
-  inventory   Inventory? @relation(fields: [inventoryId], references: [id])
-  inventoryId Int?
-}
-
-// 12 RejectionReturnTo Vendor
-model RejectionReturnToVendor {
-  id          Int      @id @default(autoincrement())
-  claimNoteId Int
-  date        DateTime
-  vendorName  String
-  address     String
-  contactNo   String
-  saleTaxNo   String
-  transport   String
-  builtyNo    String
-  bookNo      String
-  receivedBy  String
-
-  itemName    String[]
-  rej         Int[]
-  report      String[]
   createdById Int?
   updatedById Int?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+}
+
+// 11.1 Sale GatePass item rows — each row is linked to an Inventory item
+model SaleGatePassItem {
+  id             Int          @id @default(autoincrement())
+  saleGatePassId Int
+  saleGatePass   SaleGatePass @relation(fields: [saleGatePassId], references: [id], onDelete: Cascade)
+  inventoryId    Int
+  inventory      Inventory    @relation(fields: [inventoryId], references: [id])
+  unit           String       @default("")
+  // Stock of the item at the time the gate pass was issued (may be negative, like the old system)
+  stockInHand    Int          @default(0)
+  qty            Int
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([saleGatePassId, inventoryId])
+  @@index([inventoryId])
+}
+
+// 12 RejectionReturnTo Vendor
+// "id" is the Claim Note No of the gate pass (generated automatically)
+model RejectionReturnToVendor {
+  id         Int      @id @default(autoincrement())
+  date       DateTime
+  vendorId   Int
+  vendor     Vendor   @relation(fields: [vendorId], references: [id])
+  address    String
+  contactNo  String
+  saleTaxNo  String
+  transport  String
+  builtyNo   String   @default("")
+  bookNo     String   @default("")
+  receivedBy String
+
+  items RejectionReturnItem[]
+
+  createdById Int?
+  updatedById Int?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([vendorId])
+}
+
+// 12.1 Rejection Return item rows — each row is linked to an Inventory item
+model RejectionReturnItem {
+  id                Int                     @id @default(autoincrement())
+  rejectionReturnId Int
+  rejectionReturn   RejectionReturnToVendor @relation(fields: [rejectionReturnId], references: [id], onDelete: Cascade)
+  inventoryId       Int
+  inventory         Inventory               @relation(fields: [inventoryId], references: [id])
+  rej               Int
+  report            String                  @default("")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([rejectionReturnId, inventoryId])
+  @@index([inventoryId])
+}
+
+// 13 Store Issuance ("Issue from Line"): parts issued from the store to a department for N bikes of a color.
+// "id" is the Requisition Slip No (generated automatically).
+model StoreIssue {
+  id           Int        @id @default(autoincrement())
+  date         DateTime
+  departmentId Int
+  department   Department @relation(fields: [departmentId], references: [id])
+  colorId      Int
+  color        Color      @relation(fields: [colorId], references: [id])
+  bikeQty      Int
+
+  items StoreIssueItem[]
+
+  createdById Int?
+  updatedById Int?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([departmentId])
+  @@index([colorId])
+}
+
+// 13.1 Store Issuance item rows — each row is linked to an Inventory item
+model StoreIssueItem {
+  id           Int        @id @default(autoincrement())
+  storeIssueId Int
+  storeIssue   StoreIssue @relation(fields: [storeIssueId], references: [id], onDelete: Cascade)
+  inventoryId  Int
+  inventory    Inventory  @relation(fields: [inventoryId], references: [id])
+  // Units of this item that one bike needs (Upm), taken from the inventory when the slip is issued
+  upm          Int        @default(0)
+  // Stock of the item at the time the slip was issued (may be negative)
+  handStock    Int        @default(0)
+  issueQty     Int
+  purpose      String     @default("")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([storeIssueId, inventoryId])
+  @@index([inventoryId])
 }

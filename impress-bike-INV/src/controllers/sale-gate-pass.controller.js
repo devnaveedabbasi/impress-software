@@ -6,8 +6,70 @@ import prisma, {
     getActiveDatabaseName,
 } from "../config/prisma.js";
 
+const saleGatePassInclude = {
+    items: {
+        orderBy: { id: "asc" },
+        include: { inventory: { select: { id: true, itemName: true } } },
+    },
+};
+
+const normalizeItems = (items = []) => {
+    if (!Array.isArray(items)) {
+        throw new ApiError(400, "Sale gate pass items must be an array");
+    }
+
+    // Stock in hand is not taken from the client: the server reads it from the inventory (see readStockInHand)
+    const normalized = items.map((item) => ({
+        inventoryId: Number(item?.inventoryId),
+        unit: item?.unit === undefined || item?.unit === null ? "" : String(item.unit).trim(),
+        qty: Number(item?.qty),
+    }));
+
+    if (normalized.some((item) =>
+        !Number.isInteger(item.inventoryId) ||
+        item.inventoryId < 1 ||
+        !Number.isInteger(item.qty) ||
+        item.qty < 1
+    )) {
+        throw new ApiError(400, "Each sale gate pass item must have a valid inventory item and quantity");
+    }
+
+    if (new Set(normalized.map((item) => item.inventoryId)).size !== normalized.length) {
+        throw new ApiError(400, "The same inventory item cannot be added twice");
+    }
+
+    return normalized;
+};
+
+const assertInventoryExists = async (items) => {
+    const ids = [...new Set(items.map((item) => item.inventoryId))];
+    const found = await prisma.inventory.findMany({
+        where: { id: { in: ids } },
+        select: { id: true },
+    });
+    const foundIds = new Set(found.map((item) => item.id));
+    const missing = ids.filter((id) => !foundIds.has(id));
+    if (missing.length > 0) {
+        throw new ApiError(400, `Inventory item(s) not found: ${missing.join(", ")}`);
+    }
+};
+
+// Stock in hand = the total quantity of the item over all its stations and colors
+const readStockInHand = async (inventoryIds) => {
+    const grouped = await prisma.inventoryStock.groupBy({
+        by: ["inventoryId"],
+        where: { inventoryId: { in: inventoryIds } },
+        _sum: { qty: true },
+    });
+    return new Map(grouped.map((row) => [row.inventoryId, row._sum.qty || 0]));
+};
+
+// Bill No is optional
+const normalizeBill = (value) => (value === undefined || value === null || value === "" ? null : Number(value));
+
 const getAllSaleGatePasses = asyncHandler(async (req, res) => {
     const saleGatePasses = await prisma.saleGatePass.findMany({
+        include: saleGatePassInclude,
         orderBy: { id: "asc" }
     });
     return res.status(200).json(new ApiResponse(200, saleGatePasses, "Sale Gate Passes fetched successfully"));
@@ -16,7 +78,8 @@ const getAllSaleGatePasses = asyncHandler(async (req, res) => {
 const getByIdSaleGatePass = asyncHandler(async (req, res) => {
     const { id } = req.params;
     const saleGatePass = await prisma.saleGatePass.findUnique({
-        where: { id: Number(id) }
+        where: { id: Number(id) },
+        include: saleGatePassInclude,
     });
 
     if (!saleGatePass) {
@@ -26,36 +89,47 @@ const getByIdSaleGatePass = asyncHandler(async (req, res) => {
 });
 
 const createSaleGatePass = asyncHandler(async (req, res) => {
-    const { date, accountName, billNO, throughBy, remarks, vehicleNo, code, itemName, unit, stockInHand, qty } = req.body;
+    const { date, accountName, billNO, throughBy, remarks, vehicleNo } = req.body;
+    const items = normalizeItems(req.body.items);
 
     console.log(
         `[SaleGatePass] Creating Sale Gate Pass for "${accountName}" in ${getActiveDatabaseName().toUpperCase()} database`
     );
 
+    if (items.length === 0) {
+        throw new ApiError(400, "At least one sale gate pass item is required");
+    }
+    await assertInventoryExists(items);
+    const stockByInventory = await readStockInHand(items.map((item) => item.inventoryId));
+
     // Sync PostgreSQL auto-increment sequence
-    await getActiveDatabaseClient().$executeRaw`
-        SELECT setval(
-            pg_get_serial_sequence('"SaleGatePass"', 'id'),
-            COALESCE((SELECT MAX(id) FROM "SaleGatePass"), 1),
-            EXISTS(SELECT 1 FROM "SaleGatePass")
-        )
-    `;
+    for (const table of ["SaleGatePass", "SaleGatePassItem"]) {
+        await getActiveDatabaseClient().$executeRawUnsafe(`
+            SELECT setval(
+                pg_get_serial_sequence('"${table}"', 'id'),
+                COALESCE((SELECT MAX(id) FROM "${table}"), 1),
+                EXISTS(SELECT 1 FROM "${table}")
+            )
+        `);
+    }
 
     const saleGatePass = await prisma.saleGatePass.create({
         data: {
             date: new Date(date),
             accountName,
-            billNO: Number(billNO),
-            throughBy,
-            remarks,
-            vehicleNo,
-            code: code.map(Number),
-            itemName,
-            unit: unit.map(Number),
-            stockInHand: stockInHand.map(Number),
-            qty: qty.map(Number),
-            createdById: req.user?.id
-        }
+            billNO: normalizeBill(billNO),
+            throughBy: throughBy || "",
+            remarks: remarks || "",
+            vehicleNo: vehicleNo || "",
+            createdById: req.user?.id,
+            items: {
+                create: items.map((item) => ({
+                    ...item,
+                    stockInHand: stockByInventory.get(item.inventoryId) || 0,
+                })),
+            },
+        },
+        include: saleGatePassInclude,
     });
 
     return res.status(201).json(new ApiResponse(201, saleGatePass, "Sale Gate Pass created successfully"));
@@ -63,29 +137,55 @@ const createSaleGatePass = asyncHandler(async (req, res) => {
 
 const updateSaleGatePass = asyncHandler(async (req, res) => {
     const { id } = req.params;
-    const { date, accountName, billNO, throughBy, remarks, vehicleNo, code, itemName, unit, stockInHand, qty } = req.body;
+    const { date, accountName, billNO, throughBy, remarks, vehicleNo } = req.body;
+    const body = req.body;
 
     const existingGatePass = await prisma.saleGatePass.findUnique({ where: { id: Number(id) } });
     if (!existingGatePass) {
         throw new ApiError(404, "Sale Gate Pass not found");
     }
 
-    const saleGatePass = await prisma.saleGatePass.update({
-        where: { id: Number(id) },
-        data: {
-            date: date !== undefined ? new Date(date) : existingGatePass.date,
-            accountName: accountName !== undefined ? accountName : existingGatePass.accountName,
-            billNO: billNO !== undefined ? Number(billNO) : existingGatePass.billNO,
-            throughBy: throughBy !== undefined ? throughBy : existingGatePass.throughBy,
-            remarks: remarks !== undefined ? remarks : existingGatePass.remarks,
-            vehicleNo: vehicleNo !== undefined ? vehicleNo : existingGatePass.vehicleNo,
-            code: code !== undefined ? code.map(Number) : existingGatePass.code,
-            itemName: itemName !== undefined ? itemName : existingGatePass.itemName,
-            unit: unit !== undefined ? unit.map(Number) : existingGatePass.unit,
-            stockInHand: stockInHand !== undefined ? stockInHand.map(Number) : existingGatePass.stockInHand,
-            qty: qty !== undefined ? qty.map(Number) : existingGatePass.qty,
-            updatedById: req.user?.id
+    const items = body.items !== undefined ? normalizeItems(body.items) : null;
+    if (items) {
+        if (items.length === 0) {
+            throw new ApiError(400, "At least one sale gate pass item is required");
         }
+        await assertInventoryExists(items);
+    }
+    const stockByInventory = items ? await readStockInHand(items.map((item) => item.inventoryId)) : new Map();
+
+    const saleGatePass = await getActiveDatabaseClient().$transaction(async (tx) => {
+        const data = { updatedById: req.user?.id };
+        if (date !== undefined) data.date = new Date(date);
+        if (accountName !== undefined) data.accountName = accountName;
+        if (billNO !== undefined) data.billNO = normalizeBill(billNO);
+        if (throughBy !== undefined) data.throughBy = throughBy;
+        if (remarks !== undefined) data.remarks = remarks;
+        if (vehicleNo !== undefined) data.vehicleNo = vehicleNo;
+
+        await tx.saleGatePass.update({ where: { id: Number(id) }, data });
+
+        if (items) {
+            // A row that stays keeps the stock that was recorded when it was issued; a new row reads the current stock
+            const previousRows = await tx.saleGatePassItem.findMany({ where: { saleGatePassId: Number(id) } });
+            const previousStock = new Map(previousRows.map((row) => [row.inventoryId, row.stockInHand]));
+
+            await tx.saleGatePassItem.deleteMany({ where: { saleGatePassId: Number(id) } });
+            await tx.saleGatePassItem.createMany({
+                data: items.map((item) => ({
+                    ...item,
+                    saleGatePassId: Number(id),
+                    stockInHand: previousStock.has(item.inventoryId)
+                        ? previousStock.get(item.inventoryId)
+                        : stockByInventory.get(item.inventoryId) || 0,
+                })),
+            });
+        }
+
+        return tx.saleGatePass.findUnique({
+            where: { id: Number(id) },
+            include: saleGatePassInclude,
+        });
     });
 
     return res.status(200).json(new ApiResponse(200, saleGatePass, "Sale Gate Pass updated successfully"));

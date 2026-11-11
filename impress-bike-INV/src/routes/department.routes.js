@@ -8,7 +8,7 @@ const router = Router();
 
 router.use(authorizeToken);
 
-router.get("/", checkPermission("department:view"), departmentController.getAllDepartments);
+router.get("/", checkPermission("department:view", "issue_from_line:view", "issue_from_line:create", "issue_from_line:update"), departmentController.getAllDepartments);
 router.get("/next-id", checkPermission("department:view"), departmentController.getNextIdDepartment);
 router.get("/:id", checkPermission("department:view"), validate(departmentIdSchema), departmentController.getByIdDepartment);
 router.post("/", checkPermission("department:create"), validate(createDepartmentSchema), departmentController.createDepartment);

@@ -1,7 +1,18 @@
 import { ApiError } from '../utils/apiError.js';
+import { isConnectionError } from '../config/prisma.js';
 
 const errorHandler = (err, req, res, next) => {
     console.error(" Error:", err);
+
+    // Web always uses the LIVE database, so tell the user clearly when it cannot be reached
+    if (isConnectionError(err)) {
+        return res.status(503).json({
+            success: false,
+            code: 503,
+            message: "Cannot connect to the live database. Please check your internet connection and try again.",
+            data: null,
+        });
+    }
 
     // ========================
     //  Mongoose Validation

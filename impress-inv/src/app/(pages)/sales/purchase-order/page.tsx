@@ -12,6 +12,10 @@ import api from "@/lib/axios";
 import toast from "react-hot-toast";
 import { usePermissions } from "@/hooks/usePermissions";
 import { ViewAllModal, type ViewAllColumn } from "@/components/ui/ViewAllModal";
+import { InventoryPickerModal, type InventoryPickItem } from "@/components/ui/InventoryPickerModal";
+import { RowDeleteButton, deletableRowClassName } from "@/components/ui/RowDeleteButton";
+import { AddRowButton } from "@/components/ui/AddRowButton";
+import { DetailField } from "@/components/ui/DetailField";
 import { cn } from "@/lib/utils";
 
 type PurchaseOrderRow = {
@@ -60,6 +64,13 @@ type ApiError = {
     };
 };
 
+const MIN_ROWS = 10;
+const padRows = <T,>(rows: T[], makeRow: () => T): T[] => {
+    const padded = [...rows];
+    while (padded.length < MIN_ROWS) padded.push(makeRow());
+    return padded;
+};
+
 const defaultRow = () => ({
     code: "",
     itemName: "",
@@ -90,7 +101,7 @@ export default function PurchaseOrderPage() {
     const [isEditing, setIsEditing] = useState(true);
     const [vendors, setVendors] = useState<{ label: string; value: string }[]>([]);
     const [quotationsList, setQuotationsList] = useState<QuotationOption[]>([]);
-    const [inventoryItems, setInventoryItems] = useState<{ label: string; value: string }[]>([]);
+    const [pickerRowIndex, setPickerRowIndex] = useState<number | null>(null);
 
     // Quotation Selection Modal State
     const [isQtModalOpen, setIsQtModalOpen] = useState(false);
@@ -126,10 +137,9 @@ export default function PurchaseOrderPage() {
     const fetchOptions = async () => {
         setIsOptionsLoading(true);
         try {
-            const [vendorRes, qtRes, invRes] = await Promise.allSettled([
+            const [vendorRes, qtRes] = await Promise.allSettled([
                 api.get(VENDORS),
                 api.get(QUOTATIONS),
-                api.get(INVENTORY),
             ]);
             if (vendorRes.status === "fulfilled") {
                 setVendors((vendorRes.value.data.data || []).map((v: any) => ({
@@ -147,12 +157,6 @@ export default function PurchaseOrderPage() {
                         itemsSummary: Array.isArray(q.itemName) ? q.itemName.filter(Boolean).join(", ") : "",
                     }))
                 );
-            }
-            if (invRes.status === "fulfilled") {
-                setInventoryItems((invRes.value.data.data || []).map((i: any) => ({
-                    label: i.itemName,
-                    value: i.itemName,
-                })));
             }
         } catch (error) {
             console.error("Failed to fetch dropdown options", error);
@@ -196,9 +200,6 @@ export default function PurchaseOrderPage() {
             amount: po.amount?.[i] !== undefined && po.amount?.[i] !== null ? String(po.amount[i]) : "",
         }));
 
-        while (fetchedRows.length < 10) fetchedRows.push(defaultRow());
-        if (fetchedRows.length > 10) fetchedRows.length = 10;
-
         return {
             id: String(po.id),
             date: po.date ? new Date(po.date).toISOString().split("T")[0] : new Date().toISOString().split("T")[0],
@@ -206,7 +207,7 @@ export default function PurchaseOrderPage() {
             validity: po.validity || "",
             instruction: po.instruction || "",
             quotationId: String(po.quotationId ?? ""),
-            items: fetchedRows,
+            items: padRows(fetchedRows, defaultRow),
             total: po.total !== undefined && po.total !== null ? String(po.total) : "",
             saleTaxPercent: po.saleTaxPercent !== undefined && po.saleTaxPercent !== null ? String(po.saleTaxPercent) : "",
             totalWithSaleTax: po.totalWithSaleTax !== undefined && po.totalWithSaleTax !== null ? String(po.totalWithSaleTax) : "",
@@ -422,10 +423,27 @@ export default function PurchaseOrderPage() {
         setIsQtModalOpen(false);
         setValue("quotationId", String(q.id), { shouldDirty: true, shouldValidate: true });
 
+        // Quotation rows only know the item name, link each one to its inventory item (the code) by name
+        let inventoryIdByName = new Map<string, number>();
+        try {
+            const { data } = await api.get(INVENTORY);
+            inventoryIdByName = new Map(
+                (data.data || []).map((item: { id: number; itemName: string }) => [
+                    item.itemName.trim().toLowerCase(),
+                    item.id,
+                ])
+            );
+        } catch (error) {
+            console.error("Failed to load inventory to link quotation items", error);
+        }
+
+        const unmatched: string[] = [];
         const fetchedRows = (q.itemName || []).map((name: string, i: number) => {
             const rate = q.approvedRate?.[i] ?? q.proposedRate?.[i] ?? q.oldRate?.[i] ?? 0;
+            const inventoryId = inventoryIdByName.get(String(name || "").trim().toLowerCase());
+            if (!inventoryId) unmatched.push(name);
             return {
-                code: "",
+                code: inventoryId ? String(inventoryId) : "",
                 itemName: name || "",
                 unit: "1",
                 quantity: "1",
@@ -434,12 +452,15 @@ export default function PurchaseOrderPage() {
             };
         });
 
-        while (fetchedRows.length < 10) fetchedRows.push(defaultRow());
-        if (fetchedRows.length > 10) fetchedRows.length = 10;
-
         setValue("vendorId", String(q.vendorId ?? ""), { shouldDirty: true, shouldValidate: true });
-        setValue("items", fetchedRows, { shouldDirty: true, shouldValidate: true });
-        toast.success(`Quotation QT-${q.id} loaded (${q.vendorName || "Vendor"})`);
+        setValue("items", padRows(fetchedRows, defaultRow), { shouldDirty: true, shouldValidate: true });
+        if (unmatched.length > 0) {
+            toast.error(`Not found in inventory: ${unmatched.join(", ")}. Click Item Name to select it.`, {
+                duration: 6000,
+            });
+        } else {
+            toast.success(`Quotation QT-${q.id} loaded (${q.vendorName || "Vendor"})`);
+        }
     };
 
     const selectedQuotation = useMemo(() => {
@@ -472,6 +493,38 @@ export default function PurchaseOrderPage() {
             currentItems[index] = newRow;
         }
         setValue("items", currentItems, { shouldDirty: true, shouldValidate: true });
+    };
+
+    const rowHasData = (row: (typeof values.items)[number]) =>
+        !!(row.code || row.itemName || row.unit || row.quantity || row.rate);
+
+    const removeItemRow = (index: number) => {
+        const remaining = values.items.filter((_, i) => i !== index);
+        setValue("items", padRows(remaining, defaultRow), { shouldDirty: true, shouldValidate: true });
+    };
+
+    const addItemRow = () => {
+        setValue("items", [...values.items, defaultRow()], { shouldDirty: true });
+    };
+
+    // The item comes from the inventory: its id is the row Code
+    const handleItemSelect = (item: InventoryPickItem) => {
+        if (pickerRowIndex === null) return;
+        const duplicateIndex = values.items.findIndex(
+            (row, i) => i !== pickerRowIndex && row.code === String(item.id)
+        );
+        if (duplicateIndex !== -1) {
+            toast.error(`"${item.itemName}" is already added in row ${duplicateIndex + 1}`);
+            return;
+        }
+        const currentItems = [...values.items];
+        currentItems[pickerRowIndex] = {
+            ...currentItems[pickerRowIndex],
+            code: String(item.id),
+            itemName: item.itemName,
+        };
+        setValue("items", currentItems, { shouldDirty: true, shouldValidate: true });
+        setPickerRowIndex(null);
     };
 
     // Auto-calculate totals
@@ -615,17 +668,20 @@ export default function PurchaseOrderPage() {
                             disabled={!isEditing}
                         />
 
-                        <LabeledField
+                        <DetailField
                             label="Instruction"
                             value={values.instruction}
-                            onChange={(e) =>
-                                setValue("instruction", e.target.value, {
+                            onChange={(text) =>
+                                setValue("instruction", text, {
                                     shouldDirty: true,
                                     shouldValidate: true,
                                 })
                             }
                             error={errors.instruction?.message}
                             disabled={!isEditing}
+                            required
+                            maxLength={255}
+                            placeholder="Click to add instruction"
                         />
                     </div>
 
@@ -673,30 +729,35 @@ export default function PurchaseOrderPage() {
                         </thead>
                         <tbody>
                             {values.items.map((row, index) => (
-                                <tr key={index} className="border-b border-zinc-300 last:border-b-0">
+                                <tr key={index} className={deletableRowClassName}>
                                     <td className="border-r border-zinc-300 p-0">
                                         <input
-                                            type="number"
+                                            type="text"
                                             value={row.code}
-                                            onChange={(e) => updateItemRow(index, "code", e.target.value)}
+                                            readOnly
+                                            tabIndex={-1}
+                                            title="Inventory item code (set by selecting Item Name)"
                                             disabled={!isEditing}
                                             className="w-full bg-transparent px-2 py-1.5 text-center text-[13px] outline-none disabled:bg-[#f3f4f6]"
                                         />
                                     </td>
                                     <td className="border-r border-zinc-300 p-0">
-                                        <select
+                                        <input
+                                            type="text"
                                             value={row.itemName}
-                                            onChange={(e) => updateItemRow(index, "itemName", e.target.value)}
+                                            readOnly
+                                            onClick={() => isEditing && setPickerRowIndex(index)}
+                                            onKeyDown={(e) => {
+                                                if (isEditing && (e.key === "Enter" || e.key === " ")) {
+                                                    e.preventDefault();
+                                                    setPickerRowIndex(index);
+                                                }
+                                            }}
+                                            placeholder={isEditing ? "Click to select item" : ""}
                                             disabled={!isEditing}
-                                            className="w-full bg-transparent px-2 py-1.5 text-[13px] outline-none disabled:bg-[#f3f4f6]"
-                                        >
-                                            <option value="">Select Item</option>
-                                            {inventoryItems.map((item) => (
-                                                <option key={item.value} value={item.value}>
-                                                    {item.label}
-                                                </option>
-                                            ))}
-                                        </select>
+                                            title={isEditing ? "Click to select item from inventory" : undefined}
+                                            className="w-full cursor-pointer bg-transparent px-2 py-1.5 text-[13px] outline-none placeholder:text-zinc-400 hover:bg-primary-50 disabled:cursor-default disabled:bg-[#f3f4f6]"
+                                        />
                                     </td>
                                     <td className="border-r border-zinc-300 p-0">
                                         <input
@@ -725,7 +786,7 @@ export default function PurchaseOrderPage() {
                                             className="w-full bg-transparent px-2 py-1.5 text-center text-[13px] outline-none disabled:bg-[#f3f4f6]"
                                         />
                                     </td>
-                                    <td className="p-0">
+                                    <td className="relative p-0">
                                         <input
                                             type="number"
                                             value={row.amount}
@@ -733,11 +794,20 @@ export default function PurchaseOrderPage() {
                                             disabled={!isEditing}
                                             className="w-full bg-transparent px-2 py-1.5 text-center text-[13px] outline-none disabled:bg-[#f3f4f6] text-zinc-600 font-medium"
                                         />
+                                        {isEditing && rowHasData(row) && (
+                                            <RowDeleteButton rowNumber={index + 1} onClick={() => removeItemRow(index)} />
+                                        )}
                                     </td>
                                 </tr>
                             ))}
                         </tbody>
                     </table>
+                </div>
+                <div className="-mt-4 mb-4 flex items-center justify-between gap-2">
+                    <span className="text-xs text-zinc-500">
+                        {isEditing ? "Tip: hover a row and click the trash icon to remove it" : ""}
+                    </span>
+                    <AddRowButton onClick={addItemRow} disabled={!isEditing} />
                 </div>
                 {errors.items && (
                     <p className="mb-4 text-xs text-red-500 text-center">{errors.items.message}</p>
@@ -999,6 +1069,13 @@ export default function PurchaseOrderPage() {
                     </div>
                 </div>
             )}
+
+            <InventoryPickerModal
+                isOpen={pickerRowIndex !== null}
+                title={`Select Item${pickerRowIndex !== null ? ` (Row ${pickerRowIndex + 1})` : ""}`}
+                onClose={() => setPickerRowIndex(null)}
+                onSelect={handleItemSelect}
+            />
 
             <ViewAllModal
                 key={isViewAllOpen ? "open" : "closed"}

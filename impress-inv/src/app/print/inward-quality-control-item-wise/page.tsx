@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import React from "react";
 import api from "@/lib/axios";
 import { VENDORS, INWARDS } from "@/utlis/apiRoutes";
-import toast from "react-hot-toast";
 import { usePermissions } from "@/hooks/usePermissions";
 import { useSearchParams } from "next/navigation";
+import { usePrintReport } from "@/hooks/usePrintReport";
+import { PrintStatus } from "@/components/print/PrintStatus";
 
 export default function InwardItemWiseReportPrintPage() {
     const searchParams = useSearchParams();
@@ -14,8 +15,6 @@ export default function InwardItemWiseReportPrintPage() {
     const canView = hasPermission("inward_quality_control_report", "view");
 
     const [vendors, setVendors] = useState<{ label: string; value: string }[]>([]);
-    const [reportData, setReportData] = useState<any[]>([]);
-    const [isLoading, setIsLoading] = useState(true);
 
     const vendorId = searchParams.get("vendorId") || "";
     const fromDate = searchParams.get("fromDate") || "";
@@ -40,38 +39,29 @@ export default function InwardItemWiseReportPrintPage() {
         fetchVendors();
     }, []);
 
-    useEffect(() => {
-        const fetchReport = async () => {
-            if (!canView) {
-                toast.error("You do not have permission to view this report.");
-                setIsLoading(false);
-                return;
-            }
+    // The filters of this report (the same address always gives the same query)
+    const reportParams = useMemo(() => {
+        const params = new URLSearchParams();
+        if (vendorId) params.set("vendorId", vendorId);
+        if (fromDate) params.set("fromDate", fromDate);
+        if (toDate) params.set("toDate", toDate);
+        if (itemName) params.set("itemName", itemName);
+        if (status) params.set("status", status);
+        return params.toString();
+    }, [vendorId, fromDate, toDate, itemName, status]);
 
-            try {
-                const params = new URLSearchParams();
-                if (vendorId) params.append("vendorId", vendorId);
-                if (fromDate) params.append("fromDate", fromDate);
-                if (toDate) params.append("toDate", toDate);
-                if (itemName) params.append("itemName", itemName);
-                if (status) params.append("status", status);
-
-                const { data } = await api.get(`${INWARDS}/report?${params.toString()}`);
-                setReportData(data.data || []);
-            } catch (error: any) {
-                if (error.response?.status === 403) {
-                    toast.error(error.response?.data?.message || "Access denied.");
-                } else {
-                    toast.error("Failed to fetch report data");
-                }
-            } finally {
-                setIsLoading(false);
-                setTimeout(() => window.print(), 500);
-            }
-        };
-
-        fetchReport();
-    }, [vendorId, fromDate, toDate, itemName, status, canView]);
+    const {
+        rows: reportData,
+        total: totalRows,
+        truncated,
+        state: reportState,
+        errorMessage,
+        retry,
+    } = usePrintReport<any>({
+        url: `${INWARDS}/report`,
+        params: reportParams,
+        canView,
+    });
 
     // Group data by item name
     const groupedByItem = reportData.reduce((acc: any, row: any) => {
@@ -84,8 +74,8 @@ export default function InwardItemWiseReportPrintPage() {
         return acc;
     }, {});
 
-    if (isLoading) {
-        return <div className="p-10 text-center text-black">Loading report data...</div>;
+    if (reportState !== "ready") {
+        return <PrintStatus state={reportState} message={errorMessage} onRetry={retry} />;
     }
 
     const selectedVendorName = vendorId ? vendors.find(v => v.value === vendorId)?.label : null;
@@ -115,6 +105,13 @@ export default function InwardItemWiseReportPrintPage() {
                     </p>
                 )}
             </div>
+
+            {truncated && (
+                <p className="mb-4 border border-zinc-400 bg-form-bg p-2 text-center text-[13px] text-black">
+                    Showing the first {reportData.length.toLocaleString()} of {totalRows.toLocaleString()} records.
+                    Narrow the filters (dates, vendor, item) to print everything.
+                </p>
+            )}
 
             {Object.keys(groupedByItem).length === 0 ? (
                 <p className="text-center text-[13px] text-black">No records found</p>

@@ -1,5 +1,5 @@
 import jwt from "jsonwebtoken";
-import prisma from "../config/prisma.js";
+import prisma, { getInactiveDatabaseClient } from "../config/prisma.js";
 import config from "../config/index.js";
 
 const authorizeToken = async (req, res, next) => {
@@ -61,6 +61,26 @@ const authorizeToken = async (req, res, next) => {
         success: false,
         message: "User not found",
       });
+    }
+
+    if (user.token !== token) {
+      // The token may have been issued while the other database was active (e.g. LIVE was unreachable at
+      // login). Accept it when the other database knows it, and copy it here so this database knows it too.
+      const other = getInactiveDatabaseClient();
+      if (other && token) {
+        try {
+          const otherUser = await Promise.race([
+            other.user.findUnique({ where: { id: user.id }, select: { token: true } }),
+            new Promise((resolve) => setTimeout(() => resolve(null), 6000)),
+          ]);
+          if (otherUser?.token === token) {
+            await prisma.user.update({ where: { id: user.id }, data: { token } });
+            user.token = token;
+          }
+        } catch (error) {
+          console.warn("[Auth] Could not check the session token in the other database:", error.message);
+        }
+      }
     }
 
     if (!user.token || user.token !== token) {
