@@ -408,7 +408,7 @@ export default function RejectionReceivedFromDealerPage() {
 
     return (
         <section className="mx-auto mt-10 w-full max-w-5xl bg-form-bg p-6 shadow-sm sm:p-8">
-            <h1 className="mb-8 text-center text-2xl font-medium tracking-wide text-black sm:text-4xl">
+            <h1 className="mb-8 text-center text-4xl text-black tracking-wide">
                 Rejection Received From Dealer Gate Pass
             </h1>
 

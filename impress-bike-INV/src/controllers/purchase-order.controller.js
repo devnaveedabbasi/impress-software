@@ -218,6 +218,74 @@ const getPurchaseOrderBalanceReport = asyncHandler(async (req, res) => {
     });
 });
 
+// Purchase Order report. Without an item: one row per purchase order (date-wise / vendor-wise).
+// With an item: one row per order line of that item. Read page by page like the other reports.
+const getPurchaseOrderReport = asyncHandler(async (req, res) => {
+    const { vendorId, fromDate, toDate, itemName } = req.query;
+    const paging = parsePaging(req.query);
+
+    const where = {};
+    const date = buildDateRange({ fromDate, toDate });
+    if (date) where.date = date;
+    const vendor = parseVendorId(vendorId);
+    if (vendor) where.vendorId = vendor;
+    const item = typeof itemName === "string" ? itemName.trim() : "";
+    if (item) where.itemName = { has: item };
+
+    const [total, sums, purchaseOrders] = await Promise.all([
+        prisma.purchaseOrder.count({ where }),
+        item ? Promise.resolve(null) : prisma.purchaseOrder.aggregate({ where, _sum: { total: true, grandTotal: true } }),
+        prisma.purchaseOrder.findMany({
+            where,
+            include: { vendor: { select: { vendorName: true } } },
+            orderBy: { id: "asc" },
+            skip: paging.skip,
+            take: paging.limit,
+        }),
+    ]);
+
+    const normalizeName = (name) => String(name || "").trim().toLowerCase();
+    const rows = [];
+    for (const po of purchaseOrders) {
+        const vendorName = po.vendor?.vendorName || "Unknown Vendor";
+        if (!item) {
+            rows.push({
+                poId: po.id,
+                date: po.date,
+                vendorId: po.vendorId,
+                vendorName,
+                validity: po.validity,
+                itemsCount: Array.isArray(po.itemName) ? po.itemName.length : 0,
+                total: po.total,
+                saleTaxPercent: po.saleTaxPercent,
+                grandTotal: po.grandTotal,
+            });
+            continue;
+        }
+        (po.itemName || []).forEach((name, index) => {
+            if (normalizeName(name) !== normalizeName(item)) return;
+            rows.push({
+                poId: po.id,
+                date: po.date,
+                vendorId: po.vendorId,
+                vendorName,
+                itemName: name,
+                quantity: po.quantity?.[index] || 0,
+                rate: po.rate?.[index] || 0,
+                amount: po.amount?.[index] || 0,
+            });
+        });
+    }
+
+    return res.status(200).json({
+        ...new ApiResponse(200, rows, "Purchase Order report fetched successfully"),
+        meta: {
+            ...pagingMeta(total, paging),
+            ...(sums ? { totals: { total: sums._sum.total || 0, grandTotal: sums._sum.grandTotal || 0 } } : {}),
+        },
+    });
+});
+
 export default {
     getAllPurchaseOrders,
     getByIdPurchaseOrder,
@@ -225,5 +293,6 @@ export default {
     updatePurchaseOrder,
     deletePurchaseOrder,
     getNextIdPurchaseOrder,
-    getPurchaseOrderBalanceReport
+    getPurchaseOrderBalanceReport,
+    getPurchaseOrderReport
 };
