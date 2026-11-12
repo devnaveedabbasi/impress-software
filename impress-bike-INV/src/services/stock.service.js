@@ -7,6 +7,7 @@ import prisma from "../config/prisma.js";
 //   SALE_GATE_PASS  - qty of every row
 //   STORE_ISSUE     - issue qty of every row
 //   ITEM_RETURN     + received qty of every row
+//   TRANSFER        - qty of every old item, + the total of them on the new item
 //
 // Stock in hand of an item = the stock of the Inventory master (InventoryStock rows) + the total of its movements.
 // A document owns its lines: saving it again replaces them, deleting it removes them, so the stock always matches
@@ -17,6 +18,7 @@ export const SOURCE_LABELS = {
     SALE_GATE_PASS: "Sale Gate Pass",
     STORE_ISSUE: "Store Issuance",
     ITEM_RETURN: "Item Return from Department",
+    TRANSFER: "Transfer Form",
 };
 
 // A transaction on the remote LIVE database needs more time than the default 5 seconds

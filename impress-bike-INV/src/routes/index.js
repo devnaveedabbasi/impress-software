@@ -18,8 +18,10 @@ import quotationRoutes from "./quotation.routes.js";
 import purchaseOrderRoutes from "./purchase-order.routes.js";
 import saleGatePassRoutes from "./sale-gate-pass.routes.js";
 import rejectionReturnRoutes from "./rejection-return-to-vendor.routes.js";
+import rejectionReceivedRoutes from "./rejection-received-from-dealer.routes.js";
 import storeIssueRoutes from "./store-issue.routes.js";
 import itemReturnRoutes from "./item-return.routes.js";
+import stockTransferRoutes from "./stock-transfer.routes.js";
 import stockRoutes from "./stock.routes.js";
 import syncRoutes from "./sync.routes.js";
 
@@ -44,8 +46,10 @@ router.use("/quotations", quotationRoutes);
 router.use("/purchase-orders", purchaseOrderRoutes);
 router.use("/sale-gate-passes", saleGatePassRoutes);
 router.use("/rejection-returns-to-vendor", rejectionReturnRoutes);
+router.use("/rejection-received-from-dealer", rejectionReceivedRoutes);
 router.use("/store-issues", storeIssueRoutes);
 router.use("/item-returns", itemReturnRoutes);
+router.use("/stock-transfers", stockTransferRoutes);
 router.use("/stock", stockRoutes);
 router.use("/sync", syncRoutes);
 

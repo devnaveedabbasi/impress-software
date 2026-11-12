@@ -387,10 +387,9 @@ export default function ItemReturnFromDepartmentPage() {
 
     return (
         <section className="mx-auto mt-10 w-full max-w-4xl bg-form-bg p-6 shadow-sm sm:p-8">
-            <h1 className="mb-2 text-center text-3xl font-medium tracking-wide text-black underline decoration-2 underline-offset-4 sm:text-4xl">
+            <h1 className="mb-8 text-center text-3xl font-medium tracking-wide text-black sm:text-4xl">
                 Rejection Received
             </h1>
-            <p className="mb-8 text-center text-xs text-zinc-500">Item return from department</p>
 
             <form
                 onSubmit={(event) => {

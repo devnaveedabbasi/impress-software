@@ -650,6 +650,98 @@ export const rejectionReturnToVendorSchema = z.object({
 
 export type RejectionReturnToVendorFormValues = z.infer<typeof rejectionReturnToVendorSchema>;
 
+// ---------------- Rejection Received from Dealer ----------------
+export const rejectionReceivedFromDealerSchema = z.object({
+  id: z.string().optional(), // the Claim Note No (generated automatically)
+  date: pastOrTodayDate,
+  dealerId: z.string().min(1, { message: "Please select a dealer" }),
+  dealerName: z.string().optional(), // only shown on the form, the dealer is saved by id
+  address: z
+    .string()
+    .trim()
+    .min(5, { message: "Address must be at least 5 characters" })
+    .max(255, { message: "Address must be at most 255 characters" }),
+  contactNo: z
+    .string()
+    .trim()
+    .min(1, { message: "Contact No is required" })
+    .max(100, { message: "Contact No must be at most 100 characters" })
+    .regex(/^[0-9+\-\s,()\/]{5,}$/, {
+      message: "Enter a valid contact number (digits, spaces and + - , ( ) only, at least 5 characters)",
+    }),
+  saleTaxNo: z
+    .string()
+    .trim()
+    .min(3, { message: "Sale Tax No must be at least 3 characters" })
+    .max(50, { message: "Sale Tax No must be at most 50 characters" })
+    .regex(/^[A-Za-z0-9\-\/ ]+$/, { message: "Sale Tax No can only have letters, numbers, spaces, - and /" }),
+  transport: z
+    .string()
+    .trim()
+    .min(2, { message: "Transport must be at least 2 characters" })
+    .max(100, { message: "Transport must be at most 100 characters" }),
+  builtyNo: optionalCode("Builty No"),
+  bookNo: optionalCode("Book No"),
+  receivedBy: z
+    .string()
+    .trim()
+    .min(2, { message: "Received By must be at least 2 characters" })
+    .max(100, { message: "Received By must be at most 100 characters" }),
+  items: z
+    .array(
+      z.object({
+        // Linked Inventory item id (shown as "Code"), set only by picking from the inventory modal
+        inventoryId: z.string().optional().or(z.literal("")),
+        itemName: z.string().trim().optional().or(z.literal("")),
+        rej: z.string().optional().or(z.literal("")),
+        report: z.string().trim().max(255, { message: "Report must be at most 255 characters" }).optional().or(z.literal("")),
+      })
+    )
+    .superRefine((items, ctx) => {
+      let completeRows = 0;
+      const seen = new Map<string, number>();
+
+      items.forEach((row, index) => {
+        const hasAny = !!(row.inventoryId || row.itemName || row.rej || row.report);
+        if (!hasAny) return;
+
+        if (!row.inventoryId) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: [index, "inventoryId"],
+            message: "click Item Name and select the item from the list",
+          });
+          return;
+        }
+        const rejError = checkRowQty(row.rej, "Rej");
+        if (rejError) {
+          ctx.addIssue({ code: z.ZodIssueCode.custom, path: [index, "rej"], message: rejError });
+          return;
+        }
+        if (seen.has(row.inventoryId)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: [index, "inventoryId"],
+            message: `"${row.itemName}" is already added in row ${(seen.get(row.inventoryId) as number) + 1}`,
+          });
+          return;
+        }
+        seen.set(row.inventoryId, index);
+        completeRows++;
+      });
+
+      // Only when every row is empty: if rows have data, their own problems are reported instead
+      if (completeRows === 0 && !items.some((row) => Object.values(row).some(Boolean))) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Please add at least one item (select Item Name and enter Rej)",
+        });
+      }
+    }),
+});
+
+export type RejectionReceivedFromDealerFormValues = z.infer<typeof rejectionReceivedFromDealerSchema>;
+
 // ---------------- Store Issuance (Issue from Line) ----------------
 export const storeIssueSchema = z.object({
   id: z.string().optional(), // the Requisition Slip No (generated automatically)
@@ -776,3 +868,64 @@ export const itemReturnSchema = z.object({
 });
 
 export type ItemReturnFormValues = z.infer<typeof itemReturnSchema>;
+
+// ---------------- Transfer Form ----------------
+export const stockTransferSchema = z.object({
+  id: z.string().optional(), // the Trans ID (generated automatically)
+  date: pastOrTodayDate,
+  // The NEW item, set only by picking from the inventory modal
+  newInventoryId: z.string().min(1, { message: "Please select the new item" }),
+  newItemName: z.string().optional().or(z.literal("")),
+  items: z
+    .array(
+      z.object({
+        // OLD item, set only by picking from the inventory modal
+        inventoryId: z.string().optional().or(z.literal("")),
+        itemName: z.string().trim().optional().or(z.literal("")),
+        qty: z.string().optional().or(z.literal("")),
+        handStock: z.string().optional().or(z.literal("")), // stock when the item was picked (not saved)
+      })
+    )
+    .superRefine((items, ctx) => {
+      let completeRows = 0;
+      const seen = new Map<string, number>();
+
+      items.forEach((row, index) => {
+        const hasAny = !!(row.inventoryId || row.itemName || row.qty);
+        if (!hasAny) return;
+
+        if (!row.inventoryId) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: [index, "inventoryId"],
+            message: "click Item Name and select the item from the list",
+          });
+          return;
+        }
+        const qtyError = checkRowQty(row.qty, "Qty");
+        if (qtyError) {
+          ctx.addIssue({ code: z.ZodIssueCode.custom, path: [index, "qty"], message: qtyError });
+          return;
+        }
+        if (seen.has(row.inventoryId)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: [index, "inventoryId"],
+            message: `"${row.itemName}" is already added in row ${(seen.get(row.inventoryId) as number) + 1}`,
+          });
+          return;
+        }
+        seen.set(row.inventoryId, index);
+        completeRows++;
+      });
+
+      if (completeRows === 0 && !items.some((row) => Object.values(row).some(Boolean))) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Please add at least one old item (select Item Name and enter Qty)",
+        });
+      }
+    }),
+});
+
+export type StockTransferFormValues = z.infer<typeof stockTransferSchema>;

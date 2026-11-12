@@ -68,6 +68,10 @@ export const SYNC_MODELS = [
   "itemReturn", // must come after "department" (foreign key)
   "itemReturnItem", // must come after "itemReturn" and "inventory" (foreign keys)
   "stockMovement", // must come after "inventory" (foreign key)
+  "stockTransfer", // must come after "inventory" (foreign key)
+  "stockTransferItem", // must come after "stockTransfer" and "inventory" (foreign keys)
+  "rejectionReceivedFromDealer", // must come after "dealer" (foreign key)
+  "rejectionReceivedItem", // must come after "rejectionReceivedFromDealer" and "inventory" (foreign keys)
 ];
 
 const COMPOSITE_KEYS = {

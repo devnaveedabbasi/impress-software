@@ -22,8 +22,10 @@ const operations = [
   "inward_quality_control_report",
   "sale_gate_pass",
   "rejection_return_to_vendor",
+  "rejection_received_from_dealer",
   "issue_from_line",
   "item_return_from_department",
+  "transfer_form",
   "item_ledger",
 ];
 

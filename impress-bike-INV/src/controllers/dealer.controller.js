@@ -198,6 +198,14 @@ const deleteDealer = asyncHandler(async (req, res) => {
         throw new ApiError(404, "Dealer not found");
     }
 
+    const usedInReceipts = await prisma.rejectionReceivedFromDealer.count({ where: { dealerId: Number(id) } });
+    if (usedInReceipts > 0) {
+        throw new ApiError(
+            400,
+            `This dealer is used in ${usedInReceipts} Rejection Received record(s) and cannot be deleted`
+        );
+    }
+
     const dealer = await prisma.dealer.delete({
         where: { id: Number(id) },
     });

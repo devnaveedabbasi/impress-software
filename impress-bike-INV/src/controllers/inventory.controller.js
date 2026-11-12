@@ -235,7 +235,9 @@ const deleteInventory = asyncHandler(async (req, res) => {
         );
     }
 
-    const usedInReturns = await prisma.rejectionReturnItem.count({ where: { inventoryId: Number(id) } });
+    const usedInReturns =
+        (await prisma.rejectionReturnItem.count({ where: { inventoryId: Number(id) } })) +
+        (await prisma.rejectionReceivedItem.count({ where: { inventoryId: Number(id) } }));
     if (usedInReturns > 0) {
         throw new ApiError(
             400,
@@ -244,6 +246,12 @@ const deleteInventory = asyncHandler(async (req, res) => {
     }
 
     const usedInIssueSlips = await prisma.storeIssueItem.count({ where: { inventoryId: Number(id) } });
+    const usedInTransfers =
+        (await prisma.stockTransferItem.count({ where: { inventoryId: Number(id) } })) +
+        (await prisma.stockTransfer.count({ where: { newInventoryId: Number(id) } }));
+    if (usedInTransfers > 0) {
+        throw new ApiError(400, `This item is used in ${usedInTransfers} Transfer record(s) and cannot be deleted`);
+    }
     const usedInItemReturns = await prisma.itemReturnItem.count({ where: { inventoryId: Number(id) } });
     if (usedInIssueSlips + usedInItemReturns > 0) {
         throw new ApiError(

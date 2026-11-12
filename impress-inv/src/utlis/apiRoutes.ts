@@ -24,9 +24,11 @@ export const INWARDS = "/inwards";
 export const ACCOUNT_CODES = "/account-codes";
 export const SALE_GATE_PASSES = "/sale-gate-passes";
 export const REJECTION_RETURN_TO_VENDOR = "/rejection-returns-to-vendor";
+export const REJECTION_RECEIVED_FROM_DEALER = "/rejection-received-from-dealer";
 export const STORE_ISSUES = "/store-issues";
 export const ITEM_RETURNS = "/item-returns";
 export const STOCK_LEDGER = "/stock/ledger";
+export const STOCK_TRANSFERS = "/stock-transfers";
 
 // Sync APIs (Offline <-> Online)
 export const SYNC_STATUS = "/sync/status";

@@ -153,6 +153,8 @@ model Dealer {
   dealarType      DealerType
   NICNo           String
 
+  rejectionReceipts RejectionReceivedFromDealer[]
+
   createdById Int
   updatedById Int
   createdAt   DateTime @default(now())
@@ -260,6 +262,9 @@ model Inventory {
   updatedAt            DateTime              @updatedAt
   saleGatePassItems    SaleGatePassItem[]
   rejectionReturnItems RejectionReturnItem[]
+  rejectionReceivedItems RejectionReceivedItem[]
+  stockTransfersIn       StockTransfer[]
+  stockTransferItems     StockTransferItem[]
   inwardItems          InwardItem[]
   stocks               InventoryStock[]
   storeIssueItems      StoreIssueItem[]
@@ -462,6 +467,83 @@ model RejectionReturnItem {
   updatedAt DateTime @updatedAt
 
   @@unique([rejectionReturnId, inventoryId])
+  @@index([inventoryId])
+}
+
+// 12.2 Rejection Received from Dealer: rejected parts that a dealer sends back to us.
+// Same as "Rejection Return to Vendor" but with a dealer. "id" is the Claim Note No (generated automatically)
+model RejectionReceivedFromDealer {
+  id         Int      @id @default(autoincrement())
+  date       DateTime
+  dealerId   Int
+  dealer     Dealer   @relation(fields: [dealerId], references: [id])
+  address    String
+  contactNo  String
+  saleTaxNo  String
+  transport  String
+  builtyNo   String   @default("")
+  bookNo     String   @default("")
+  receivedBy String
+
+  items RejectionReceivedItem[]
+
+  createdById Int?
+  updatedById Int?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([dealerId])
+}
+
+// 12.3 Rejection Received item rows: each row is linked to an Inventory item
+model RejectionReceivedItem {
+  id                  Int                         @id @default(autoincrement())
+  rejectionReceivedId Int
+  rejectionReceived   RejectionReceivedFromDealer @relation(fields: [rejectionReceivedId], references: [id], onDelete: Cascade)
+  inventoryId         Int
+  inventory           Inventory                   @relation(fields: [inventoryId], references: [id])
+  rej                 Int
+  report              String                      @default("")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([rejectionReceivedId, inventoryId])
+  @@index([inventoryId])
+}
+
+// 14 Transfer Form: the stock of old item(s) moves to a new item (new code / new name).
+// "id" is the Trans ID (generated automatically). "qty" is the total moved = the total of the old rows.
+model StockTransfer {
+  id             Int       @id @default(autoincrement())
+  date           DateTime
+  newInventoryId Int
+  newInventory   Inventory @relation(fields: [newInventoryId], references: [id])
+  qty            Int
+
+  items StockTransferItem[]
+
+  createdById Int?
+  updatedById Int?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([newInventoryId])
+}
+
+// 14.1 Transfer rows: the OLD items whose stock is moved
+model StockTransferItem {
+  id              Int           @id @default(autoincrement())
+  stockTransferId Int
+  stockTransfer   StockTransfer @relation(fields: [stockTransferId], references: [id], onDelete: Cascade)
+  inventoryId     Int
+  inventory       Inventory     @relation(fields: [inventoryId], references: [id])
+  qty             Int
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([stockTransferId, inventoryId])
   @@index([inventoryId])
 }
 
