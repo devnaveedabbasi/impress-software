@@ -55,48 +55,30 @@ async function seedPermissions() {
   return prisma.permission.findMany();
 }
 
-async function seedAdmin(permissions) {
-  const adminRole = await prisma.role.upsert({
-    where: { name: "admin" },
-    update: {},
-    create: { name: "admin" },
-  });
-
-  for (const permission of permissions) {
-    await prisma.rolePermission.upsert({
-      where: {
-        roleId_permissionId: {
-          roleId: adminRole.id,
-          permissionId: permission.id,
-        },
-      },
-      update: {},
-      create: {
-        roleId: adminRole.id,
-        permissionId: permission.id,
-      },
-    });
-  }
-
-  const email = process.env.SEED_ADMIN_EMAIL || "admin@impress-bike.local";
+// The first Super Admin lives in the Admin table (not in User). A Super Admin always has every permission,
+// so nothing is attached to it; other admins are created from the Admins page.
+async function seedAdmin() {
+  const email = process.env.SEED_ADMIN_EMAIL || "admin@impress-bike";
   const password = process.env.SEED_ADMIN_PASSWORD || "ChangeMe123!";
   const hashedPassword = await bcrypt.hash(password, 10);
 
-  const adminUser = await prisma.user.upsert({
+  const adminUser = await prisma.admin.upsert({
     where: { email },
     update: {
       name: process.env.SEED_ADMIN_NAME || "System Administrator",
-      roleId: adminRole.id,
+      role: "SUPER_ADMIN",
+      isSystem: true,
     },
     create: {
       name: process.env.SEED_ADMIN_NAME || "System Administrator",
       email,
       password: hashedPassword,
-      roleId: adminRole.id,
+      role: "SUPER_ADMIN",
+      isSystem: true,
     },
   });
 
-  return { adminRole, adminUser, email, password };
+  return { adminUser, email, password };
 }
 
 async function seedMasterData() {
@@ -127,7 +109,7 @@ async function seedMasterData() {
 
 async function main() {
   const permissions = await seedPermissions();
-  const { adminUser, email, password } = await seedAdmin(permissions);
+  const { adminUser, email, password } = await seedAdmin();
   await seedMasterData();
 
   console.log(`Seed completed successfully. Admin user: ${adminUser.email}`);

@@ -8,6 +8,7 @@ export const UPDATE_PROFILE = "/auth/update-profile";
 
 export const ROLES = "/roles";
 export const USERS = "/users";
+export const ADMINS = "/admins";
 export const PERMISSIONS = "/permissions";
 export const PROVINCES = "/provinces";
 export const CITIES = "/cities";

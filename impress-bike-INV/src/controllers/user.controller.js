@@ -6,25 +6,18 @@ import asyncHandler from "../utils/asyncHandler.js";
 import { ApiResponse } from "../utils/apiResponse.js";
 import { ApiError } from "../utils/apiError.js";
 import { hashPassword, comparePassword } from "../utils/password.js";
+import { assertCanGrant, mapUserPermissions } from "../utils/accountPermissions.js";
 
-export const mapUserPermissions = (user) => {
-    const allPermissions = [
-        ...(user.role && user.role.permissions ? user.role.permissions.map(item => item.permission) : []),
-        ...(user.permissions ? user.permissions.map(item => item.permission) : [])
-    ];
-    
-    const uniquePermissionsMap = new Map();
-    allPermissions.forEach(p => {
-        if (!uniquePermissionsMap.has(p.id)) {
-            uniquePermissionsMap.set(p.id, {
-                id: p.id,
-                name: p.name,
-                operation: p.operation
-            });
-        }
-    });
-    return Array.from(uniquePermissionsMap.values());
+// A role's permissions count as permissions given to the user
+const rolePermissionIds = async (roleId) => {
+    const rows = await prisma.rolePermission.findMany({ where: { roleId: Number(roleId) }, select: { permissionId: true } });
+    return rows.map((row) => row.permissionId);
 };
+
+// An email belongs to one account only (admins and users share the sign-in)
+const emailUsedByAdmin = async (email) => !!(await prisma.admin.findUnique({ where: { email } }));
+
+export { mapUserPermissions };
 
 const createUser = asyncHandler(async (req, res) => {
     const { name, email, password, roleId, permissionIds } = req.body;
@@ -38,10 +31,17 @@ const createUser = asyncHandler(async (req, res) => {
         throw new ApiError(409, "User with this email already exists");
     }
 
+    if (await emailUsedByAdmin(email)) {
+        throw new ApiError(409, "User with this email already exists");
+    }
+
     const existingRole = await prisma.role.findUnique({ where: { id: parseInt(roleId) } });
     if (!existingRole) {
         throw new ApiError(404, "Role not found");
     }
+
+    // An admin can only give permissions it has itself (through the role or directly)
+    await assertCanGrant(req.user, [...(permissionIds || []), ...(await rolePermissionIds(roleId))]);
 
     console.log(
         `[User] Creating user "${email}" in ${getActiveDatabaseName().toUpperCase()} database`
@@ -233,9 +233,8 @@ const updateUser = asyncHandler(async (req, res) => {
             throw new ApiError(400, "Invalid email address");
         }
 
-        const emailExists = await prisma.user.findUnique({
-            where: { email },
-        });
+        const emailExists =
+            (await prisma.user.findUnique({ where: { email } })) || (await emailUsedByAdmin(email));
 
         if (emailExists) {
             throw new ApiError(409, "Email already taken by another user");
@@ -261,10 +260,12 @@ const updateUser = asyncHandler(async (req, res) => {
         if (!roleExists) {
             throw new ApiError(404, "Role not found");
         }
+        await assertCanGrant(req.user, await rolePermissionIds(roleId));
         updateData.roleId = parseInt(roleId);
     }
 
     if (permissionIds && Array.isArray(permissionIds) && !isSelfUpdate) {
+        await assertCanGrant(req.user, permissionIds);
         updateData.permissions = {
             deleteMany: {},
             create: permissionIds.map(id => ({

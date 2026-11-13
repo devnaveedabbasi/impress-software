@@ -5,7 +5,7 @@ import { ApiResponse } from "../utils/apiResponse.js";
 import { ApiError } from "../utils/apiError.js";
 import { comparePassword, hashPassword } from "../utils/password.js";
 import { signToken } from "../utils/jwt.js";
-import { mapUserPermissions } from "./user.controller.js";
+import { permissionsOfAccount } from "../utils/accountPermissions.js";
 import { clearAuthCache } from "../middlewares/auth.middleware.js";
 
 // The active database (LOCAL or LIVE) can switch at any time, so the session token is written to BOTH
@@ -13,15 +13,17 @@ import { clearAuthCache } from "../middlewares/auth.middleware.js";
 // as soon as the backend switches database. The other database is best effort: it may be unreachable.
 const OTHER_DATABASE_TIMEOUT_MS = 4000;
 
-const saveUserToken = async (userId, token) => {
+// accountType is "user" or "admin": they are different tables (an admin signs in from the Admin table).
+const saveUserToken = async (userId, token, accountType = "user") => {
+    const table = accountType === "admin" ? "admin" : "user";
     // Active database must succeed (login fails otherwise, like before)
-    await prisma.user.update({ where: { id: userId }, data: { token } });
-    clearAuthCache(userId);
+    await prisma[table].update({ where: { id: userId }, data: { token } });
+    clearAuthCache(userId, table);
 
     const other = getInactiveDatabaseClient();
     if (!other) return;
 
-    const write = other.user
+    const write = other[table]
         .update({ where: { id: userId }, data: { token } })
         .catch((error) => {
             // P2025 = the user does not exist in the other database yet (not synced), nothing to update
@@ -33,116 +35,53 @@ const saveUserToken = async (userId, token) => {
     await Promise.race([write, timeout]);
 };
 
-const register = asyncHandler(async (req, res) => {
+// The signed-in account's table
+const tableOf = (req) => (req.user.accountType === "admin" ? "admin" : "user");
 
+// Creates the very first Super Admin (protected by the x-admin-secret header). Only works while no
+// Super Admin exists. Further admins are created by a Super Admin from the Admins page.
+const register = asyncHandler(async (req, res) => {
     const adminSecret = req.headers["x-admin-secret"];
 
     if (adminSecret !== config.adminSecret) {
-        throw new ApiError(
-            403,
-            "Unauthorized admin registration"
-        );
+        throw new ApiError(403, "Unauthorized admin registration");
     }
 
     const { name, email, password } = req.body;
 
-    // Validation
     if (!name || !email || !password) {
-        throw new ApiError(
-            400,
-            "Name, email and password are required"
-        );
+        throw new ApiError(400, "Name, email and password are required");
     }
-
-    // Check existing user
-    const existingUser = await prisma.user.findUnique({
-        where: {
-            email,
-        },
-    });
-
-    if (existingUser) {
-        throw new ApiError(
-            409,
-            "User with this email already exists"
-        );
-    }
-
     if (password.length < 6) {
-        throw new ApiError(
-            400,
-            "Password must be at least 6 characters long"
-        );
+        throw new ApiError(400, "Password must be at least 6 characters long");
     }
 
-    // Find admin role
-    let adminRole = await prisma.role.findUnique({
-        where: {
-            name: "admin",
-        },
-    });
-
-
-    // If admin role does not exist, create it
-    if (!adminRole) {
-        adminRole = await prisma.role.create({
-            data: {
-                name: "admin",
-            },
-        });
+    const emailTaken =
+        (await prisma.admin.findUnique({ where: { email } })) || (await prisma.user.findUnique({ where: { email } }));
+    if (emailTaken) {
+        throw new ApiError(409, "An account with this email already exists");
     }
 
-
-    // Check if an admin user already exists
-    const existingAdmin = await prisma.user.findFirst({
-        where: {
-            roleId: adminRole.id,
-        },
-    });
-
-    if (existingAdmin) {
-        throw new ApiError(
-            409,
-            "Admin user already exists"
-        );
+    const existingSuperAdmin = await prisma.admin.findFirst({ where: { role: "SUPER_ADMIN" } });
+    if (existingSuperAdmin) {
+        throw new ApiError(409, "Super admin already exists");
     }
 
-
-    // Hash password
-    const hashedPassword = await hashPassword(password);
-
-
-    // Create Admin User
-    const user = await prisma.user.create({
+    const admin = await prisma.admin.create({
         data: {
             name,
             email,
-            password: hashedPassword,
-            roleId: adminRole.id,
-        },
-
-        include: {
-            role: true,
+            password: await hashPassword(password),
+            role: "SUPER_ADMIN",
+            isSystem: true,
         },
     });
-
-
-    const userResponse = {
-        id: user.id,
-        name: user.name,
-        email: user.email,
-
-        role: user.role ? user.role.name : null,
-
-        createdAt: user.createdAt,
-    };
-
 
     return res.status(201).json(
         new ApiResponse(
             201,
-            userResponse,
-            "Admin registered successfully"
+            { id: admin.id, name: admin.name, email: admin.email, role: "super_admin", createdAt: admin.createdAt },
+            "Super admin registered successfully"
         )
     );
 });
@@ -151,68 +90,57 @@ const register = asyncHandler(async (req, res) => {
 const login = asyncHandler(async (req, res) => {
     const { email, password } = req.body;
 
-    // Validation
     if (!email || !password) {
         throw new ApiError(400, "Email and password are required");
     }
 
-    // Find user (with roles + permissions)
-    const user = await prisma.user.findUnique({
+    // Admins sign in from the Admin table, everyone else from the User table
+    const permissionInclude = { include: { permission: true } };
+    const admin = await prisma.admin.findUnique({
         where: { email },
-        include: {
-            role: {
-                include: {
-                    permissions: {
-                        include: {
-                            permission: true,
-                        },
-                    },
-                },
-            },
-            permissions: {
-                include: {
-                    permission: true,
-                },
-            },
-        },
+        include: { permissions: permissionInclude },
     });
+    const user = admin
+        ? null
+        : await prisma.user.findUnique({
+              where: { email },
+              include: {
+                  role: { include: { permissions: permissionInclude } },
+                  permissions: permissionInclude,
+              },
+          });
 
-    if (!user) {
+    const account = admin || user;
+    if (!account) {
         throw new ApiError(401, "User not found");
     }
 
-    // Compare password
-    const isPasswordValid = await comparePassword(password, user.password);
-
+    const isPasswordValid = await comparePassword(password, account.password);
     if (!isPasswordValid) {
         throw new ApiError(401, "Invalid email or password");
     }
 
-    // Use mapUserPermissions to flatten and deduplicate permissions from role and user
-    const combinedPermissions = mapUserPermissions(user);
-
-    // JWT mein role names bhejo (poora object nahi)
-    const token = signToken(
-        user.id,
-        user.role ? [user.role.name] : []
+    const accountType = admin ? "admin" : "user";
+    const roleName = admin ? (admin.role === "SUPER_ADMIN" ? "super_admin" : "admin") : user.role ? user.role.name : null;
+    const permissions = await permissionsOfAccount(
+        admin ? { ...admin, isSuperAdmin: admin.role === "SUPER_ADMIN" } : user
     );
 
-    // Token save karo (dono databases mein)
-    await saveUserToken(user.id, token);
-
-    const userResponse = {
-        id: user.id,
-        name: user.name,
-        email: user.email,
-        role: user.role ? user.role.name : null,
-        permissions: combinedPermissions,
-    };
+    const token = signToken(account.id, roleName ? [roleName] : [], accountType);
+    await saveUserToken(account.id, token, accountType);
 
     return res.status(200).json(
         new ApiResponse(
             200,
             {
-                user: userResponse,
+                user: {
+                    id: account.id,
+                    name: account.name,
+                    email: account.email,
+                    role: roleName,
+                    accountType,
+                    permissions,
+                },
                 token,
             },
             "Login successful"
@@ -222,13 +150,14 @@ const login = asyncHandler(async (req, res) => {
 
 const getCurrentUser = asyncHandler(async (req, res) => {
     // req.user contains role and user permissions fetched by auth.middleware.js
-    const combinedPermissions = mapUserPermissions(req.user);
+    const combinedPermissions = await permissionsOfAccount(req.user);
 
     const userResponse = {
         id: req.user.id,
         name: req.user.name,
         email: req.user.email,
         role: req.user.role ? req.user.role.name : null,
+        accountType: req.user.accountType,
         permissions: combinedPermissions,
     };
     return res.status(200).json(
@@ -241,14 +170,15 @@ const getCurrentUser = asyncHandler(async (req, res) => {
 });
 
 const logout = asyncHandler(async (req, res) => {
-    const user = await prisma.user.findUnique({
+    const table = tableOf(req);
+    const user = await prisma[table].findUnique({
         where: { id: Number(req.user.id) },
     });
 
     if (!user) {
         throw new ApiError(404, "User not found");
     }
-    await saveUserToken(user.id, null);
+    await saveUserToken(user.id, null, table);
     return res.status(200).json(
         new ApiResponse(
             200,
@@ -283,23 +213,22 @@ const updateProfile = asyncHandler(async (req, res) => {
     }
 
     // Check if email already exists (and is not the current user's email)
-    const existingUser = await prisma.user.findFirst({
-        where: {
-            email,
-            id: {
-                not: req.user.id,
-            },
-        },
-    });
-
-    if (existingUser) {
-        throw new ApiError(
-            409,
-            "Email already taken by another user"
-        );
+    // An email is unique across admins and users, so sign-in always finds exactly one account
+    if (email) {
+        const table = tableOf(req);
+        const [sameTable, otherTable] = await Promise.all([
+            prisma[table].findFirst({ where: { email, id: { not: req.user.id } } }),
+            prisma[table === "admin" ? "user" : "admin"].findUnique({ where: { email } }),
+        ]);
+        if (sameTable || otherTable) {
+            throw new ApiError(
+                409,
+                "Email already taken by another user"
+            );
+        }
     }
 
-    const user = await prisma.user.update({
+    const user = await prisma[tableOf(req)].update({
         where: { id: req.user.id },
         data: { name, email },
     });
@@ -329,7 +258,7 @@ const changePassword = asyncHandler(async (req, res) => {
         );
     }
 
-    const user = await prisma.user.findUnique({
+    const user = await prisma[tableOf(req)].findUnique({
         where: { id: req.user.id },
     });
 
@@ -361,7 +290,7 @@ const changePassword = asyncHandler(async (req, res) => {
     }
 
     const hashedPassword = await hashPassword(newPassword);
-    const updatedUser = await prisma.user.update({
+    await prisma[tableOf(req)].update({
         where: { id: req.user.id },
         data: {
             password: hashedPassword,

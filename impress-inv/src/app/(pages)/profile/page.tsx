@@ -104,7 +104,7 @@ export default function ProfilePage() {
                         <label className="text-sm font-medium w-16">Role</label>
                         <input
                             type="text"
-                            value={profile?.role || "No Role"}
+                            value={profile?.role ? profile.role.split("_").map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ") : "No Role"}
                             readOnly
                             className="border border-zinc-300 px-2 py-1 outline-none w-48 bg-white text-black font-medium"
                         />

@@ -1,5 +1,6 @@
 import { Router } from "express";
 import authRoutes from "./auth.routes.js";
+import adminRoutes from "./admin.routes.js";
 import userRoutes from "./user.routes.js";
 import accountCodeRoutes from "./accountCode.routes.js";
 import cityRoutes from "./city.routes.js";
@@ -29,6 +30,7 @@ const router = Router();
 
 router.use("/auth", authRoutes);
 router.use("/roles", roleRoutes);
+router.use("/admins", adminRoutes);
 router.use("/users", userRoutes);
 router.use("/permissions", permissionRoutes);
 router.use("/account-codes", accountCodeRoutes);

@@ -85,7 +85,7 @@ export function Navbar() {
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const [menuSide, setMenuSide] = useState<"left" | "right">("left");
   const [isProfileOpen, setIsProfileOpen] = useState(false);
-  const { hasPermission } = usePermissions();
+  const { hasPermission, isSuperAdmin } = usePermissions();
   const pathname = usePathname();
 
   useEffect(() => {
@@ -107,6 +107,7 @@ export function Navbar() {
         if (item.children) {
           return item.children.length > 0;
         }
+        if (item.superAdminOnly) return isSuperAdmin;
         // If it's a leaf node with an operation, check permission
         if (item.operation) {
           return hasPermission(item.operation, "view");

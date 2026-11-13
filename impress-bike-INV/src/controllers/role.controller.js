@@ -4,6 +4,7 @@ import prisma, {
 } from "../config/prisma.js";
 import asyncHandler from "../utils/asyncHandler.js";
 import { ApiResponse } from "../utils/apiResponse.js";
+import { assertCanGrant } from "../utils/accountPermissions.js";
 
 // Helper function to normalize strings (removes spaces, hyphens, and converts to lowercase)
 const normalizeString = (str) => {
@@ -17,6 +18,9 @@ const createRole = asyncHandler(async (req, res) => {
     if (!name || name.trim() === "") {
         return res.status(400).json({ success: false, message: "Role name is required" });
     }
+
+    // An admin can only give permissions it has itself
+    await assertCanGrant(req.user, permissionIds);
 
     const normalizedInputName = normalizeString(name);
 
@@ -116,6 +120,8 @@ const updateRole = asyncHandler(async (req, res) => {
     }
 
     const roleId = parseInt(id);
+
+    await assertCanGrant(req.user, permissionIds);
 
     const existingRole = await prisma.role.findUnique({
         where: { id: roleId }

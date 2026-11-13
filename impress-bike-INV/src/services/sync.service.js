@@ -44,6 +44,8 @@ export const SYNC_MODELS = [
   "rolePermission",
   "user",
   "userPermission",
+  "admin",
+  "adminPermission", // must come after "admin" and "permission" (foreign keys)
   "category",
   "department",
   "station",
@@ -77,6 +79,7 @@ export const SYNC_MODELS = [
 const COMPOSITE_KEYS = {
   rolePermission: ["roleId", "permissionId"],
   userPermission: ["userId", "permissionId"],
+  adminPermission: ["adminId", "permissionId"],
 };
 
 function getKey(modelName, item) {
@@ -99,7 +102,7 @@ function getWhere(modelName, item) {
 
 // Session state must never be synced between databases: a user's login token belongs to the session that
 // created it. Copying it would overwrite a fresh token with an older one and log the user out.
-const SESSION_FIELDS = { user: ["token"] };
+const SESSION_FIELDS = { user: ["token"], admin: ["token"] };
 
 function withoutSessionFields(modelName, item) {
   const fields = SESSION_FIELDS[modelName];

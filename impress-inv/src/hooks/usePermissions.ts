@@ -7,8 +7,8 @@ export function usePermissions() {
   const hasPermission = (operationName: string, permissionName: string) => {
     if (!user) return false;
 
-    // Admin has full access
-    if (user.role?.toLowerCase() === "admin") return true;
+    // A super admin has full access. An admin only has the permissions it was given (listed in user.permissions)
+    if (user.role?.toLowerCase() === "super_admin") return true;
 
     // Check if the user has the required permission
     return user.permissions?.some(
@@ -18,5 +18,7 @@ export function usePermissions() {
     ) || false;
   };
 
-  return { hasPermission, user };
+  const isSuperAdmin = user?.role?.toLowerCase() === "super_admin";
+
+  return { hasPermission, user, isSuperAdmin };
 }

@@ -5,6 +5,7 @@ export interface AuthUser {
   name: string;
   email: string;
   role: string | null;
+  accountType?: "admin" | "user";
   permissions?: { id: number; name: string; operation: string }[];
 }
 

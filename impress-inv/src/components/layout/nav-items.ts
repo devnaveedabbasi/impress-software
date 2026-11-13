@@ -3,6 +3,7 @@ export interface NavItem {
   href?: string;
   children?: NavItem[];
   operation?: string;
+  superAdminOnly?: boolean; // shown to a super admin only
 }
 
 export const NAV_ITEMS: NavItem[] = [
@@ -75,6 +76,7 @@ export const NAV_ITEMS: NavItem[] = [
   {
     label: "Account Department",
     children: [
+      { label: "Admins", href: "/account-department/admins", superAdminOnly: true },
       { label: "Users", href: "/account-department/add-user", operation: "user" },
       { label: "Roles", href: "/account-department/add-role", operation: "role" },
       { label: "Permissions", href: "/account-department/permissions", operation: "permission" },

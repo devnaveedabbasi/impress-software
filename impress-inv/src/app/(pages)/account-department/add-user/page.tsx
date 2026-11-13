@@ -241,12 +241,6 @@ export default function AddUserPage() {
                 setIsEditing(true);
             };
 
-            if (String(debouncedId) === "1") {
-                toast.error("Admin user cannot be modified");
-                resetToNextId();
-                return;
-            }
-
             if (Number(debouncedId) < 1 || debouncedId === nextId) {
                 resetToNextId();
                 return;
