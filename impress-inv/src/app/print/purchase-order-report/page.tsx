@@ -7,8 +7,17 @@ import { VENDORS, PURCHASE_ORDERS } from "@/utlis/apiRoutes";
 import { usePermissions } from "@/hooks/usePermissions";
 import { usePrintReport } from "@/hooks/usePrintReport";
 import { PrintStatus } from "@/components/print/PrintStatus";
+import { DocumentSheet } from "@/components/ui/DocumentSheet";
 import type { ReportRow } from "@/lib/inwardReport";
-import { PO_REPORT_PRINT_MAX, columnsFor, findPoTab, formatNumber } from "@/lib/purchaseOrderReport";
+import {
+    PO_LINE_COLUMNS,
+    PO_REPORT_PRINT_MAX,
+    columnsFor,
+    findPoTab,
+    formatNumber,
+    poDocumentEntries,
+    poDocumentSummary,
+} from "@/lib/purchaseOrderReport";
 
 // Prints the Purchase Order report of the Date-wise, Vendor-wise and Item-wise tabs.
 // (PO Balance has its own print page.)
@@ -22,6 +31,7 @@ function PurchaseOrderReportPrint() {
     const fromDate = searchParams.get("fromDate") || "";
     const toDate = searchParams.get("toDate") || "";
     const itemName = searchParams.get("itemName") || "";
+    const poId = searchParams.get("poId") || "";
 
     const [vendorName, setVendorName] = useState("");
     useEffect(() => {
@@ -40,13 +50,15 @@ function PurchaseOrderReportPrint() {
         if (fromDate) params.set("fromDate", fromDate);
         if (toDate) params.set("toDate", toDate);
         if (itemName) params.set("itemName", itemName);
+        if (poId) params.set("poId", poId);
         return params.toString();
-    }, [vendorId, fromDate, toDate, itemName]);
+    }, [vendorId, fromDate, toDate, itemName, poId]);
 
     const {
         rows,
         total: totalRows,
         truncated,
+        meta,
         state,
         errorMessage,
         retry,
@@ -64,6 +76,22 @@ function PurchaseOrderReportPrint() {
     const key = tab?.key ?? "date";
     const columns = columnsFor(key);
     const sum = (field: string) => rows.reduce((total, row) => total + (Number(row[field]) || 0), 0);
+
+    if (key === "id") {
+        return (
+            <div className="min-h-screen w-full bg-white p-8 text-black">
+                <DocumentSheet
+                    variant="print"
+                    title={`Purchase Order No ${poId} Report`}
+                    entries={meta?.document ? poDocumentEntries(meta.document) : []}
+                    columns={PO_LINE_COLUMNS.filter((column) => column.header !== "PO No" && column.header !== "Date" && column.header !== "Vendor")}
+                    rows={rows}
+                    totalRow={{ label: "Total", values: [formatNumber(sum("amount"))] }}
+                    summary={meta?.document ? poDocumentSummary(meta.document) : undefined}
+                />
+            </div>
+        );
+    }
 
     return (
         <div className="min-h-screen w-full bg-white p-8 text-black">

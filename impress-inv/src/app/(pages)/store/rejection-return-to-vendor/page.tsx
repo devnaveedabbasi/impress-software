@@ -14,7 +14,6 @@ import api from "@/lib/axios";
 import toast from "react-hot-toast";
 import { usePermissions } from "@/hooks/usePermissions";
 import { ViewAllModal, type ViewAllColumn } from "@/components/ui/ViewAllModal";
-import { InventoryPickerModal, type InventoryPickItem } from "@/components/ui/InventoryPickerModal";
 import { VendorPickerModal, type VendorPickItem } from "@/components/ui/VendorPickerModal";
 import { RowDeleteButton, deletableRowClassName } from "@/components/ui/RowDeleteButton";
 import { AddRowButton } from "@/components/ui/AddRowButton";
@@ -45,6 +44,18 @@ type RejectionReturnRow = {
     [key: string]: unknown;
 };
 
+// What was rejected from this vendor, from the server: the rejection return can only send back these items
+type ReceivedItem = {
+    inventoryId: number;
+    itemName: string;
+    receivedQty: number;
+    rejectedQty: number;
+    returnedQty: number;
+    maxQty: number; // rejected - already returned
+    suggestedQty: number; // the same: rejected and not yet returned
+    [key: string]: unknown;
+};
+
 type ApiError = {
     response?: {
         status?: number;
@@ -53,6 +64,7 @@ type ApiError = {
 };
 
 const MIN_ROWS = 10;
+const MAX_ROW_QTY = 1_000_000; // the same limit the server uses
 const padRows = <T,>(rows: T[], makeRow: () => T): T[] => {
     const padded = [...rows];
     while (padded.length < MIN_ROWS) padded.push(makeRow());
@@ -86,6 +98,9 @@ export default function RejectionReturnToVendorPage() {
     // Problems found in the item rows: which cell of which row is wrong and why
     const [rowErrors, setRowErrors] = useState<Record<number, { field: string; message: string }>>({});
     const [isVendorPickerOpen, setIsVendorPickerOpen] = useState(false);
+    const [receivedItems, setReceivedItems] = useState<ReceivedItem[]>([]);
+    const [isReceivedLoading, setIsReceivedLoading] = useState(false);
+    const receivedKeyRef = useRef("");
 
     const { hasPermission } = usePermissions();
     const canCreate = hasPermission("rejection_return_to_vendor", "create");
@@ -112,6 +127,15 @@ export default function RejectionReturnToVendorPage() {
         formState: { errors, isSubmitting },
     } = useForm<RejectionReturnToVendorFormValues>({ defaultValues: initialValues });
     const values = watch();
+
+    // An error goes away as soon as the user changes that field, it does not stay red until the next Save
+    useEffect(() => {
+        const subscription = watch((_, { name }) => {
+            if (name) clearErrors(name.split(".")[0] as keyof RejectionReturnToVendorFormValues);
+        });
+        return () => subscription.unsubscribe();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [watch, clearErrors]);
 
     const freshForm = (id: string): RejectionReturnToVendorFormValues => ({
         ...initialValues,
@@ -223,7 +247,12 @@ export default function RejectionReturnToVendorPage() {
         );
     };
 
-    const onSubmit = async (data: RejectionReturnToVendorFormValues) => {
+    const onSubmit = async (formData: RejectionReturnToVendorFormValues) => {
+        // A received item that was filled in automatically and has no Rej qty (and no report) is simply not returned
+        const data: RejectionReturnToVendorFormValues = {
+            ...formData,
+            items: formData.items.map((row) => (row.inventoryId && !row.rej && !row.report ? defaultRow() : row)),
+        };
         clearErrors();
         setRowErrors({});
         const validationResult = rejectionReturnToVendorSchema.safeParse(data);
@@ -233,6 +262,25 @@ export default function RejectionReturnToVendorPage() {
         }
 
         const validRows = data.items.filter((row) => row.inventoryId && row.rej);
+
+        // Every item must be rejected from this vendor and the Rej qty cannot be more than what was rejected
+        const limitErrors: Record<number, { field: string; message: string }> = {};
+        data.items.forEach((row, index) => {
+            if (!row.inventoryId || !row.rej) return;
+            const limit = receivedById.get(row.inventoryId);
+            if (!limit) {
+                limitErrors[index] = { field: "inventoryId", message: `"${row.itemName}" has no rejected quantity from this vendor` };
+            } else if (Number(row.rej) > limit.maxQty) {
+                limitErrors[index] = { field: "rej", message: `Only ${limit.maxQty} can be returned` };
+            }
+        });
+        if (Object.keys(limitErrors).length > 0) {
+            setRowErrors(limitErrors);
+            const first = Object.entries(limitErrors)[0];
+            toast.error(`Row ${Number(first[0]) + 1}: ${first[1].message}`);
+            return;
+        }
+
         const payload = {
             date: new Date(data.date).toISOString(),
             vendorId: Number(data.vendorId),
@@ -349,7 +397,19 @@ export default function RejectionReturnToVendorPage() {
                 toast.error(`Row ${index + 1}: Select Item Name first`, { id: `row-hint-${index}` });
                 return;
             }
-            cleanValue = value.replace(/\D/g, "").replace(/^0+(?=\d)/, "");
+            cleanValue = value.replace(/\D/g, "").replace(/^0+/, "");
+            if (Number(cleanValue) > MAX_ROW_QTY) {
+                toast.error(`Rej qty cannot be more than ${MAX_ROW_QTY.toLocaleString()}`, { id: `row-max-${index}` });
+                cleanValue = String(MAX_ROW_QTY);
+            }
+            const limit = receivedById.get(currentItems[index].inventoryId);
+            if (limit && Number(cleanValue) > limit.maxQty) {
+                toast.error(
+                    `"${limit.itemName}": only ${limit.maxQty} can be returned (rejected ${limit.rejectedQty}, already returned ${limit.returnedQty})`,
+                    { id: `row-limit-${index}` }
+                );
+                cleanValue = String(limit.maxQty);
+            }
         }
         currentItems[index] = { ...currentItems[index], [field]: cleanValue };
         setValue("items", currentItems, { shouldDirty: true, shouldValidate: true });
@@ -368,19 +428,85 @@ export default function RejectionReturnToVendorPage() {
         setValue("items", [...values.items, defaultRow()], { shouldDirty: true });
     };
 
-    // The vendor comes from the vendor list. The other fields (address, contact...) are written by the user.
-    const handleVendorSelect = (vendor: VendorPickItem) => {
+    // Loads what this vendor has delivered (and what was already returned to it). The record being edited is
+    // left out of "already returned", otherwise its own quantities would count against it.
+    const loadReceivedItems = async (vendorId: string, excludeId?: string) => {
+        const key = `${vendorId}:${excludeId ?? ""}`;
+        receivedKeyRef.current = key;
+        setIsReceivedLoading(true);
+        try {
+            const { data } = await api.get(`${REJECTION_RETURN_TO_VENDOR}/received-items`, {
+                // _ts keeps this answer out of the page cache: the received / returned quantities must be current
+                params: { vendorId, ...(excludeId ? { excludeId } : {}), _ts: Date.now() },
+            });
+            if (receivedKeyRef.current !== key) return null;
+            const list: ReceivedItem[] = data.data || [];
+            setReceivedItems(list);
+            return list;
+        } catch (error: unknown) {
+            if (receivedKeyRef.current === key) {
+                setReceivedItems([]);
+                toast.error((error as ApiError).response?.data?.message || "Failed to load the items received from this vendor");
+            }
+            return null;
+        } finally {
+            if (receivedKeyRef.current === key) setIsReceivedLoading(false);
+        }
+    };
+
+    // While a gate pass is being written or edited, its vendor's received items are known (they limit the Rej qty)
+    useEffect(() => {
+        if (!values.vendorId || !isEditing) {
+            if (!values.vendorId) setReceivedItems([]);
+            return;
+        }
+        const excludeId = isNewMode ? undefined : values.id;
+        if (receivedKeyRef.current === `${values.vendorId}:${excludeId ?? ""}`) return;
+        void loadReceivedItems(values.vendorId, excludeId);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [values.vendorId, values.id, isEditing, isNewMode]);
+
+    const receivedById = new Map(receivedItems.map((item) => [String(item.inventoryId), item]));
+
+    // The vendor comes from the vendor list. Its rejected items are filled in with the rejected quantity that is
+    // still to be returned. Nothing else can be returned.
+    const handleVendorSelect = async (vendor: VendorPickItem) => {
         setValue("vendorId", String(vendor.id), { shouldDirty: true, shouldValidate: true });
         setValue("vendorName", vendor.vendorName, { shouldDirty: true });
         setIsVendorPickerOpen(false);
+        setRowErrors({});
+
+        const list = await loadReceivedItems(String(vendor.id), isNewMode ? undefined : values.id);
+        if (!list) return;
+        setValue(
+            "items",
+            padRows(
+                list
+                    .filter((item) => item.maxQty > 0)
+                    .map((item) => ({
+                        inventoryId: String(item.inventoryId),
+                        itemName: item.itemName,
+                        rej: String(item.maxQty),
+                        report: "",
+                    })),
+                defaultRow
+            ),
+            { shouldDirty: true, shouldValidate: true }
+        );
+        const pending = list.filter((item) => item.maxQty > 0).length;
+        if (pending === 0) {
+            toast.error(`No rejected items are pending to return to ${vendor.vendorName}`);
+        } else {
+            toast.success(`${pending} rejected item(s) of ${vendor.vendorName} added`);
+        }
     };
 
-    // The item comes from the inventory: its id is the Code
-    const handleItemSelect = (item: InventoryPickItem) => {
+    // Only an item received from the chosen vendor can be returned to it
+    const handleItemSelect = (item: ReceivedItem) => {
         if (pickerRowIndex === null) return;
         setRowErrors({});
         const duplicateIndex = values.items.findIndex(
-            (row, i) => i !== pickerRowIndex && row.inventoryId === String(item.id)
+            (row, i) => i !== pickerRowIndex && row.inventoryId === String(item.inventoryId)
         );
         if (duplicateIndex !== -1) {
             toast.error(`"${item.itemName}" is already added in row ${duplicateIndex + 1}`);
@@ -389,11 +515,21 @@ export default function RejectionReturnToVendorPage() {
         const currentItems = [...values.items];
         currentItems[pickerRowIndex] = {
             ...currentItems[pickerRowIndex],
-            inventoryId: String(item.id),
+            inventoryId: String(item.inventoryId),
             itemName: item.itemName,
+            rej: currentItems[pickerRowIndex].rej || String(item.maxQty),
         };
         setValue("items", currentItems, { shouldDirty: true, shouldValidate: true });
         setPickerRowIndex(null);
+    };
+
+    const openItemPicker = (index: number) => {
+        if (!isEditing) return;
+        if (!values.vendorId) {
+            toast.error("Select the vendor first, only its rejected items can be returned");
+            return;
+        }
+        setPickerRowIndex(index);
     };
 
     const totalRej = values.items.reduce((sum, row) => sum + (Number(row.rej) || 0), 0);
@@ -449,6 +585,7 @@ export default function RejectionReturnToVendorPage() {
                     <LabeledField
                         type="date"
                         label="Date"
+                        max={today()}
                         value={values.date}
                         onChange={(event) =>
                             setValue("date", event.target.value, { shouldDirty: true, shouldValidate: true })
@@ -581,14 +718,14 @@ export default function RejectionReturnToVendorPage() {
                                             type="text"
                                             value={row.itemName}
                                             readOnly
-                                            onClick={() => isEditing && setPickerRowIndex(index)}
+                                            onClick={() => openItemPicker(index)}
                                             onKeyDown={(e) => {
                                                 if (isEditing && (e.key === "Enter" || e.key === " ")) {
                                                     e.preventDefault();
-                                                    setPickerRowIndex(index);
+                                                    openItemPicker(index);
                                                 }
                                             }}
-                                            placeholder={isEditing ? "Click to select item" : ""}
+                                            placeholder={isEditing ? (values.vendorId ? "Click to select item" : "Select vendor first") : ""}
                                             disabled={!isEditing}
                                             title={isEditing ? "Click to select item from inventory" : undefined}
                                             data-row-error={rowErrors[index]?.field === "inventoryId" ? "true" : undefined}
@@ -599,6 +736,8 @@ export default function RejectionReturnToVendorPage() {
                                         <input
                                             type="text"
                                             inputMode="numeric"
+                                            maxLength={7}
+                                            placeholder="1+"
                                             value={row.rej ?? ""}
                                             onChange={(e) => updateItemRow(index, "rej", e.target.value)}
                                             disabled={!isEditing}
@@ -709,11 +848,23 @@ export default function RejectionReturnToVendorPage() {
                 onSelect={handleVendorSelect}
             />
 
-            <InventoryPickerModal
+            <ViewAllModal
+                key={pickerRowIndex !== null ? "item-open" : "item-closed"}
                 isOpen={pickerRowIndex !== null}
-                title={`Select Item${pickerRowIndex !== null ? ` (Row ${pickerRowIndex + 1})` : ""}`}
+                title={`Rejected items of ${values.vendorName || "the vendor"}${pickerRowIndex !== null ? ` (Row ${pickerRowIndex + 1})` : ""}`}
+                rows={receivedItems.filter((item) => item.maxQty > 0)}
+                columns={[
+                    { key: "inventoryId", header: "Code" },
+                    { key: "itemName", header: "Item Name" },
+                    { key: "rejectedQty", header: "Rejected" },
+                    { key: "returnedQty", header: "Returned" },
+                    { key: "maxQty", header: "Can Return" },
+                ] as ViewAllColumn<ReceivedItem>[]}
+                searchKeys={["inventoryId", "itemName"]}
+                isLoading={isReceivedLoading}
+                error=""
                 onClose={() => setPickerRowIndex(null)}
-                onSelect={handleItemSelect}
+                onRowSelect={handleItemSelect}
             />
 
             <ViewAllModal

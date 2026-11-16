@@ -4,6 +4,7 @@ import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/Button";
+import { DocumentSheet } from "@/components/ui/DocumentSheet";
 import api from "@/lib/axios";
 import { usePermissions } from "@/hooks/usePermissions";
 import { cn } from "@/lib/utils";
@@ -11,12 +12,14 @@ import { PRINT_MAX_ROWS, type ReportMeta } from "@/lib/reportFetch";
 import {
     DEFAULT_PAGE_SIZE,
     INWARD_COLUMNS,
+    INWARD_DOC_COLUMNS,
     PAGE_SIZES,
     PO_COLUMNS,
     PO_PRINT_MAX,
     REPORT_PATH,
     findTab,
     formatNumber,
+    inwardDocumentEntries,
     type ReportRow,
 } from "@/lib/inwardReport";
 
@@ -124,6 +127,8 @@ function ReportResult() {
     const to = Math.min(page * limit, total);
     const printCap = tab.key === "po" ? PO_PRINT_MAX : PRINT_MAX_ROWS;
     const unitLabel = tab.key === "po" ? "purchase orders" : "rows";
+    // ID-wise is one inward: all of its rows are on one page, so there is nothing to page through
+    const isDocument = tab.key === "id";
 
     // Filters used, shown as small tags under the title
     const tags: string[] = [];
@@ -133,6 +138,7 @@ function ReportResult() {
         if (field === "vendorId") tags.push(`Vendor: ${rows[0]?.vendorName ?? `#${value}`}`);
         else if (field === "itemName") tags.push(`Item: ${value}`);
         else if (field === "status") tags.push(value === "ok" ? "OK rows only" : "Rejected rows only");
+        else if (field === "inwardId") tags.push(`Inward No: ${value}`);
         else if (field === "fromDate") tags.push(`From ${value}`);
         else if (field === "toDate") tags.push(`To ${value}`);
     }
@@ -147,7 +153,9 @@ function ReportResult() {
                             ? "Loading..."
                             : total === 0
                               ? "No records"
-                              : `Showing ${from.toLocaleString()}-${to.toLocaleString()} of ${total.toLocaleString()} ${unitLabel}`}
+                              : isDocument
+                                ? `${rows.length.toLocaleString()} item ${rows.length === 1 ? "row" : "rows"}`
+                                : `Showing ${from.toLocaleString()}-${to.toLocaleString()} of ${total.toLocaleString()} ${unitLabel}`}
                     </p>
                     <div className="mt-2 flex flex-wrap gap-1.5">
                         {(tags.length > 0 ? tags : ["All records"]).map((tag) => (
@@ -179,6 +187,24 @@ function ReportResult() {
 
             {!canView ? (
                 <p className="py-10 text-center text-sm text-red-500">You do not have permission to view this report.</p>
+            ) : isDocument ? (
+                <DocumentSheet
+                    title={`Inward Q.C No ${searchParams.get("inwardId")} Report`}
+                    entries={meta?.document ? inwardDocumentEntries(meta.document) : []}
+                    columns={INWARD_DOC_COLUMNS}
+                    rows={rows}
+                    totalRow={{
+                        label: "Total",
+                        values: [
+                            formatNumber(meta?.totals?.recQty),
+                            formatNumber(meta?.totals?.rejQty),
+                            formatNumber(meta?.totals?.okQty),
+                        ],
+                    }}
+                    isLoading={isFetching && rows.length === 0}
+                    error={fetchError}
+                    onRetry={() => setReloadKey((key) => key + 1)}
+                />
             ) : (
                 <>
                     {total > printCap && (
@@ -274,6 +300,7 @@ function ReportResult() {
                         </table>
                     </div>
 
+                    {!isDocument && (
                     <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
                         <label className="flex items-center gap-2 text-xs text-zinc-600">
                             Rows per page
@@ -316,6 +343,7 @@ function ReportResult() {
                             </Button>
                         </div>
                     </div>
+                    )}
                 </>
             )}
         </section>

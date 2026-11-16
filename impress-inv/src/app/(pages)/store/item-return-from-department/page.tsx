@@ -100,6 +100,15 @@ export default function ItemReturnFromDepartmentPage() {
     } = useForm<ItemReturnFormValues>({ defaultValues: initialValues });
     const values = watch();
 
+    // An error goes away as soon as the user changes that field, it does not stay red until the next Save
+    useEffect(() => {
+        const subscription = watch((_, { name }) => {
+            if (name) clearErrors(name.split(".")[0] as keyof ItemReturnFormValues);
+        });
+        return () => subscription.unsubscribe();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [watch, clearErrors]);
+
     const freshForm = (id: string): ItemReturnFormValues => ({
         ...initialValues,
         id,

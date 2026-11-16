@@ -8,6 +8,8 @@ import { usePermissions } from "@/hooks/usePermissions";
 import { useSearchParams } from "next/navigation";
 import { usePrintReport } from "@/hooks/usePrintReport";
 import { PrintStatus } from "@/components/print/PrintStatus";
+import { DocumentSheet } from "@/components/ui/DocumentSheet";
+import { INWARD_DOC_COLUMNS, formatNumber, inwardDocumentEntries } from "@/lib/inwardReport";
 
 export default function InwardQualityControlPrintPage() {
     const searchParams = useSearchParams();
@@ -21,6 +23,7 @@ export default function InwardQualityControlPrintPage() {
     const toDate = searchParams.get("toDate") || "";
     const itemName = searchParams.get("itemName") || "";
     const status = searchParams.get("status") || "";
+    const inwardId = searchParams.get("inwardId") || "";
 
     useEffect(() => {
         const fetchVendors = async () => {
@@ -47,13 +50,15 @@ export default function InwardQualityControlPrintPage() {
         if (toDate) params.set("toDate", toDate);
         if (itemName) params.set("itemName", itemName);
         if (status) params.set("status", status);
+        if (inwardId) params.set("inwardId", inwardId);
         return params.toString();
-    }, [vendorId, fromDate, toDate, itemName, status]);
+    }, [vendorId, fromDate, toDate, itemName, status, inwardId]);
 
     const {
         rows: reportData,
         total: totalRows,
         truncated,
+        meta,
         state: reportState,
         errorMessage,
         retry,
@@ -135,10 +140,32 @@ export default function InwardQualityControlPrintPage() {
         return <PrintStatus state={reportState} message={errorMessage} onRetry={retry} />;
     }
 
+    if (inwardId) {
+        return (
+            <div className="p-8 bg-white min-h-screen text-black w-full">
+                <DocumentSheet
+                    variant="print"
+                    title={`Inward Q.C No ${inwardId} Report`}
+                    entries={meta?.document ? inwardDocumentEntries(meta.document) : []}
+                    columns={INWARD_DOC_COLUMNS}
+                    rows={reportData}
+                    totalRow={{
+                        label: "Total",
+                        values: [
+                            formatNumber(meta?.totals?.recQty),
+                            formatNumber(meta?.totals?.rejQty),
+                            formatNumber(meta?.totals?.okQty),
+                        ],
+                    }}
+                />
+            </div>
+        );
+    }
+
     return (
         <div className="p-8 bg-white min-h-screen text-black w-full">
             <div className="text-center mb-6">
-                <h2 className="text-2xl font-bold uppercase tracking-wider text-black">{vendorId ? 'Vendor-wise Q.C Report' : 'Q.C Report'}</h2>
+                <h2 className="text-2xl font-bold uppercase tracking-wider text-black">{inwardId ? `Inward Q.C No ${inwardId} Report` : vendorId ? 'Vendor-wise Q.C Report' : 'Q.C Report'}</h2>
                 {vendorId && (
                     <p className="text-lg font-bold mt-2 text-black uppercase">
                         Vendor Name: {vendors.find(v => v.value === vendorId)?.label}

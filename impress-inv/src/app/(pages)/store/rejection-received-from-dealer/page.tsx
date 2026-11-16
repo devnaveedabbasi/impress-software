@@ -53,6 +53,7 @@ type ApiError = {
 };
 
 const MIN_ROWS = 10;
+const MAX_ROW_QTY = 1_000_000; // the same limit the server uses
 const padRows = <T,>(rows: T[], makeRow: () => T): T[] => {
     const padded = [...rows];
     while (padded.length < MIN_ROWS) padded.push(makeRow());
@@ -112,6 +113,15 @@ export default function RejectionReceivedFromDealerPage() {
         formState: { errors, isSubmitting },
     } = useForm<RejectionReceivedFromDealerFormValues>({ defaultValues: initialValues });
     const values = watch();
+
+    // An error goes away as soon as the user changes that field, it does not stay red until the next Save
+    useEffect(() => {
+        const subscription = watch((_, { name }) => {
+            if (name) clearErrors(name.split(".")[0] as keyof RejectionReceivedFromDealerFormValues);
+        });
+        return () => subscription.unsubscribe();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [watch, clearErrors]);
 
     const freshForm = (id: string): RejectionReceivedFromDealerFormValues => ({
         ...initialValues,
@@ -349,7 +359,11 @@ export default function RejectionReceivedFromDealerPage() {
                 toast.error(`Row ${index + 1}: Select Item Name first`, { id: `row-hint-${index}` });
                 return;
             }
-            cleanValue = value.replace(/\D/g, "").replace(/^0+(?=\d)/, "");
+            cleanValue = value.replace(/\D/g, "").replace(/^0+/, "");
+            if (Number(cleanValue) > MAX_ROW_QTY) {
+                toast.error(`Rej qty cannot be more than ${MAX_ROW_QTY.toLocaleString()}`, { id: `row-max-${index}` });
+                cleanValue = String(MAX_ROW_QTY);
+            }
         }
         currentItems[index] = { ...currentItems[index], [field]: cleanValue };
         setValue("items", currentItems, { shouldDirty: true, shouldValidate: true });
@@ -449,6 +463,7 @@ export default function RejectionReceivedFromDealerPage() {
                     <LabeledField
                         type="date"
                         label="Date"
+                        max={today()}
                         value={values.date}
                         onChange={(event) =>
                             setValue("date", event.target.value, { shouldDirty: true, shouldValidate: true })
@@ -599,6 +614,8 @@ export default function RejectionReceivedFromDealerPage() {
                                         <input
                                             type="text"
                                             inputMode="numeric"
+                                            maxLength={7}
+                                            placeholder="1+"
                                             value={row.rej ?? ""}
                                             onChange={(e) => updateItemRow(index, "rej", e.target.value)}
                                             disabled={!isEditing}

@@ -39,6 +39,7 @@ function PurchaseOrderReportFilters() {
             date: emptyPoFilters("date"),
             vendor: emptyPoFilters("vendor"),
             item: emptyPoFilters("item"),
+            id: emptyPoFilters("id"),
             balance: emptyPoFilters("balance"),
         };
         const restoredTab = findPoTab(searchParams.get("tab"));
@@ -108,6 +109,9 @@ function PurchaseOrderReportFilters() {
         if (current.fromDate && current.toDate && current.fromDate > current.toDate) {
             found.toDate = "To Date cannot be before From Date";
         }
+        if (tab.fields.includes("poId") && current.poId && !/^[1-9]\d*$/.test(current.poId)) {
+            found.poId = "Enter a valid PO number";
+        }
         setErrors(found);
         return Object.keys(found).length === 0;
     };
@@ -143,6 +147,7 @@ function PurchaseOrderReportFilters() {
             if (!value || value === ALL) continue;
             if (field === "vendorId") parts.push(`Vendor: ${vendors.find((v) => v.value === value)?.label ?? value}`);
             else if (field === "itemName") parts.push(`Item: ${value}`);
+            else if (field === "poId") parts.push(`PO No: ${value}`);
             else if (field === "fromDate") parts.push(`From ${value}`);
             else if (field === "toDate") parts.push(`To ${value}`);
         }
@@ -179,6 +184,21 @@ function PurchaseOrderReportFilters() {
                         placeholder={isLoading ? "Loading vendors..." : "Select Vendor"}
                     />
                 );
+            case "poId":
+                return (
+                    <LabeledField
+                        key={field}
+                        label={`${PO_FIELD_LABELS.poId} *`}
+                        value={current.poId}
+                        onChange={(event) => {
+                            if (/^\d*$/.test(event.target.value)) setField("poId", event.target.value);
+                        }}
+                        inputMode="numeric"
+                        placeholder="e.g. 5"
+                        error={error}
+                        autoFocus
+                    />
+                );
             case "itemName":
                 return (
                     <LabeledSelect
@@ -200,7 +220,7 @@ function PurchaseOrderReportFilters() {
             <h1 className="mb-6 text-center text-2xl font-bold text-zinc-900 sm:text-3xl">Purchase Order Report</h1>
 
             {/* One tab per report: pick the report first, then fill only its fields */}
-            <div role="tablist" aria-label="Report type" className="mb-5 grid grid-cols-2 gap-2 sm:grid-cols-4">
+            <div role="tablist" aria-label="Report type" className="mb-5 grid grid-cols-2 gap-2 sm:grid-cols-5">
                 {PO_TABS.map((t) => (
                     <button
                         key={t.key}

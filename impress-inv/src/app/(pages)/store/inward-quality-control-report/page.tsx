@@ -40,6 +40,7 @@ function ReportFilters() {
             date: emptyFilters("date"),
             vendor: emptyFilters("vendor"),
             item: emptyFilters("item"),
+            id: emptyFilters("id"),
             po: emptyFilters("po"),
         };
         const restoredTab = findTab(searchParams.get("tab"));
@@ -109,6 +110,9 @@ function ReportFilters() {
         if (current.fromDate && current.toDate && current.fromDate > current.toDate) {
             found.toDate = "To Date cannot be before From Date";
         }
+        if (tab.fields.includes("inwardId") && current.inwardId && !/^[1-9]\d*$/.test(current.inwardId)) {
+            found.inwardId = "Enter a valid Inward / Q.C number";
+        }
         setErrors(found);
         return Object.keys(found).length === 0;
     };
@@ -145,6 +149,7 @@ function ReportFilters() {
             if (field === "vendorId") parts.push(`Vendor: ${vendors.find((v) => v.value === value)?.label ?? value}`);
             else if (field === "itemName") parts.push(`Item: ${value}`);
             else if (field === "status") parts.push(value === "ok" ? "OK rows only" : "Rejected rows only");
+            else if (field === "inwardId") parts.push(`Inward No: ${value}`);
             else if (field === "fromDate") parts.push(`From ${value}`);
             else if (field === "toDate") parts.push(`To ${value}`);
         }
@@ -194,6 +199,21 @@ function ReportFilters() {
                         placeholder={isLoading ? "Loading items..." : "Select Item"}
                     />
                 );
+            case "inwardId":
+                return (
+                    <LabeledField
+                        key={field}
+                        label={`${FIELD_LABELS.inwardId} *`}
+                        value={current.inwardId}
+                        onChange={(event) => {
+                            if (/^\d*$/.test(event.target.value)) setField("inwardId", event.target.value);
+                        }}
+                        inputMode="numeric"
+                        placeholder="e.g. 12"
+                        error={error}
+                        autoFocus
+                    />
+                );
             case "status":
                 return (
                     <LabeledSelect
@@ -214,7 +234,7 @@ function ReportFilters() {
             </h1>
 
             {/* One tab per report: pick the report first, then fill only its fields */}
-            <div role="tablist" aria-label="Report type" className="mb-5 grid grid-cols-2 gap-2 sm:grid-cols-4">
+            <div role="tablist" aria-label="Report type" className="mb-5 grid grid-cols-2 gap-2 sm:grid-cols-5">
                 {TABS.map((t) => (
                     <button
                         key={t.key}

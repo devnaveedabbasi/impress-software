@@ -11,6 +11,8 @@ export type ReportMeta = {
   limit: number;
   totalPages: number;
   totals?: { recQty: number; rejQty: number; okQty: number };
+  // The header of a one-document (ID-wise) report
+  document?: Record<string, string | number | null | undefined>;
 };
 
 export async function fetchAllReportRows<T>(url: string, params: URLSearchParams, maxRows = PRINT_MAX_ROWS) {

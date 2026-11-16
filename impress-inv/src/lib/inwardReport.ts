@@ -6,8 +6,8 @@ export const REPORT_PATH = "/store/inward-quality-control-report";
 export const REPORT_RESULT_PATH = `${REPORT_PATH}/result`;
 
 export type Option = { label: string; value: string };
-export type TabKey = "date" | "vendor" | "item" | "po";
-export type FieldKey = "fromDate" | "toDate" | "vendorId" | "itemName" | "status";
+export type TabKey = "date" | "vendor" | "item" | "id" | "po";
+export type FieldKey = "fromDate" | "toDate" | "vendorId" | "itemName" | "status" | "inwardId";
 export type Filters = Record<FieldKey, string>;
 export type ReportRow = Record<string, string | number | null | undefined>;
 
@@ -63,6 +63,15 @@ export const TABS: TabConfig[] = [
     required: ["itemName"],
   },
   {
+    key: "id",
+    label: "ID-wise",
+    description: "The full report of one inward entry. Enter its Inward / Q.C number.",
+    dataPath: `${INWARDS}/report`,
+    printPath: "/print/inward-quality-control-report",
+    fields: ["inwardId"],
+    required: ["inwardId"],
+  },
+  {
     key: "po",
     label: "PO Balance",
     description: "Ordered, received and balance quantity of purchase orders.",
@@ -81,6 +90,7 @@ export const FIELD_LABELS: Record<FieldKey, string> = {
   vendorId: "Vendor",
   itemName: "Item",
   status: "Row Status (REJ / OK)",
+  inwardId: "Inward / Q.C No",
 };
 
 const today = () => new Date().toISOString().split("T")[0];
@@ -96,7 +106,27 @@ export const emptyFilters = (tab: TabKey): Filters => ({
   vendorId: tab === "vendor" ? "" : ALL,
   itemName: tab === "item" ? "" : ALL,
   status: ALL,
+  inwardId: "",
 });
+
+const INWARD_TYPE_LABELS: Record<string, string> = {
+  againstPO: "Against PO",
+  againstSimple: "Against Simple",
+  againstDealarRejection: "Against Dealer Rejection",
+};
+
+// The header of an ID-wise report: who, when and which papers
+export const inwardDocumentEntries = (doc: Record<string, string | number | null | undefined>): [string, string | number | null | undefined][] => [
+  ["Inward / Q.C No", doc.inwardId],
+  ["Date", doc.date ? formatDate(doc.date) : ""],
+  ["Type", doc.type ? INWARD_TYPE_LABELS[String(doc.type)] ?? String(doc.type) : ""],
+  ["PO No", doc.poNo],
+  ["Vendor", doc.vendorName],
+  ["G.R.LR No", doc.grirNo],
+  ["D.C No", doc.dcNo],
+  ["Bill No", doc.billNo],
+  ["Details", doc.detail],
+];
 
 export const formatDate = (value: string | number | null | undefined) =>
   value ? new Date(value).toISOString().split("T")[0] : "-";
@@ -114,6 +144,14 @@ export const INWARD_COLUMNS: Column[] = [
   { header: "Item", render: (r) => String(r.itemName ?? "-") },
   { header: "Recvd", align: "center", render: (r) => formatNumber(r.recQty) },
   { header: "Rej", align: "center", render: (r) => formatNumber(r.rejQty) },
+  { header: "OK", align: "center", render: (r) => formatNumber(r.okQty) },
+];
+
+// The item table of an ID-wise report (the inward's own details are in its header)
+export const INWARD_DOC_COLUMNS: Column[] = [
+  { header: "Item", render: (r) => String(r.itemName ?? "-") },
+  { header: "Received", align: "center", render: (r) => formatNumber(r.recQty) },
+  { header: "Rejected", align: "center", render: (r) => formatNumber(r.rejQty) },
   { header: "OK", align: "center", render: (r) => formatNumber(r.okQty) },
 ];
 

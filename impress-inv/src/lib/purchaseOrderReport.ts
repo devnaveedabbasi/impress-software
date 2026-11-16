@@ -20,8 +20,8 @@ export const PO_REPORT_RESULT_PATH = `${PO_REPORT_PATH}/result`;
 export const PO_REPORT_PRINT_PATH = "/print/purchase-order-report";
 export const PO_REPORT_PRINT_MAX = 2000;
 
-export type PoTabKey = "date" | "vendor" | "item" | "balance";
-export type PoFieldKey = "fromDate" | "toDate" | "vendorId" | "itemName";
+export type PoTabKey = "date" | "vendor" | "item" | "id" | "balance";
+export type PoFieldKey = "fromDate" | "toDate" | "vendorId" | "itemName" | "poId";
 export type PoFilters = Record<PoFieldKey, string>;
 
 export type PoTabConfig = {
@@ -63,6 +63,15 @@ export const PO_TABS: PoTabConfig[] = [
     required: ["itemName"],
   },
   {
+    key: "id",
+    label: "ID-wise",
+    description: "The full report of one purchase order. Enter its PO number.",
+    dataPath: `${PURCHASE_ORDERS}/report`,
+    printPath: PO_REPORT_PRINT_PATH,
+    fields: ["poId"],
+    required: ["poId"],
+  },
+  {
     key: "balance",
     label: "PO Balance",
     description: "Ordered, received and balance quantity of purchase orders.",
@@ -80,6 +89,7 @@ export const PO_FIELD_LABELS: Record<PoFieldKey, string> = {
   toDate: "To Date",
   vendorId: "Vendor",
   itemName: "Item",
+  poId: "PO No",
 };
 
 const today = () => new Date().toISOString().split("T")[0];
@@ -94,6 +104,7 @@ export const emptyPoFilters = (tab: PoTabKey): PoFilters => ({
   toDate: tab === "date" ? today() : "",
   vendorId: tab === "vendor" ? "" : ALL,
   itemName: tab === "item" ? "" : ALL,
+  poId: "",
 });
 
 // One row per purchase order (date-wise and vendor-wise)
@@ -120,7 +131,26 @@ export const PO_LINE_COLUMNS: Column[] = [
 ];
 
 export const columnsFor = (tab: PoTabKey): Column[] =>
-  tab === "item" ? PO_LINE_COLUMNS : tab === "balance" ? PO_COLUMNS : PO_LIST_COLUMNS;
+  tab === "item" || tab === "id" ? PO_LINE_COLUMNS : tab === "balance" ? PO_COLUMNS : PO_LIST_COLUMNS;
 
 // Date and vendor tabs list whole purchase orders, so the item filter is only sent by the tabs that use it
-export const rowsLabel = (tab: PoTabKey) => (tab === "item" ? "order lines" : "purchase orders");
+export const rowsLabel = (tab: PoTabKey) => (tab === "item" || tab === "id" ? "order lines" : "purchase orders");
+
+// The header of an ID-wise report: the purchase order and its totals
+export const poDocumentEntries = (doc: Record<string, string | number | null | undefined>): [string, string | number | null | undefined][] => [
+  ["PO No", doc.poId],
+  ["Date", doc.date ? formatDate(doc.date) : ""],
+  ["Vendor", doc.vendorName],
+  ["Validity", doc.validity],
+  ["Quotation", doc.quotationId ? `QT-${doc.quotationId}` : ""],
+  ["Instruction", doc.instruction],
+];
+
+// The totals under the item table of an ID-wise report
+export const poDocumentSummary = (doc: Record<string, string | number | null | undefined>): [string, string][] => [
+  ["Total", formatNumber(doc.total)],
+  [`Sale Tax (${formatNumber(doc.saleTaxPercent)}%)`, formatNumber(Number(doc.totalWithSaleTax ?? 0) - Number(doc.total ?? 0))],
+  ["Total with Sale Tax", formatNumber(doc.totalWithSaleTax)],
+  [`With Holding (${formatNumber(doc.withHoldingPercent)}%)`, formatNumber(doc.withHoldingAmount)],
+  ["Grand Total", formatNumber(doc.grandTotal)],
+];

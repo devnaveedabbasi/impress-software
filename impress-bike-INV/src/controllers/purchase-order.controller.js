@@ -221,8 +221,57 @@ const getPurchaseOrderBalanceReport = asyncHandler(async (req, res) => {
 // Purchase Order report. Without an item: one row per purchase order (date-wise / vendor-wise).
 // With an item: one row per order line of that item. Read page by page like the other reports.
 const getPurchaseOrderReport = asyncHandler(async (req, res) => {
-    const { vendorId, fromDate, toDate, itemName } = req.query;
+    const { vendorId, fromDate, toDate, itemName, poId } = req.query;
     const paging = parsePaging(req.query);
+
+    // ID-wise: the full report of one purchase order (every line + its totals)
+    if (poId !== undefined && poId !== "") {
+        const id = Number(poId);
+        if (!Number.isInteger(id) || id < 1) throw new ApiError(400, "PO No is not valid");
+        const po = await prisma.purchaseOrder.findUnique({
+            where: { id },
+            include: { vendor: { select: { vendorName: true } } },
+        });
+        if (!po) throw new ApiError(404, `Purchase Order #${id} not found`);
+
+        const vendorName = po.vendor?.vendorName || "Unknown Vendor";
+        const lines = (po.itemName || []).map((name, index) => ({
+            poId: po.id,
+            date: po.date,
+            vendorId: po.vendorId,
+            vendorName,
+            itemName: name,
+            quantity: po.quantity?.[index] || 0,
+            rate: po.rate?.[index] || 0,
+            amount: po.amount?.[index] || 0,
+        }));
+
+        return res.status(200).json({
+            ...new ApiResponse(200, lines, "Purchase Order report fetched successfully"),
+            meta: {
+                total: 1,
+                page: 1,
+                limit: lines.length || 1,
+                totalPages: 1,
+                lines: lines.length,
+                totals: { total: po.total, grandTotal: po.grandTotal },
+                document: {
+                    poId: po.id,
+                    date: po.date,
+                    vendorName,
+                    validity: po.validity,
+                    instruction: po.instruction,
+                    quotationId: po.quotationId,
+                    total: po.total,
+                    saleTaxPercent: po.saleTaxPercent,
+                    totalWithSaleTax: po.totalWithSaleTax,
+                    withHoldingPercent: po.withHoldingPercent,
+                    withHoldingAmount: po.withHoldingAmount,
+                    grandTotal: po.grandTotal,
+                },
+            },
+        });
+    }
 
     const where = {};
     const date = buildDateRange({ fromDate, toDate });

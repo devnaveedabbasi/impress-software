@@ -220,15 +220,37 @@ const getNextIdInward = asyncHandler(async (req, res) => {
 });
 
 const getInwardReport = asyncHandler(async (req, res) => {
-    const { vendorId, fromDate, toDate, itemName, status } = req.query;
+    const { vendorId, fromDate, toDate, itemName, status, inwardId } = req.query;
     const paging = parsePaging(req.query);
 
-    // Filters are applied by the database, only the requested page is loaded
+    // ID-wise: the report of one inward. The inward must exist, otherwise the user gets a clear message.
+    let document;
     const inwardWhere = {};
+    if (inwardId !== undefined && inwardId !== "") {
+        const id = Number(inwardId);
+        if (!Number.isInteger(id) || id < 1) throw new ApiError(400, "Inward No is not valid");
+        const found = await prisma.inward.findUnique({ where: { id }, include: inwardInclude });
+        if (!found) throw new ApiError(404, `Inward #${id} not found`);
+        inwardWhere.id = id;
+        const vendorInfo = found.purchaseOrder?.vendor || found.quotation?.vendor || null;
+        document = {
+            inwardId: found.id,
+            date: found.date,
+            type: found.Type,
+            poNo: found.purchaseOrderId,
+            vendorName: vendorInfo?.vendorName || null,
+            grirNo: found.GRIRNo,
+            dcNo: found.DCNo,
+            billNo: found.billNO,
+            detail: found.detail,
+        };
+    }
+
+    // Filters are applied by the database, only the requested page is loaded
     const date = buildDateRange({ fromDate, toDate });
-    if (date) inwardWhere.date = date;
+    if (date && !document) inwardWhere.date = date;
     const vendor = parseVendorId(vendorId);
-    if (vendor) {
+    if (vendor && !document) {
         inwardWhere.OR = [
             { purchaseOrder: { vendorId: vendor } },
             { quotation: { vendorId: vendor } }
@@ -296,6 +318,7 @@ const getInwardReport = asyncHandler(async (req, res) => {
                 rejQty: sums._sum.rejQty || 0,
                 okQty: sums._sum.okQty || 0,
             },
+            ...(document ? { document } : {}),
         },
     });
 });

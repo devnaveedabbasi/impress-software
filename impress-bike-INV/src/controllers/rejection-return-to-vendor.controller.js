@@ -40,6 +40,85 @@ const assertInventoryExists = async (items) => {
     }
 };
 
+// What a vendor delivered that was REJECTED at inward (from the inwards of its purchase orders / quotations)
+// and what was already returned to it. A rejection return can only send back items that were rejected from
+// this vendor, and not more than was rejected. "excludeReturnId" leaves out the record being edited.
+const vendorInwardWhere = (vendorId) => ({
+    inward: { OR: [{ purchaseOrder: { vendorId } }, { quotation: { vendorId } }] },
+});
+
+const getReceivedFromVendor = async (vendorId, excludeReturnId) => {
+    const [received, returned] = await Promise.all([
+        prisma.inwardItem.groupBy({
+            by: ["inventoryId"],
+            where: vendorInwardWhere(vendorId),
+            _sum: { recQty: true, rejQty: true },
+        }),
+        prisma.rejectionReturnItem.groupBy({
+            by: ["inventoryId"],
+            where: {
+                rejectionReturn: { vendorId, ...(excludeReturnId ? { id: { not: excludeReturnId } } : {}) },
+            },
+            _sum: { rej: true },
+        }),
+    ]);
+
+    const returnedByItem = new Map(returned.map((row) => [row.inventoryId, row._sum.rej || 0]));
+    const inventories = await prisma.inventory.findMany({
+        where: { id: { in: received.map((row) => row.inventoryId) } },
+        select: { id: true, itemName: true },
+    });
+    const nameById = new Map(inventories.map((item) => [item.id, item.itemName]));
+
+    return received
+        .filter((row) => (row._sum.rejQty || 0) > 0)
+        .map((row) => {
+            const receivedQty = row._sum.recQty || 0;
+            const rejectedQty = row._sum.rejQty || 0;
+            const returnedQty = returnedByItem.get(row.inventoryId) || 0;
+            // Only the rejected quantity that has not been sent back yet can be returned
+            const maxQty = Math.max(rejectedQty - returnedQty, 0);
+            return {
+                inventoryId: row.inventoryId,
+                itemName: nameById.get(row.inventoryId) || `Item #${row.inventoryId}`,
+                receivedQty,
+                rejectedQty,
+                returnedQty,
+                maxQty,
+                suggestedQty: maxQty,
+            };
+        })
+        .sort((a, b) => a.itemName.localeCompare(b.itemName));
+};
+
+const assertReceivedFromVendor = async (vendorId, items, excludeReturnId) => {
+    const available = new Map((await getReceivedFromVendor(vendorId, excludeReturnId)).map((row) => [row.inventoryId, row]));
+    const names = new Map(
+        (await prisma.inventory.findMany({ where: { id: { in: items.map((item) => item.inventoryId) } }, select: { id: true, itemName: true } })).map(
+            (item) => [item.id, item.itemName]
+        )
+    );
+    const problems = [];
+    for (const item of items) {
+        const name = names.get(item.inventoryId) || `Item #${item.inventoryId}`;
+        const row = available.get(item.inventoryId);
+        if (!row) problems.push(`"${name}" has no rejected quantity from this vendor`);
+        else if (item.rej > row.maxQty) {
+            problems.push(`"${name}": only ${row.maxQty} can be returned (rejected ${row.rejectedQty}, already returned ${row.returnedQty})`);
+        }
+    }
+    if (problems.length > 0) throw new ApiError(400, problems.join(". "));
+};
+
+// Items received from a vendor, for the Rejection Return form
+const getReceivedItems = asyncHandler(async (req, res) => {
+    const vendorId = Number(req.query.vendorId);
+    if (!Number.isInteger(vendorId) || vendorId < 1) throw new ApiError(400, "Please select a vendor");
+    const excludeId = Number(req.query.excludeId);
+    const rows = await getReceivedFromVendor(vendorId, Number.isInteger(excludeId) && excludeId > 0 ? excludeId : undefined);
+    return res.status(200).json(new ApiResponse(200, rows, "Received items fetched successfully"));
+});
+
 const normalizeItems = (items) =>
     items.map((item) => ({
         inventoryId: Number(item.inventoryId),
@@ -77,6 +156,7 @@ const createRejectionReturn = asyncHandler(async (req, res) => {
 
     await assertVendorExists(Number(vendorId));
     await assertInventoryExists(items);
+    await assertReceivedFromVendor(Number(vendorId), items);
 
     // Sync PostgreSQL auto-increment sequences
     await syncSequence("RejectionReturnToVendor");
@@ -124,6 +204,7 @@ const updateRejectionReturn = asyncHandler(async (req, res) => {
     const items = body.items !== undefined ? normalizeItems(body.items) : null;
     if (items) {
         await assertInventoryExists(items);
+        await assertReceivedFromVendor(Number(data.vendorId ?? existing.vendorId), items, returnId);
         await syncSequence("RejectionReturnItem");
     }
 
@@ -196,5 +277,6 @@ export default {
     createRejectionReturn,
     updateRejectionReturn,
     deleteRejectionReturn,
-    getNextIdRejectionReturn
+    getNextIdRejectionReturn,
+    getReceivedItems
 };

@@ -22,6 +22,13 @@ router
     .get(checkPermission("rejection_return_to_vendor:view", "rejection_return_to_vendor:create"), rejectionReturnController.getNextIdRejectionReturn);
 
 router
+    .route("/received-items")
+    .get(
+        checkPermission("rejection_return_to_vendor:view", "rejection_return_to_vendor:create", "rejection_return_to_vendor:update"),
+        rejectionReturnController.getReceivedItems
+    );
+
+router
     .route("/:id")
     .get(checkPermission("rejection_return_to_vendor:view"), validate(rejectionReturnIdSchema), rejectionReturnController.getByIdRejectionReturn)
     .put(checkPermission("rejection_return_to_vendor:update"), validate(updateRejectionReturnSchema), rejectionReturnController.updateRejectionReturn)

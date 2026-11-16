@@ -131,6 +131,15 @@ export default function InwardQualityControlPage() {
     } = useForm<InwardFormValues>({ defaultValues: initialValues });
     const values = watch();
 
+    // An error goes away as soon as the user changes that field, it does not stay red until the next Save
+    useEffect(() => {
+        const subscription = watch((_, { name }) => {
+            if (name) clearErrors(name.split(".")[0] as keyof InwardFormValues);
+        });
+        return () => subscription.unsubscribe();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [watch, clearErrors]);
+
     const fetchOptions = async () => {
         try {
             const [poRes, inventoryRes] = await Promise.allSettled([
@@ -286,8 +295,8 @@ export default function InwardQualityControlPage() {
         const payload = {
             date: new Date(data.date).toISOString(),
             Type: data.Type,
-            purchaseOrderId: data.purchaseOrderId ? Number(data.purchaseOrderId) : null,
-            quotationId: data.quotationId ? Number(data.quotationId) : null,
+            purchaseOrderId: data.Type === "againstPO" && data.purchaseOrderId ? Number(data.purchaseOrderId) : null,
+            quotationId: data.Type === "againstPO" && data.quotationId ? Number(data.quotationId) : null,
             GRIRNo: Number(data.GRIRNo),
             DCNo: Number(data.DCNo),
             billNO: data.billNO ? Number(data.billNO) : null,
@@ -406,6 +415,18 @@ export default function InwardQualityControlPage() {
             );
         } catch (error) {
             console.error("Failed to refresh purchase orders", error);
+        }
+    };
+
+    // Only an "Against PO" inward has a PO. Any other type clears the PO fields (the PO# and Find Po are disabled).
+    const handleTypeChange = (type: InwardFormValues["Type"]) => {
+        setValue("Type", type, { shouldDirty: true, shouldValidate: true });
+        if (type !== "againstPO") {
+            poRequestRef.current += 1; // ignore a PO that is still loading
+            setIsPoLoading(false);
+            setValue("purchaseOrderId", "", { shouldDirty: true });
+            setValue("quotationId", "", { shouldDirty: true });
+            setValue("name", "", { shouldDirty: true });
         }
     };
 
@@ -711,18 +732,13 @@ export default function InwardQualityControlPage() {
                         <label className="text-sm font-medium w-10 text-right">Type</label>
                         <select
                             value={values.Type}
-                            onChange={(e) =>
-                                setValue("Type", e.target.value as any, {
-                                    shouldDirty: true,
-                                    shouldValidate: true,
-                                })
-                            }
+                            onChange={(e) => handleTypeChange(e.target.value as InwardFormValues["Type"])}
                             disabled={!isEditing}
                             className="border border-zinc-300 px-2 py-1 outline-none w-40 bg-white"
                         >
                             <option value="againstPO">Against PO</option>
-                            <option value="againstSimple">Against Simple</option>
-                            <option value="againstDealarRejection">Against Dealer Rejection</option>
+                            {/* <option value="againstSimple">Against Simple</option>
+                            <option value="againstDealarRejection">Against Dealer Rejection</option> */}
                         </select>
                     </div>
 
@@ -731,8 +747,8 @@ export default function InwardQualityControlPage() {
                         <select
                             value={values.purchaseOrderId}
                             onChange={(e) => handlePOChange(e.target.value)}
-                            disabled={!isEditing || isPoLoading}
-                            className="border border-zinc-300 px-2 py-1 outline-none w-24 bg-white"
+                            disabled={!isEditing || isPoLoading || values.Type !== "againstPO"}
+                            className="border border-zinc-300 px-2 py-1 outline-none w-24 bg-white disabled:bg-zinc-100 disabled:text-zinc-400"
                         >
                             <option value="">Select</option>
                             {/* Keep the loaded PO selectable even if the list was fetched before it was created */}
@@ -758,7 +774,7 @@ export default function InwardQualityControlPage() {
                                 }
                                 void handlePOChange(values.purchaseOrderId);
                             }}
-                            disabled={!isEditing || isPoLoading}
+                            disabled={!isEditing || isPoLoading || values.Type !== "againstPO"}
                             className="flex min-w-24 items-center justify-center gap-2 bg-white border border-zinc-300 px-4 py-1 text-sm hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50"
                         >
                             {isPoLoading && (

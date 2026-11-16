@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { fetchAllReportRows } from "@/lib/reportFetch";
+import { fetchAllReportRows, type ReportMeta } from "@/lib/reportFetch";
 
 export type PrintReportState = "loading" | "ready" | "error" | "forbidden";
 
@@ -29,6 +29,7 @@ export function usePrintReport<T>({ url, params, canView, maxRows }: UsePrintRep
   const [rows, setRows] = useState<T[]>([]);
   const [total, setTotal] = useState(0);
   const [truncated, setTruncated] = useState(false);
+  const [meta, setMeta] = useState<ReportMeta | undefined>(undefined);
   const [state, setState] = useState<PrintReportState>("loading");
   const [errorMessage, setErrorMessage] = useState("");
   const [reloadKey, setReloadKey] = useState(0);
@@ -55,6 +56,7 @@ export function usePrintReport<T>({ url, params, canView, maxRows }: UsePrintRep
           setRows(result.rows);
           setTotal(result.total);
           setTruncated(result.truncated);
+          setMeta(result.meta);
           setState("ready");
           return;
         } catch (error) {
@@ -90,5 +92,5 @@ export function usePrintReport<T>({ url, params, canView, maxRows }: UsePrintRep
 
   const retry = useCallback(() => setReloadKey((key) => key + 1), []);
 
-  return { rows, total, truncated, state, errorMessage, retry };
+  return { rows, total, truncated, meta, state, errorMessage, retry };
 }

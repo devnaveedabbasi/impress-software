@@ -116,6 +116,15 @@ export default function IssueFromLinePage() {
     } = useForm<StoreIssueFormValues>({ defaultValues: initialValues });
     const values = watch();
 
+    // An error goes away as soon as the user changes that field, it does not stay red until the next Save
+    useEffect(() => {
+        const subscription = watch((_, { name }) => {
+            if (name) clearErrors(name.split(".")[0] as keyof StoreIssueFormValues);
+        });
+        return () => subscription.unsubscribe();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [watch, clearErrors]);
+
     const departmentName = departments.find((d) => d.value === values.departmentId)?.label ?? "";
 
     const freshForm = (id: string): StoreIssueFormValues => ({

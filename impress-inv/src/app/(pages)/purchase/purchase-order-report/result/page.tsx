@@ -4,6 +4,7 @@ import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/Button";
+import { DocumentSheet } from "@/components/ui/DocumentSheet";
 import api from "@/lib/axios";
 import { usePermissions } from "@/hooks/usePermissions";
 import { cn } from "@/lib/utils";
@@ -16,6 +17,9 @@ import {
     columnsFor,
     findPoTab,
     formatNumber,
+    poDocumentEntries,
+    poDocumentSummary,
+    PO_LINE_COLUMNS,
     rowsLabel,
 } from "@/lib/purchaseOrderReport";
 
@@ -25,6 +29,7 @@ type PoReportMeta = {
     limit: number;
     totalPages: number;
     totals?: { total: number; grandTotal: number };
+    document?: Record<string, string | number | null | undefined>;
 };
 
 // The report itself, on its own page. The filters come from the address (?tab=vendor&vendorId=3&...),
@@ -130,6 +135,8 @@ function PurchaseOrderReportResult() {
     const from = total === 0 ? 0 : (page - 1) * limit + 1;
     const to = Math.min(page * limit, total);
     const unitLabel = tab.key === "item" ? "purchase orders with this item" : "purchase orders";
+    // ID-wise is one purchase order: all of its lines are on one page, so there is nothing to page through
+    const isDocument = tab.key === "id";
 
     // Filters used, shown as small tags under the title
     const tags: string[] = [];
@@ -138,6 +145,7 @@ function PurchaseOrderReportResult() {
         if (!value) continue;
         if (field === "vendorId") tags.push(`Vendor: ${rows[0]?.vendorName ?? `#${value}`}`);
         else if (field === "itemName") tags.push(`Item: ${value}`);
+        else if (field === "poId") tags.push(`PO No: ${value}`);
         else if (field === "fromDate") tags.push(`From ${value}`);
         else if (field === "toDate") tags.push(`To ${value}`);
     }
@@ -152,7 +160,9 @@ function PurchaseOrderReportResult() {
                             ? "Loading..."
                             : total === 0
                               ? "No records"
-                              : `Showing ${from.toLocaleString()}-${to.toLocaleString()} of ${total.toLocaleString()} ${unitLabel}`}
+                              : isDocument
+                                ? `${rows.length.toLocaleString()} order ${rows.length === 1 ? "line" : "lines"}`
+                                : `Showing ${from.toLocaleString()}-${to.toLocaleString()} of ${total.toLocaleString()} ${unitLabel}`}
                     </p>
                     <div className="mt-2 flex flex-wrap gap-1.5">
                         {(tags.length > 0 ? tags : ["All records"]).map((tag) => (
@@ -184,6 +194,21 @@ function PurchaseOrderReportResult() {
 
             {!canView ? (
                 <p className="py-10 text-center text-sm text-red-500">You do not have permission to view this report.</p>
+            ) : isDocument ? (
+                <DocumentSheet
+                    title={`Purchase Order No ${searchParams.get("poId")} Report`}
+                    entries={meta?.document ? poDocumentEntries(meta.document) : []}
+                    columns={PO_LINE_COLUMNS.filter((column) => column.header !== "PO No" && column.header !== "Date" && column.header !== "Vendor")}
+                    rows={rows}
+                    totalRow={{
+                        label: "Total",
+                        values: [formatNumber(rows.reduce((sum, row) => sum + (Number(row.amount) || 0), 0))],
+                    }}
+                    summary={meta?.document ? poDocumentSummary(meta.document) : undefined}
+                    isLoading={isFetching && rows.length === 0}
+                    error={fetchError}
+                    onRetry={() => setReloadKey((key) => key + 1)}
+                />
             ) : (
                 <>
                     {total > PO_REPORT_PRINT_MAX && (
@@ -193,7 +218,7 @@ function PurchaseOrderReportResult() {
                         </p>
                     )}
 
-                    {meta?.totals && total > 0 && (
+                    {!isDocument && meta?.totals && total > 0 && (
                         <div className="mb-4 grid grid-cols-2 gap-2 text-center">
                             {[
                                 ["Total", meta.totals.total],
@@ -278,6 +303,7 @@ function PurchaseOrderReportResult() {
                         </table>
                     </div>
 
+                    {!isDocument && (
                     <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
                         <label className="flex items-center gap-2 text-xs text-zinc-600">
                             Rows per page
@@ -320,6 +346,7 @@ function PurchaseOrderReportResult() {
                             </Button>
                         </div>
                     </div>
+                    )}
                 </>
             )}
         </section>
