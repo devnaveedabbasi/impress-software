@@ -10,7 +10,7 @@ export const NAV_ITEMS: NavItem[] = [
   {
     label: "Master Entries",
     children: [
-      {label:"Account Code", href:"/master-entries/account-code", operation:"account_code_registration"},
+      { label: "Account Code", href: "/master-entries/account-code", operation: "account_code_registration" },
       { label: "City", href: "/master-entries/cities", operation: "city" },
       { label: "Province", href: "/master-entries/provinces", operation: "province" },
       { label: "Dealer ", href: "/master-entries/dealers", operation: "dealer" },
@@ -51,6 +51,8 @@ export const NAV_ITEMS: NavItem[] = [
       { label: "Purchase Order", href: "/purchase/purchase-order", operation: "purchase_order" },
       { label: "Purchase Order Report", href: "/purchase/purchase-order-report", operation: "purchase_order" },
       { label: "Purchase Invoice", href: "/purchase/purchase-invoice", operation: "purchase_invoice" },
+      { label: "Quotation", href: "/purchase/quotation", operation: "quotation" },
+
     ]
   },
   {
@@ -67,9 +69,6 @@ export const NAV_ITEMS: NavItem[] = [
   },
   {
     label: "Sales Department", children: [
-      { label: "Purchase Order", href: "/sales/purchase-order", operation: "purchase_order" },
-      // { label: "Sales Invoice", href: "/sales/sales-invoice", operation: "sales_invoice" },
-      { label: "Quotation", href: "/sales/quotation", operation: "quotation" },
       { label: "Sale Gate Pass", href: "/sales/sale-gate-pass", operation: "sale_gate_pass" },
     ]
   },

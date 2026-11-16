@@ -109,7 +109,9 @@ export default function AddUserPage() {
     };
 
     const mapUserToForm = (u: any): UserFormValues => {
-        const matchingRoleId = rolesData.find((r) => r.name === u.role || String(r.id) === String(u.roleId))?.id;
+        const matchingRoleId = rolesData.find(
+            (r) => r.name === u.role || String(r.id) === String(u.roleId)
+        )?.id;
         return {
             id: String(u.id),
             name: u.name || "",
@@ -168,7 +170,8 @@ export default function AddUserPage() {
             .join(" ");
     };
 
-    const isSelfUpdate = !isNewMode && !!currentUser && String(currentUser.id) === String(values.id);
+    const isSelfUpdate =
+        !isNewMode && !!currentUser && String(currentUser.id) === String(values.id);
 
     const onSubmit = async (data: UserFormValues) => {
         const validationResult = userSchema.safeParse(data);
@@ -272,7 +275,8 @@ export default function AddUserPage() {
                 const apiError = error as ApiError;
                 toast.error(
                     apiError.response?.status === 403
-                        ? apiError.response?.data?.message || "Access denied. You do not have permission."
+                        ? apiError.response?.data?.message ||
+                              "Access denied. You do not have permission."
                         : "User not found"
                 );
                 resetToNextId();
@@ -285,24 +289,67 @@ export default function AddUserPage() {
     }, [debouncedId, nextId, canView, users, rolesData]);
 
     const filteredPermissions = permissionsData
-        ? Object.entries(permissionsData).reduce((acc: any, [key, module]: [string, any]) => {
-              const groupName = formatLabel(module.operation);
-              const searchLower = debouncedSearchQuery.trim().toLowerCase();
+        ? Object.entries(permissionsData).reduce(
+              (acc: any, [key, module]: [string, any]) => {
+                  const groupName = formatLabel(module.operation);
+                  const searchLower = debouncedSearchQuery.trim().toLowerCase();
 
-              if (groupName.toLowerCase().includes(searchLower)) {
-                  acc[key] = module;
+                  if (groupName.toLowerCase().includes(searchLower)) {
+                      acc[key] = module;
+                      return acc;
+                  }
+
+                  const matchedPerms = module.permissions.filter((p: any) =>
+                      formatLabel(p.name).toLowerCase().includes(searchLower)
+                  );
+                  if (matchedPerms.length > 0) {
+                      acc[key] = { ...module, permissions: matchedPerms };
+                  }
                   return acc;
-              }
-
-              const matchedPerms = module.permissions.filter((p: any) =>
-                  formatLabel(p.name).toLowerCase().includes(searchLower)
-              );
-              if (matchedPerms.length > 0) {
-                  acc[key] = { ...module, permissions: matchedPerms };
-              }
-              return acc;
-          }, {})
+              },
+              {}
+          )
         : null;
+
+    // Role se inherited (locked) permission IDs
+    const lockedPermissionIds: string[] =
+        rolesData
+            ?.find((r: any) => String(r.id) === values.role)
+            ?.permissions?.map((p: any) =>
+                String(p.permission?.id || p.permissionId || p.id)
+            ) || [];
+
+    const isPermissionLocked = (pid: string) => lockedPermissionIds.includes(pid);
+
+    // Single permission toggle — locked / self-update par kaam nahi karta
+    const toggleSinglePermission = (pid: string) => {
+        if (!isEditing || isSelfUpdate || isPermissionLocked(pid)) return;
+        const current = values.permissionIds || [];
+        const next = current.includes(pid)
+            ? current.filter((id: string) => id !== pid)
+            : [...current, pid];
+        setValue("permissionIds", next, {
+            shouldDirty: true,
+            shouldValidate: true,
+        });
+    };
+
+    // Group toggle — sirf editable (unlocked, non-inherited) permissions par kaam karta hai
+    const toggleModulePermissions = (pids: string[]) => {
+        if (!isEditing || isSelfUpdate) return;
+        const editablePids = pids.filter((id) => !isPermissionLocked(id));
+        if (editablePids.length === 0) return;
+
+        const current = values.permissionIds || [];
+        const allSelected = editablePids.every((id) => current.includes(id));
+        const next = allSelected
+            ? current.filter((id: string) => !editablePids.includes(id))
+            : Array.from(new Set([...current, ...editablePids]));
+        setValue("permissionIds", next, {
+            shouldDirty: true,
+            shouldValidate: true,
+        });
+    };
 
     return (
         <section className="mx-auto mt-10 w-full max-w-4xl bg-[#f0f0f0] p-8 shadow-sm">
@@ -326,7 +373,15 @@ export default function AddUserPage() {
                             onKeyDown={(event) => {
                                 if (
                                     !/[0-9]/.test(event.key) &&
-                                    !["Backspace", "Delete", "ArrowLeft", "ArrowRight", "Tab", "Home", "End"].includes(event.key)
+                                    ![
+                                        "Backspace",
+                                        "Delete",
+                                        "ArrowLeft",
+                                        "ArrowRight",
+                                        "Tab",
+                                        "Home",
+                                        "End",
+                                    ].includes(event.key)
                                 ) {
                                     event.preventDefault();
                                 }
@@ -489,30 +544,66 @@ export default function AddUserPage() {
                                 {Object.values(filteredPermissions).length > 0 ? (
                                     Object.values(filteredPermissions).map((module: any) => {
                                         const groupName = formatLabel(module.operation);
-                                        const lockedValues =
-                                            rolesData
-                                                ?.find((r: any) => String(r.id) === values.role)
-                                                ?.permissions?.map((p: any) =>
-                                                    String(p.permission?.id || p.permissionId || p.id)
-                                                ) || [];
 
-                                        const getPerm = (action: string) =>
-                                            module.permissions.find((p: any) => p.name === action);
+                                        // Is module ke editable (unlocked) IDs
+                                        const modulePids = module.permissions.map((p: any) =>
+                                            String(p.id)
+                                        );
+                                        const editableModulePids = modulePids.filter(
+                                            (id: string) => !isPermissionLocked(id)
+                                        );
+
+                                        // Module checkbox state: saare editable selected?
+                                        const isModuleFullySelected =
+                                            editableModulePids.length > 0 &&
+                                            editableModulePids.every((id: string) =>
+                                                (values.permissionIds || []).includes(id)
+                                            );
+
+                                        // Module par click disabled? (koi editable nahi / self / not editing)
+                                        const isModuleClickDisabled =
+                                            !isEditing ||
+                                            isSelfUpdate ||
+                                            editableModulePids.length === 0;
 
                                         return (
                                             <tr
                                                 key={module.operation}
                                                 className="border-b border-zinc-200 hover:bg-zinc-50"
                                             >
-                                                <td className="px-4 py-2 font-medium border-r border-zinc-200">
-                                                    {groupName}
+                                                {/* Module TD — click par poora module toggle */}
+                                                <td
+                                                    className={`px-4 py-2 font-medium border-r border-zinc-200 select-none ${
+                                                        isModuleClickDisabled
+                                                            ? "cursor-not-allowed text-zinc-400"
+                                                            : "cursor-pointer"
+                                                    }`}
+                                                    onClick={() =>
+                                                        toggleModulePermissions(modulePids)
+                                                    }
+                                                >
+                                                    <div className="flex items-center gap-2">
+                                                        <input
+                                                            type="checkbox"
+                                                            checked={isModuleFullySelected}
+                                                            readOnly
+                                                            disabled={isModuleClickDisabled}
+                                                            className="h-4 w-4 accent-zinc-800 pointer-events-none"
+                                                        />
+                                                        {groupName}
+                                                    </div>
                                                 </td>
+
                                                 {["view", "create", "update", "delete"].map(
                                                     (action, index) => {
-                                                        const p = getPerm(action);
+                                                        const p = module.permissions.find(
+                                                            (item: any) => item.name === action
+                                                        );
                                                         const isLast = index === 3;
                                                         const tdClass = `px-4 py-2 text-center ${
-                                                            !isLast ? "border-r border-zinc-200" : ""
+                                                            !isLast
+                                                                ? "border-r border-zinc-200"
+                                                                : ""
                                                         }`;
 
                                                         if (!p)
@@ -526,52 +617,39 @@ export default function AddUserPage() {
                                                             );
 
                                                         const pid = String(p.id);
-                                                        const isLocked = lockedValues.includes(pid);
+                                                        const isLocked = isPermissionLocked(pid);
                                                         const isChecked =
-                                                            values.permissionIds?.includes(pid) ||
+                                                            (values.permissionIds || []).includes(pid) ||
                                                             isLocked;
+
+                                                        const isCellClickDisabled =
+                                                            !isEditing ||
+                                                            isSelfUpdate ||
+                                                            isLocked;
+
                                                         return (
-                                                            <td key={action} className={tdClass}>
+                                                            <td
+                                                                key={action}
+                                                                className={`${tdClass} select-none ${
+                                                                    isCellClickDisabled
+                                                                        ? "cursor-not-allowed"
+                                                                        : "cursor-pointer"
+                                                                }`}
+                                                                onClick={() =>
+                                                                    toggleSinglePermission(pid)
+                                                                }
+                                                                title={
+                                                                    isLocked
+                                                                        ? "Inherited from Role"
+                                                                        : ""
+                                                                }
+                                                            >
                                                                 <input
                                                                     type="checkbox"
-                                                                    disabled={
-                                                                        !isEditing ||
-                                                                        isLocked ||
-                                                                        isSelfUpdate
-                                                                    }
+                                                                    disabled={isCellClickDisabled}
                                                                     checked={isChecked}
-                                                                    onChange={(e) => {
-                                                                        const current =
-                                                                            values.permissionIds || [];
-                                                                        if (e.target.checked) {
-                                                                            setValue(
-                                                                                "permissionIds",
-                                                                                [...current, pid],
-                                                                                {
-                                                                                    shouldDirty: true,
-                                                                                    shouldValidate: true,
-                                                                                }
-                                                                            );
-                                                                        } else {
-                                                                            setValue(
-                                                                                "permissionIds",
-                                                                                current.filter(
-                                                                                    (id: string) =>
-                                                                                        id !== pid
-                                                                                ),
-                                                                                {
-                                                                                    shouldDirty: true,
-                                                                                    shouldValidate: true,
-                                                                                }
-                                                                            );
-                                                                        }
-                                                                    }}
-                                                                    className="cursor-pointer mx-auto w-4 h-4 accent-zinc-800"
-                                                                    title={
-                                                                        isLocked
-                                                                            ? "Inherited from Role"
-                                                                            : ""
-                                                                    }
+                                                                    readOnly
+                                                                    className="mx-auto w-4 h-4 accent-zinc-800 pointer-events-none"
                                                                 />
                                                             </td>
                                                         );

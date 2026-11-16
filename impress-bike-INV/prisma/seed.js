@@ -1,6 +1,10 @@
 import "dotenv/config";
 import bcrypt from "bcryptjs";
-import prisma, { prismaCloud, prismaLocal } from "../src/config/prisma.js";
+import prisma, {
+  prismaCloud,
+  prismaLocal,
+  refreshActiveDatabase,
+} from "../src/config/prisma.js";
 
 const operations = [
   "account_code",
@@ -81,29 +85,179 @@ async function seedAdmin() {
   return { adminUser, email, password };
 }
 
+// All provinces and cities of Pakistan. City names are unique across the country (the City table requires it).
+const PAKISTAN_LOCATIONS = {
+  "Punjab": [
+    "Lahore",
+    "Faisalabad",
+    "Rawalpindi",
+    "Multan",
+    "Gujranwala",
+    "Sialkot",
+    "Bahawalpur",
+    "Sargodha",
+    "Sheikhupura",
+    "Jhang",
+    "Gujrat",
+    "Kasur",
+    "Rahim Yar Khan",
+    "Sahiwal",
+    "Okara",
+    "Wah Cantonment",
+    "Dera Ghazi Khan",
+    "Mianwali",
+    "Chiniot",
+    "Kamoke",
+    "Hafizabad",
+    "Sadiqabad",
+    "Burewala",
+    "Khanewal",
+    "Muzaffargarh",
+    "Mandi Bahauddin",
+    "Jhelum",
+    "Attock",
+    "Chakwal",
+    "Toba Tek Singh",
+    "Vehari",
+    "Pakpattan",
+    "Bahawalnagar",
+    "Lodhran",
+    "Layyah",
+    "Khushab",
+    "Narowal",
+    "Bhakkar",
+    "Rajanpur",
+    "Murree",
+    "Kot Addu",
+    "Gojra",
+    "Daska",
+    "Wazirabad",
+    "Nankana Sahib",
+    "Lala Musa"
+  ],
+  "Sindh": [
+    "Karachi",
+    "Hyderabad",
+    "Sukkur",
+    "Larkana",
+    "Nawabshah",
+    "Mirpur Khas",
+    "Jacobabad",
+    "Shikarpur",
+    "Khairpur",
+    "Dadu",
+    "Thatta",
+    "Badin",
+    "Tando Allahyar",
+    "Tando Muhammad Khan",
+    "Sanghar",
+    "Umerkot",
+    "Ghotki",
+    "Kotri",
+    "Jamshoro",
+    "Kashmore",
+    "Matiari",
+    "Tharparkar",
+    "Naushahro Feroze",
+    "Shahdadkot",
+    "Sujawal",
+    "Kandiaro",
+    "Moro"
+  ],
+  "Khyber Pakhtunkhwa": [
+    "Peshawar",
+    "Mardan",
+    "Mingora",
+    "Abbottabad",
+    "Kohat",
+    "Dera Ismail Khan",
+    "Swabi",
+    "Nowshera",
+    "Charsadda",
+    "Mansehra",
+    "Bannu",
+    "Haripur",
+    "Chitral",
+    "Hangu",
+    "Karak",
+    "Lakki Marwat",
+    "Timergara",
+    "Tank",
+    "Batkhela",
+    "Battagram",
+    "Buner",
+    "Kalam",
+    "Parachinar",
+    "Landi Kotal",
+    "Khar",
+    "Miranshah",
+    "Wana"
+  ],
+  "Balochistan": [
+    "Quetta",
+    "Gwadar",
+    "Turbat",
+    "Khuzdar",
+    "Chaman",
+    "Sibi",
+    "Zhob",
+    "Loralai",
+    "Dera Murad Jamali",
+    "Hub",
+    "Kalat",
+    "Mastung",
+    "Pishin",
+    "Nushki",
+    "Jaffarabad",
+    "Panjgur",
+    "Kharan",
+    "Dalbandin",
+    "Usta Muhammad",
+    "Lasbela"
+  ],
+  "Islamabad Capital Territory": [
+    "Islamabad"
+  ],
+  "Gilgit-Baltistan": [
+    "Gilgit",
+    "Skardu",
+    "Hunza",
+    "Chilas",
+    "Ghanche",
+    "Ghizer",
+    "Astore",
+    "Diamer",
+    "Nagar"
+  ],
+  "Azad Jammu and Kashmir": [
+    "Muzaffarabad",
+    "Mirpur",
+    "Kotli",
+    "Rawalakot",
+    "Bagh",
+    "Bhimber",
+    "Neelum",
+    "Sudhnoti",
+    "Haveli"
+  ]
+};
+
 async function seedMasterData(actorId) {
   const provinces = {};
-  for (const name of ["Punjab", "Sindh"]) {
-    provinces[name] = await prisma.province.upsert({
-      where: { name },
-      update: {},
-      create: { name },
-    });
-  }
-
   const cities = {};
-  for (const [name, provinceName] of [
-    ["Lahore", "Punjab"],
-    ["Faisalabad", "Punjab"],
-    ["Rawalpindi", "Punjab"],
-    ["Multan", "Punjab"],
-    ["Karachi", "Sindh"],
-  ]) {
-    cities[name] = await prisma.city.upsert({
-      where: { name },
-      update: { provinceId: provinces[provinceName].id },
-      create: { name, provinceId: provinces[provinceName].id },
+  for (const [provinceName, cityNames] of Object.entries(PAKISTAN_LOCATIONS)) {
+    provinces[provinceName] = await prisma.province.upsert({
+      where: { name: provinceName },
+      update: {},
+      create: { name: provinceName },
     });
+    for (const name of cityNames) {
+      cities[name] = await prisma.city.upsert({
+        where: { name },
+        update: { provinceId: provinces[provinceName].id },
+        create: { name, provinceId: provinces[provinceName].id },
+      });
+    }
   }
 
   const categories = {};
@@ -336,28 +490,31 @@ async function seedMasterData(actorId) {
   }
 
   const inventoryItems = [
-    ["Engine Oil 20W-50", "Lubricants", "Main Store", 1, 1250, 1, [], [500]],
-    ["Air Filter 70cc", "Engine Parts", "Main Store", 1, 480, 1, [], [300]],
-    ["Spark Plug", "Electrical Parts", "Main Store", 1, 350, 1, [], [600]],
+    ["Engine Oil 20W-50", "Lubricants", "Main Store", 1, 1250, 1, ["Pearl Black"], [500]],
+    ["Air Filter 70cc", "Engine Parts", "Main Store", 1, 480, 1, ["Pearl Black"], [300]],
+    ["Spark Plug", "Electrical Parts", "Main Store", 1, 350, 1, ["Pearl Black"], [600]],
     ["Front Mudguard", "Body Parts", "Production Line", 1, 3800, 1, ["Pearl Black", "Metallic Red", "Royal Blue"], [50, 50, 50]],
     ["Rear Mudguard", "Body Parts", "Production Line", 1, 3200, 1, ["Pearl Black", "Metallic Red", "Royal Blue"], [50, 50, 50]],
-    ["Headlight Assembly", "Electrical Parts", "Production Line", 1, 4500, 1, [], [120]],
-    ["Brake Shoe Set", "Motorcycle Parts", "Main Store", 1, 850, 2, [], [400]],
-    ["Chain Sprocket Kit", "Engine Parts", "Main Store", 1, 2750, 1, [], [250]],
+    ["Headlight Assembly", "Electrical Parts", "Production Line", 1, 4500, 1, ["Pearl Black"], [120]],
+    ["Brake Shoe Set", "Motorcycle Parts", "Main Store", 1, 850, 2, ["Pearl Black"], [400]],
+    ["Chain Sprocket Kit", "Engine Parts", "Main Store", 1, 2750, 1, ["Pearl Black"], [250]],
     ["Seat Assembly", "Body Parts", "Production Line", 1, 5800, 1, ["Pearl Black"], [100]],
-    ["Battery 12V", "Electrical Parts", "Main Store", 1, 6500, 1, [], [180]],
-    ["Tubeless Tyre", "Motorcycle Parts", "Main Store", 1, 4200, 2, [], [300]],
+    ["Battery 12V", "Electrical Parts", "Main Store", 1, 6500, 1, ["Pearl Black"], [180]],
+    ["Tubeless Tyre", "Motorcycle Parts", "Main Store", 1, 4200, 2, ["Pearl Black"], [300]],
     ["Safety Helmet", "Safety Accessories", "Sales Department", 1, 2500, 1, ["Pearl Black", "Pearl White", "Metallic Red"], [70, 70, 60]],
   ];
 
   for (const [itemName, category, department, pack, rate, unitPerBike, itemColors, quantities] of inventoryItems) {
+    const stockStation = department === "Production Line"
+      ? stations["Chassis Assembly"]
+      : stations["Main Store"];
     const data = {
       itemName,
       pack,
       rate,
       categoryId: categories[category].id,
       departmentId: departments[department].id,
-      stationIds: [stations[department === "Production Line" ? "Chassis Assembly" : "Main Store"].id],
+      stationIds: [stockStation.id],
       color: itemColors,
       qty: quantities,
       unitPerBike,
@@ -374,14 +531,14 @@ async function seedMasterData(actorId) {
         where: {
           inventoryId_stationId_colorId: {
             inventoryId: inventory.id,
-            stationId: stations["Main Store"].id,
+            stationId: stockStation.id,
             colorId: colors[itemColors[index]].id,
           },
         },
         update: { qty: quantities[index] },
         create: {
           inventoryId: inventory.id,
-          stationId: stations["Main Store"].id,
+          stationId: stockStation.id,
           colorId: colors[itemColors[index]].id,
           qty: quantities[index],
         },
@@ -677,6 +834,12 @@ async function seedTransactions(actorId, masterData) {
 }
 
 async function main() {
+  if (process.env.SEED_DATABASE === "cloud") {
+    if (!prismaCloud) {
+      throw new Error("Cloud database is not configured");
+    }
+    await refreshActiveDatabase();
+  }
   const permissions = await seedPermissions();
   const { adminUser, email, password } = await seedAdmin();
   const masterData = await seedMasterData(adminUser.id);

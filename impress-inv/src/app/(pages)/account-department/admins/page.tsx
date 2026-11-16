@@ -10,7 +10,6 @@ import { ADMINS, PERMISSIONS } from "@/utlis/apiRoutes";
 import useDebounce from "@/hooks/useDebounce";
 
 import { LabeledField } from "@/components/ui/LabeledField";
-import { LabeledSelect } from "@/components/ui/LabeledSelect";
 import { ViewAllModal, type ViewAllColumn } from "@/components/ui/ViewAllModal";
 import { Button } from "@/components/ui/Button";
 
@@ -39,11 +38,6 @@ const initialValues: AdminFormValues = {
     role: "ADMIN",
     permissionIds: [],
 };
-
-const roleOptions = [
-    { label: "Admin", value: "ADMIN" },
-    { label: "Super Admin", value: "SUPER_ADMIN" },
-];
 
 const formatLabel = (str: string) =>
     str
@@ -82,9 +76,95 @@ export default function AdminsPage() {
         formState: { errors, isSubmitting },
     } = useForm<AdminFormValues>({ defaultValues: initialValues });
     const values = watch();
+    const [selectedPermissionIds, setSelectedPermissionIds] = useState<string[]>([]);
 
-    const isSelf = !isNewMode && !!currentUser && String(currentUser.id) === String(values.id);
-    const isSuper = values.role === "SUPER_ADMIN";
+    useEffect(() => {
+        setSelectedPermissionIds(values.permissionIds || []);
+    }, [values.id]);
+
+    const permissionDependencies: Record<string, string[]> = {
+        "city:create": ["province:view"],
+        "city:update": ["province:view"],
+        "dealer:create": ["province:view", "city:view"],
+        "dealer:update": ["province:view", "city:view"],
+        "vendor:create": ["province:view", "city:view"],
+        "vendor:update": ["province:view", "city:view"],
+        "inventory:create": ["category:view", "department:view", "station:view", "color:view"],
+        "inventory:update": ["category:view", "department:view", "station:view", "color:view"],
+    };
+
+    const permissionEntries = permissionsData
+        ? Object.values(permissionsData).flatMap((module: any) =>
+              module.permissions.map((permission: any) => ({
+                  ...permission,
+                  key: `${module.operation}:${permission.name}`,
+              }))
+          )
+        : [];
+    const permissionIdsByKey = new Map(
+        permissionEntries.map((permission: any) => [permission.key, String(permission.id)])
+    );
+
+    const expandPermissionIds = (permissionIds: string[]) => {
+        const expanded = new Set(permissionIds);
+        let changed = true;
+        while (changed) {
+            changed = false;
+            for (const permission of permissionEntries) {
+                if (!expanded.has(String(permission.id))) continue;
+                for (const dependency of permissionDependencies[permission.key] || []) {
+                    const dependencyId = permissionIdsByKey.get(dependency);
+                    if (dependencyId && !expanded.has(dependencyId)) {
+                        expanded.add(dependencyId);
+                        changed = true;
+                    }
+                }
+            }
+        }
+        return Array.from(expanded);
+    };
+
+    const removePermissionIds = (permissionIds: string[], removedIds: string[]) => {
+        const remaining = new Set(permissionIds);
+        const removed = new Set(removedIds);
+        let changed = true;
+        while (changed) {
+            changed = false;
+            for (const permission of permissionEntries) {
+                if (!remaining.has(String(permission.id))) continue;
+                const dependencies = (permissionDependencies[permission.key] || [])
+                    .map((key) => permissionIdsByKey.get(key))
+                    .filter((id): id is string => Boolean(id));
+                if (dependencies.some((id) => removed.has(id))) {
+                    remaining.delete(String(permission.id));
+                    removed.add(String(permission.id));
+                    changed = true;
+                }
+            }
+        }
+        return Array.from(remaining);
+    };
+
+    const togglePermission = (permissionId: string, checked: boolean) => {
+        setSelectedPermissionIds((current) => {
+            const next = checked
+                ? expandPermissionIds([...current, permissionId])
+                : removePermissionIds(current, [permissionId]);
+            setValue("permissionIds", next, { shouldDirty: true, shouldValidate: true });
+            return next;
+        });
+    };
+
+    // Unselect par sirf di gayi IDs hatti hain, dependency cascade nahi hoti
+    const togglePermissionGroup = (permissionIds: string[], checked: boolean) => {
+        setSelectedPermissionIds((current) => {
+            const next = checked
+                ? expandPermissionIds([...current, ...permissionIds])
+                : current.filter((id) => !permissionIds.includes(id));
+            setValue("permissionIds", next, { shouldDirty: true, shouldValidate: true });
+            return next;
+        });
+    };
 
     const fetchPermissions = async () => {
         try {
@@ -164,8 +244,8 @@ export default function AdminsPage() {
             name: data.name,
             email: data.email,
             password: data.password,
-            role: data.role,
-            permissionIds: data.role === "SUPER_ADMIN" ? [] : data.permissionIds.map(Number),
+            role: "ADMIN",
+            permissionIds: data.permissionIds.map(Number),
         };
 
         try {
@@ -276,6 +356,17 @@ export default function AdminsPage() {
           }, {})
         : null;
 
+    // Select All sirf filtered permissions par kaam kare
+    const filteredPermissionIds = filteredPermissions
+        ? Object.values(filteredPermissions).flatMap((module: any) =>
+              module.permissions.map((permission: any) => String(permission.id))
+          )
+        : [];
+
+    const allPermissionsSelected =
+        filteredPermissionIds.length > 0 &&
+        filteredPermissionIds.every((id) => selectedPermissionIds.includes(id));
+
     if (!isSuperAdmin) {
         return (
             <section className="mx-auto mt-10 w-full max-w-4xl bg-form-bg p-8 text-center shadow-sm">
@@ -340,14 +431,12 @@ export default function AdminsPage() {
                             error={errors.password?.message}
                             disabled={!isEditing}
                         />
-                        <LabeledSelect
-                            label="Role"
-                            options={roleOptions}
-                            value={values.role}
-                            onChange={(val) => setValue("role", val as AdminFormValues["role"], { shouldDirty: true, shouldValidate: true })}
-                            error={errors.role?.message}
-                            disabled={!isEditing || isSelf}
-                        />
+                        <div className="w-full">
+                            <span className="mb-1 block text-sm text-zinc-600">Role</span>
+                            <div className="rounded-md border border-zinc-300 bg-zinc-50 px-3 py-2 text-sm text-zinc-700">
+                                Admin
+                            </div>
+                        </div>
                     </div>
 
                     <div className="flex flex-wrap md:flex-col gap-2 shrink-0">
@@ -397,11 +486,6 @@ export default function AdminsPage() {
                 <div className="flex items-center justify-between gap-3 mb-4 mt-6">
                     <div className="flex items-center gap-3 flex-1">
                         <span className="text-[14px] text-zinc-900 font-normal whitespace-nowrap">Permissions</span>
-                        {isSuper && (
-                            <span className="text-xs text-zinc-500 font-medium ml-2">
-                                (A super admin always has every permission)
-                            </span>
-                        )}
                         <div className="flex-1 h-[1px] bg-zinc-500"></div>
                     </div>
                     <input
@@ -414,6 +498,16 @@ export default function AdminsPage() {
                         }}
                         className="border border-zinc-300 px-3 py-1 outline-none text-sm w-64 text-black bg-white"
                     />
+                    <label className="flex items-center gap-2 whitespace-nowrap text-sm text-zinc-700">
+                        <input
+                            type="checkbox"
+                            checked={allPermissionsSelected}
+                            onChange={(e) => togglePermissionGroup(filteredPermissionIds, e.target.checked)}
+                            disabled={!isEditing || !permissionsData || filteredPermissionIds.length === 0}
+                            className="h-4 w-4 accent-zinc-800"
+                        />
+                        Select all
+                    </label>
                 </div>
 
                 <div className="bg-white border border-zinc-300 min-h-[200px] overflow-x-auto">
@@ -430,48 +524,79 @@ export default function AdminsPage() {
                             </thead>
                             <tbody>
                                 {Object.values(filteredPermissions).length > 0 ? (
-                                    Object.values(filteredPermissions).map((module: any) => (
-                                        <tr key={module.operation} className="border-b border-zinc-200 hover:bg-zinc-50">
-                                            <td className="px-4 py-2 font-medium border-r border-zinc-200">
-                                                {formatLabel(module.operation)}
-                                            </td>
-                                            {["view", "create", "update", "delete"].map((action, index) => {
-                                                const p = module.permissions.find((item: any) => item.name === action);
-                                                const tdClass = `px-4 py-2 text-center ${index !== 3 ? "border-r border-zinc-200" : ""}`;
+                                    Object.values(filteredPermissions).map((module: any) => {
+                                        const modulePermissionIds = module.permissions.map((permission: any) =>
+                                            String(permission.id)
+                                        );
+                                        const isModuleSelected =
+                                            modulePermissionIds.length > 0 &&
+                                            modulePermissionIds.every((id: string) =>
+                                                selectedPermissionIds.includes(id)
+                                            );
 
-                                                if (!p) {
-                                                    return (
-                                                        <td key={action} className={`${tdClass} text-zinc-400`}>
-                                                            -
-                                                        </td>
-                                                    );
-                                                }
-
-                                                const pid = String(p.id);
-                                                const isChecked = isSuper || values.permissionIds?.includes(pid);
-                                                return (
-                                                    <td key={action} className={tdClass}>
+                                        return (
+                                            <tr key={module.operation} className="border-b border-zinc-200 hover:bg-zinc-50">
+                                                {/* Module TD: click par poora module toggle */}
+                                                <td
+                                                    className="px-4 py-2 font-medium border-r border-zinc-200 cursor-pointer select-none"
+                                                    onClick={() => {
+                                                        if (!isEditing) return;
+                                                        togglePermissionGroup(modulePermissionIds, !isModuleSelected);
+                                                    }}
+                                                >
+                                                    <div className="flex items-center gap-2">
                                                         <input
                                                             type="checkbox"
-                                                            disabled={!isEditing || isSuper}
-                                                            checked={isChecked}
-                                                            onChange={(e) => {
-                                                                const current = values.permissionIds || [];
-                                                                setValue(
-                                                                    "permissionIds",
-                                                                    e.target.checked
-                                                                        ? [...current, pid]
-                                                                        : current.filter((id: string) => id !== pid),
-                                                                    { shouldDirty: true, shouldValidate: true }
-                                                                );
-                                                            }}
-                                                            className="cursor-pointer mx-auto w-4 h-4 accent-zinc-800"
+                                                            checked={isModuleSelected}
+                                                            readOnly
+                                                            disabled={!isEditing}
+                                                            className="h-4 w-4 accent-zinc-800 pointer-events-none"
                                                         />
-                                                    </td>
-                                                );
-                                            })}
-                                        </tr>
-                                    ))
+                                                        {formatLabel(module.operation)}
+                                                    </div>
+                                                </td>
+
+                                                {["view", "create", "update", "delete"].map((action, index) => {
+                                                    const p = module.permissions.find(
+                                                        (item: any) => item.name === action
+                                                    );
+                                                    const tdClass = `px-4 py-2 text-center ${
+                                                        index !== 3 ? "border-r border-zinc-200" : ""
+                                                    }`;
+
+                                                    if (!p) {
+                                                        return (
+                                                            <td key={action} className={`${tdClass} text-zinc-400`}>
+                                                                -
+                                                            </td>
+                                                        );
+                                                    }
+
+                                                    const pid = String(p.id);
+                                                    const isChecked = selectedPermissionIds.includes(pid);
+                                                    return (
+                                                        // Operation TD: click par sirf yeh single permission toggle
+                                                        <td
+                                                            key={action}
+                                                            className={`${tdClass} cursor-pointer select-none`}
+                                                            onClick={() => {
+                                                                if (!isEditing) return;
+                                                                togglePermission(pid, !isChecked);
+                                                            }}
+                                                        >
+                                                            <input
+                                                                type="checkbox"
+                                                                disabled={!isEditing}
+                                                                checked={isChecked}
+                                                                readOnly
+                                                                className="mx-auto w-4 h-4 accent-zinc-800 pointer-events-none"
+                                                            />
+                                                        </td>
+                                                    );
+                                                })}
+                                            </tr>
+                                        );
+                                    })
                                 ) : (
                                     <tr>
                                         <td colSpan={5} className="py-4 text-center text-sm text-zinc-500">
