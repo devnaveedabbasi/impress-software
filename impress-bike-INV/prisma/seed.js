@@ -31,6 +31,10 @@ const operations = [
   "item_return_from_department",
   "transfer_form",
   "item_ledger",
+  "issue_report",
+  "stock_ledger",
+  "stock_register",
+  "shortage_report",
 ];
 
 const actions = ["view", "create", "update", "delete"];

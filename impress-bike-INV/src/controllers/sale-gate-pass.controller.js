@@ -42,6 +42,16 @@ const normalizeItems = (items = []) => {
     return normalized;
 };
 
+// The account of a gate pass is a vendor (chosen from the vendor list), so the name must be an existing vendor.
+// The name is saved as text, the comparison ignores capital letters and extra spaces.
+const assertVendorAccount = async (accountName) => {
+    const name = String(accountName || "").trim().toLowerCase();
+    const vendors = await prisma.vendor.findMany({ select: { vendorName: true } });
+    if (!vendors.some((vendor) => vendor.vendorName.trim().toLowerCase() === name)) {
+        throw new ApiError(400, "Account Name must be a vendor, please select it from the vendor list");
+    }
+};
+
 const assertInventoryExists = async (items) => {
     const ids = [...new Set(items.map((item) => item.inventoryId))];
     const found = await prisma.inventory.findMany({
@@ -104,6 +114,7 @@ const createSaleGatePass = asyncHandler(async (req, res) => {
     if (items.length === 0) {
         throw new ApiError(400, "At least one sale gate pass item is required");
     }
+    await assertVendorAccount(accountName);
     await assertInventoryExists(items);
     const stockByInventory = await readStockInHand(items.map((item) => item.inventoryId));
 
@@ -153,6 +164,11 @@ const updateSaleGatePass = asyncHandler(async (req, res) => {
     const existingGatePass = await prisma.saleGatePass.findUnique({ where: { id: Number(id) } });
     if (!existingGatePass) {
         throw new ApiError(404, "Sale Gate Pass not found");
+    }
+
+    // Older gate passes may hold a name that is not a vendor: it is only checked when the name is changed
+    if (accountName !== undefined && String(accountName).trim() !== String(existingGatePass.accountName).trim()) {
+        await assertVendorAccount(accountName);
     }
 
     const items = body.items !== undefined ? normalizeItems(body.items) : null;

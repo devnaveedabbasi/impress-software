@@ -12,6 +12,7 @@ import toast from "react-hot-toast";
 import { usePermissions } from "@/hooks/usePermissions";
 import { ViewAllModal, type ViewAllColumn } from "@/components/ui/ViewAllModal";
 import { InventoryPickerModal, type InventoryPickItem } from "@/components/ui/InventoryPickerModal";
+import { VendorPickerModal, type VendorPickItem } from "@/components/ui/VendorPickerModal";
 import { RowDeleteButton, deletableRowClassName } from "@/components/ui/RowDeleteButton";
 import { AddRowButton } from "@/components/ui/AddRowButton";
 import { DetailField } from "@/components/ui/DetailField";
@@ -71,6 +72,7 @@ const initialValues: SaleGatePassFormValues = {
 export default function GatePassSoldItemPage() {
     const [isNewMode, setIsNewMode] = useState(true);
     const [isEditing, setIsEditing] = useState(true);
+    const [isVendorPickerOpen, setIsVendorPickerOpen] = useState(false);
     const [pickerRowIndex, setPickerRowIndex] = useState<number | null>(null);
     // Problems found in the item rows: which cell of which row is wrong and why
     const [rowErrors, setRowErrors] = useState<Record<number, { field: string; message: string }>>({});
@@ -450,16 +452,25 @@ export default function GatePassSoldItemPage() {
                         disabled={!isEditing}
                     />
 
+                    {/* Click to select the vendor: its name is the account name */}
                     <LabeledField
                         label="Account Name"
                         value={values.accountName}
-                        onChange={(event) =>
-                            setValue("accountName", event.target.value, { shouldDirty: true, shouldValidate: true })
-                        }
+                        readOnly
+                        onClick={() => isEditing && setIsVendorPickerOpen(true)}
+                        onKeyDown={(event) => {
+                            if (isEditing && (event.key === "Enter" || event.key === " ")) {
+                                event.preventDefault();
+                                setIsVendorPickerOpen(true);
+                            }
+                        }}
+                        placeholder={isEditing ? "Click to select vendor" : ""}
+                        title={isEditing ? "Click to select the vendor" : undefined}
                         error={errors.accountName?.message}
                         disabled={!isEditing}
                         maxLength={100}
                         wrapperClassName="md:col-span-2"
+                        className={isEditing ? "cursor-pointer hover:bg-primary-50" : ""}
                     />
 
                     <LabeledField
@@ -668,6 +679,16 @@ export default function GatePassSoldItemPage() {
                     </Button>
                 </div>
             </form>
+
+            <VendorPickerModal
+                isOpen={isVendorPickerOpen}
+                title="Select Account (Vendor)"
+                onClose={() => setIsVendorPickerOpen(false)}
+                onSelect={(vendor: VendorPickItem) => {
+                    setValue("accountName", vendor.vendorName, { shouldDirty: true, shouldValidate: true });
+                    setIsVendorPickerOpen(false);
+                }}
+            />
 
             <InventoryPickerModal
                 isOpen={pickerRowIndex !== null}

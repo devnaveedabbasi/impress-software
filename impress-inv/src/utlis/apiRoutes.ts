@@ -29,6 +29,11 @@ export const REJECTION_RECEIVED_FROM_DEALER = "/rejection-received-from-dealer";
 export const STORE_ISSUES = "/store-issues";
 export const ITEM_RETURNS = "/item-returns";
 export const STOCK_LEDGER = "/stock/ledger";
+export const STOCK_REGISTER = "/stock/register";
+export const STOCK_MOVEMENTS = "/stock/movements";
+export const STOCK_POSITION = "/stock/position";
+export const STOCK_SHORTAGE = "/stock/shortage";
+export const STOCK_ISSUES = "/stock/issues";
 export const STOCK_TRANSFERS = "/stock-transfers";
 
 // Sync APIs (Offline <-> Online)
