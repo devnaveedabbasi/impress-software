@@ -76,6 +76,15 @@ export default function AdminsPage() {
         formState: { errors, isSubmitting },
     } = useForm<AdminFormValues>({ defaultValues: initialValues });
     const values = watch();
+
+    // An error goes away as soon as the user changes that field, it does not stay red until the next Save
+    useEffect(() => {
+        const subscription = watch((_, { name }) => {
+            if (name) clearErrors(name.split(".")[0] as keyof AdminFormValues);
+        });
+        return () => subscription.unsubscribe();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [watch, clearErrors]);
     const [selectedPermissionIds, setSelectedPermissionIds] = useState<string[]>([]);
 
     useEffect(() => {
@@ -380,7 +389,14 @@ export default function AdminsPage() {
         <section className="mx-auto mt-10 w-full max-w-4xl bg-form-bg p-8 shadow-sm">
             <h1 className="mb-10 text-center text-4xl text-black tracking-wide">Admin Registration</h1>
 
-            <form onSubmit={handleSubmit(onSubmit)} noValidate>
+            <form
+                onSubmit={(event) => {
+                    // Clear stale manual errors, otherwise handleSubmit blocks onSubmit forever
+                    clearErrors();
+                    void handleSubmit(onSubmit)(event);
+                }}
+                noValidate
+            >
                 <div className="flex flex-col md:flex-row justify-between items-start gap-10">
                     <div className="flex-1 w-full space-y-1.5">
                         <LabeledField

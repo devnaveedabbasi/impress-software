@@ -66,6 +66,15 @@ export default function AddRolePage() {
     } = useForm<RoleFormValues>({ defaultValues: initialValues });
     const values = watch();
 
+    // An error goes away as soon as the user changes that field, it does not stay red until the next Save
+    useEffect(() => {
+        const subscription = watch((_, { name }) => {
+            if (name) clearErrors(name.split(".")[0] as keyof RoleFormValues);
+        });
+        return () => subscription.unsubscribe();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [watch, clearErrors]);
+
     const fetchPermissions = async () => {
         try {
             const { data } = await api.get(PERMISSIONS);
@@ -278,7 +287,14 @@ export default function AddRolePage() {
                 Role Management
             </h1>
 
-            <form onSubmit={handleSubmit(onSubmit)} noValidate>
+            <form
+                onSubmit={(event) => {
+                    // Clear stale manual errors, otherwise handleSubmit blocks onSubmit forever
+                    clearErrors();
+                    void handleSubmit(onSubmit)(event);
+                }}
+                noValidate
+            >
                 {/* Top Section */}
                 <div className="flex flex-col md:flex-row justify-between items-start gap-10">
                     <div className="flex-1 w-full space-y-1.5">

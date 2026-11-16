@@ -134,6 +134,14 @@ export default function PurchaseOrderPage() {
     } = useForm<PurchaseOrderFormValues>({ defaultValues: initialValues });
     const values = watch();
 
+    // An error goes away as soon as the user changes that field, it does not stay red until the next Save
+    useEffect(() => {
+        const subscription = watch((_, { name }) => {
+            if (name) clearErrors(name.split(".")[0] as keyof PurchaseOrderFormValues);
+        });
+        return () => subscription.unsubscribe();
+    }, [watch, clearErrors]);
+
     const fetchOptions = async () => {
         setIsOptionsLoading(true);
         try {
@@ -445,10 +453,11 @@ export default function PurchaseOrderPage() {
             return {
                 code: inventoryId ? String(inventoryId) : "",
                 itemName: name || "",
-                unit: "1",
-                quantity: "1",
+                // Unit and quantity are entered by the user, they are not guessed
+                unit: "",
+                quantity: "",
                 rate: String(rate),
-                amount: String(rate * 1),
+                amount: "",
             };
         });
 
@@ -550,7 +559,14 @@ export default function PurchaseOrderPage() {
         <section className="mx-auto mt-10 w-full max-w-5xl bg-form-bg p-8 shadow-sm">
             <h1 className="mb-8 text-center text-4xl text-black tracking-wide">P.O Form</h1>
 
-            <form onSubmit={handleSubmit(onSubmit)} noValidate>
+            <form
+                onSubmit={(event) => {
+                    // Clear stale manual errors, otherwise handleSubmit blocks onSubmit forever
+                    clearErrors();
+                    void handleSubmit(onSubmit)(event);
+                }}
+                noValidate
+            >
                 {/* Top Section */}
                 <div className="flex flex-col md:flex-row justify-between items-start gap-10 mb-6">
                     <div className="flex-1 w-full space-y-3 max-w-[500px]">

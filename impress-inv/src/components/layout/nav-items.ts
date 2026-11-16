@@ -48,11 +48,9 @@ export const NAV_ITEMS: NavItem[] = [
   {
     label: "Purchase Department",
     children: [
+      { label: "Enter Vendor Quotation", href: "/purchase/quotation", operation: "quotation" },
       { label: "Purchase Order", href: "/purchase/purchase-order", operation: "purchase_order" },
       { label: "Purchase Order Report", href: "/purchase/purchase-order-report", operation: "purchase_order" },
-      { label: "Purchase Invoice", href: "/purchase/purchase-invoice", operation: "purchase_invoice" },
-      { label: "Quotation", href: "/purchase/quotation", operation: "quotation" },
-
     ]
   },
   {

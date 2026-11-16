@@ -99,6 +99,15 @@ export default function VendorPage() {
     } = useForm<VendorFormValues>({ defaultValues: initialValues });
     const values = watch();
 
+    // An error goes away as soon as the user changes that field, it does not stay red until the next Save
+    useEffect(() => {
+        const subscription = watch((_, { name }) => {
+            if (name) clearErrors(name.split(".")[0] as keyof VendorFormValues);
+        });
+        return () => subscription.unsubscribe();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [watch, clearErrors]);
+
     const fetchProvinces = async () => {
         setIsProvincesLoading(true);
         try {
@@ -358,7 +367,15 @@ export default function VendorPage() {
                 Vendor Profile
             </h1>
 
-            <form onSubmit={handleSubmit(onSubmit)} noValidate className="space-y-3">
+            <form
+                onSubmit={(event) => {
+                    // Clear stale manual errors, otherwise handleSubmit blocks onSubmit forever
+                    clearErrors();
+                    void handleSubmit(onSubmit)(event);
+                }}
+                noValidate
+                className="space-y-3"
+            >
                 <div className="grid gap-3 md:grid-cols-2">
                     <LabeledField
                         type={isIdLoading ? "text" : "number"}

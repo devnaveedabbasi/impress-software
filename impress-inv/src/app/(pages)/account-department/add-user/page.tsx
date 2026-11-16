@@ -76,6 +76,15 @@ export default function AddUserPage() {
     } = useForm<UserFormValues>({ defaultValues: initialValues });
     const values = watch();
 
+    // An error goes away as soon as the user changes that field, it does not stay red until the next Save
+    useEffect(() => {
+        const subscription = watch((_, { name }) => {
+            if (name) clearErrors(name.split(".")[0] as keyof UserFormValues);
+        });
+        return () => subscription.unsubscribe();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [watch, clearErrors]);
+
     const fetchData = async () => {
         try {
             const [rolesRes, permsRes] = await Promise.all([
@@ -357,7 +366,14 @@ export default function AddUserPage() {
                 User Registration
             </h1>
 
-            <form onSubmit={handleSubmit(onSubmit)} noValidate>
+            <form
+                onSubmit={(event) => {
+                    // Clear stale manual errors, otherwise handleSubmit blocks onSubmit forever
+                    clearErrors();
+                    void handleSubmit(onSubmit)(event);
+                }}
+                noValidate
+            >
                 {/* Top Section */}
                 <div className="flex flex-col md:flex-row justify-between items-start gap-10">
                     <div className="flex-1 w-full space-y-1.5">
