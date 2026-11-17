@@ -32,6 +32,7 @@ type BillDoc = {
     type: string;
     status: "DRAFT" | "APPROVED" | "REJECTED" | "";
     approvedDate: string | null;
+    savedStatus: BillDoc["status"]; // the status the bill has in the database (not the one chosen in the dropdown)
     items: BillLine[];
 };
 
@@ -69,6 +70,7 @@ const emptyDoc: BillDoc = {
     type: "",
     status: "",
     approvedDate: null,
+    savedStatus: "",
     items: [],
 };
 
@@ -107,7 +109,7 @@ const STATUS_LABELS: Record<string, string> = { DRAFT: "Pending", APPROVED: "App
 // Vendor Bill Posting: the bill of the vendor for one inward (OK qty x the rate of the PO, plus sales tax).
 // Save keeps the bill as a draft, Approve posts it and locks it.
 export default function VendorBillPostingPage() {
-    const { hasPermission } = usePermissions();
+    const { hasPermission, isSuperAdmin } = usePermissions();
     const canCreate = hasPermission("vendor_bill_posting", "create");
     const canUpdate = hasPermission("vendor_bill_posting", "update");
     const canDelete = hasPermission("vendor_bill_posting", "delete");
@@ -163,6 +165,8 @@ export default function VendorBillPostingPage() {
         { excl: 0, gst: 0, incl: 0 }
     );
     const isApproved = doc.status === "APPROVED";
+    // An approved (posted) bill is locked: only a Super Admin can change it
+    const isLocked = isApproved && !isSuperAdmin;
 
     const freshForm = (id: string): VendorBillFormValues => ({ ...initialValues, id, stInvDate: today() });
 
@@ -200,6 +204,7 @@ export default function VendorBillPostingPage() {
         dcNo: (bill.dcNo as number) ?? null,
         type: String(bill.type ?? ""),
         status: (bill.status as BillDoc["status"]) ?? "",
+        savedStatus: (bill.status as BillDoc["status"]) ?? "",
         approvedDate: (bill.approvedDate as string) ?? null,
         items: ((bill.items as BillLine[]) || []).map((item) => ({
             inventoryId: item.inventoryId,
@@ -290,7 +295,7 @@ export default function VendorBillPostingPage() {
             saleTaxPercent: Number(data.saleTaxPercent),
             ...(isNewMode ? {} : { status: doc.status || "DRAFT" }),
         };
-        if (!isNewMode && doc.status === "APPROVED" && !window.confirm(`Approve bill #${data.id}? It cannot be changed after it is approved.`)) {
+        if (!isNewMode && doc.status === "APPROVED" && doc.savedStatus !== "APPROVED" && !window.confirm(`Approve bill #${data.id}? It cannot be changed after it is approved.`)) {
             return;
         }
         try {
@@ -341,8 +346,8 @@ export default function VendorBillPostingPage() {
     };
 
     const handleDelete = async (row: BillRow) => {
-        if (row.status === "APPROVED") {
-            toast.error("An approved bill cannot be deleted");
+        if (row.status === "APPROVED" && !isSuperAdmin) {
+            toast.error("An approved bill can only be deleted by a Super Admin");
             return;
         }
         if (!window.confirm(`Delete bill #${row.id}?`)) return;
@@ -525,7 +530,7 @@ export default function VendorBillPostingPage() {
                         options={STATUS_OPTIONS}
                         value={doc.status || "DRAFT"}
                         onChange={(value) => setDoc((current) => ({ ...current, status: value as BillDoc["status"] }))}
-                        disabled={!isEditing || isNewMode || isApproved}
+                        disabled={!isEditing || isNewMode || isLocked}
                     />
                     <LabeledField label="Approved Date" value={fmtDate(doc.approvedDate)} readOnly disabled />
                 </div>
@@ -620,8 +625,8 @@ export default function VendorBillPostingPage() {
                         variant="secondary"
                         shape="rounded"
                         onClick={() => setIsEditing(true)}
-                        disabled={isSubmitting || isNewMode || isEditing || isApproved || !canUpdate}
-                        title={isApproved ? "An approved bill cannot be changed" : undefined}
+                        disabled={isSubmitting || isNewMode || isEditing || isLocked || !canUpdate}
+                        title={isLocked ? "An approved bill can only be changed by a Super Admin" : undefined}
                         className="border border-zinc-400 bg-white px-6 hover:bg-zinc-50"
                     >
                         Edit
@@ -631,7 +636,7 @@ export default function VendorBillPostingPage() {
                         variant="secondary"
                         shape="rounded"
                         isLoading={isSubmitting}
-                        disabled={!isEditing || isApproved || (isNewMode ? !canCreate : !canUpdate)}
+                        disabled={!isEditing || isLocked || (isNewMode ? !canCreate : !canUpdate)}
                         className="border border-zinc-400 bg-white px-8 hover:bg-zinc-50"
                     >
                         Save

@@ -10,7 +10,7 @@ import { TX_OPTIONS } from "../services/stock.service.js";
 
 // Vendor Bill Posting: the bill of the vendor for one inward. The lines are the inward items, the amount of a
 // line is the OK quantity x the rate of the purchase order. The id of the bill is the Bill Posting No.
-// A DRAFT (Pending) or REJECTED bill can be changed, an APPROVED (posted) bill is locked.
+// A DRAFT (Pending) or REJECTED bill can be changed. An APPROVED (posted) bill is locked: only a Super Admin can change it.
 
 const billInclude = {
     inward: {
@@ -221,9 +221,10 @@ const createVendorBill = asyncHandler(async (req, res) => {
     return res.status(201).json(new ApiResponse(201, toResponse(bill), "Vendor bill saved successfully"));
 });
 
-const assertDraft = (bill) => {
-    if (bill.status === "APPROVED") {
-        throw new ApiError(400, `Bill #${bill.id} is approved (posted) and cannot be changed`);
+// An approved (posted) bill is locked: only a Super Admin can change or delete it
+const assertEditable = (bill, user) => {
+    if (bill.status === "APPROVED" && !user?.isSuperAdmin) {
+        throw new ApiError(403, `Bill #${bill.id} is approved (posted). Only a Super Admin can change it.`);
     }
 };
 
@@ -233,7 +234,7 @@ const updateVendorBill = asyncHandler(async (req, res) => {
 
     const existing = await prisma.vendorBill.findUnique({ where: { id } });
     if (!existing) throw new ApiError(404, "Vendor bill not found");
-    assertDraft(existing);
+    assertEditable(existing, req.user);
 
     // The status chosen by the user. Approved posts the bill: the date of the approval is today.
     const status = req.body.status ?? existing.status;
@@ -254,8 +255,9 @@ const updateVendorBill = asyncHandler(async (req, res) => {
                 period: periodOf(stInvDate),
                 ...totals,
                 status,
-                approvedDate: approving ? new Date() : null,
-                approvedById: approving ? req.user?.id : null,
+                // A bill that stays approved keeps the date (and the person) of its approval
+                approvedDate: approving ? (existing.status === "APPROVED" ? existing.approvedDate : new Date()) : null,
+                approvedById: approving ? (existing.status === "APPROVED" ? existing.approvedById : req.user?.id) : null,
                 updatedById: req.user?.id,
                 items: { create: lines },
             },
@@ -273,7 +275,7 @@ const approveVendorBill = asyncHandler(async (req, res) => {
     const id = Number(req.params.id);
     const existing = await prisma.vendorBill.findUnique({ where: { id } });
     if (!existing) throw new ApiError(404, "Vendor bill not found");
-    assertDraft(existing);
+    if (existing.status === "APPROVED") throw new ApiError(400, `Bill #${id} is already approved`);
 
     const { lines, totals } = await buildLines(existing.inwardId, existing.saleTaxPercent);
 
@@ -301,7 +303,7 @@ const deleteVendorBill = asyncHandler(async (req, res) => {
     const id = Number(req.params.id);
     const existing = await prisma.vendorBill.findUnique({ where: { id } });
     if (!existing) throw new ApiError(404, "Vendor bill not found");
-    assertDraft(existing);
+    assertEditable(existing, req.user);
 
     await prisma.vendorBill.delete({ where: { id } });
     return res.status(200).json(new ApiResponse(200, null, "Vendor bill deleted successfully"));

@@ -12,8 +12,6 @@ type SlipItem = {
     inventoryId: number;
     inventory?: { itemName: string } | null;
     rej: number;
-    rate: number;
-    amount: number;
     report: string;
 };
 
@@ -28,15 +26,12 @@ type SlipReturn = {
     builtyNo: string;
     bookNo: string;
     receivedBy: string;
-    saleTaxPercent: number;
-    stInvNo: string;
     items: SlipItem[];
 };
 
 function ReturnSlip() {
     const searchParams = useSearchParams();
     const id = searchParams.get("id");
-    const isClaimNote = searchParams.get("as") === "claim";
     const { hasPermission } = usePermissions();
     const canView = hasPermission("rejection_return_to_vendor", "view");
 
@@ -50,16 +45,11 @@ function ReturnSlip() {
     }
 
     const totalRej = record.items.reduce((sum, item) => sum + item.rej, 0);
-    // Value of the claim: the amount of every row, then the sales tax
-    const valueExcl = record.items.reduce((sum, item) => sum + (item.amount || item.rej * item.rate), 0);
-    const salesTaxValue = Math.round((valueExcl * (record.saleTaxPercent || 0)) / 100);
-    const valueIncl = valueExcl + salesTaxValue;
-    const num = (value: number) => value.toLocaleString();
 
     return (
         <div className="min-h-screen w-full bg-white p-8 text-black">
             <h2 className="mb-6 text-center text-2xl font-bold uppercase tracking-wider underline underline-offset-4">
-                {isClaimNote ? "Vendor Claim Note" : "Rejection Return To Vendor Gate Pass"}
+                Rejection Return To Vendor Gate Pass
             </h2>
 
             <div className="mb-5 grid grid-cols-2 gap-x-8 gap-y-1 text-[14px]">
@@ -73,8 +63,6 @@ function ReturnSlip() {
                 <p><span className="font-semibold">Builty No:</span> {record.builtyNo || "-"}</p>
                 <p><span className="font-semibold">Book No:</span> {record.bookNo || "-"}</p>
                 <p><span className="font-semibold">Received By:</span> {record.receivedBy}</p>
-                <p><span className="font-semibold">Sales Tax %:</span> {record.saleTaxPercent}</p>
-                <p><span className="font-semibold">S.T.Inv No:</span> {record.stInvNo || "-"}</p>
             </div>
 
             <table className="w-full border-collapse border border-zinc-400 bg-white text-black">
@@ -82,10 +70,7 @@ function ReturnSlip() {
                     <tr className="bg-[#e4e4e4] text-[13px]">
                         <th className="w-16 border border-zinc-400 p-2 text-center">Code</th>
                         <th className="border border-zinc-400 p-2 text-left">Item Name</th>
-                        <th className="w-16 border border-zinc-400 p-2 text-center">Type</th>
                         <th className="w-20 border border-zinc-400 p-2 text-center">Rej</th>
-                        <th className="w-24 border border-zinc-400 p-2 text-center">Rate</th>
-                        <th className="w-28 border border-zinc-400 p-2 text-center">Amt</th>
                         <th className="border border-zinc-400 p-2 text-left">Report</th>
                     </tr>
                 </thead>
@@ -94,36 +79,14 @@ function ReturnSlip() {
                         <tr key={item.id} className="text-[13px]">
                             <td className="border border-zinc-400 p-1 text-center">{item.inventoryId}</td>
                             <td className="border border-zinc-400 p-1 pl-2">{item.inventory?.itemName || "-"}</td>
-                            <td className="border border-zinc-400 p-1 text-center">Unit</td>
                             <td className="border border-zinc-400 p-1 text-center">{item.rej}</td>
-                            <td className="border border-zinc-400 p-1 text-center">{num(item.rate)}</td>
-                            <td className="border border-zinc-400 p-1 text-center">{num(item.amount || item.rej * item.rate)}</td>
                             <td className="border border-zinc-400 p-1 pl-2">{item.report || "-"}</td>
                         </tr>
                     ))}
                     <tr className="bg-form-bg text-[13px] font-semibold">
-                        <td colSpan={3} className="border border-zinc-400 p-1 text-right">Total Rej</td>
+                        <td colSpan={2} className="border border-zinc-400 p-1 text-right">Total Rej</td>
                         <td className="border border-zinc-400 p-1 text-center">{totalRej}</td>
                         <td className="border border-zinc-400 p-1"></td>
-                        <td className="border border-zinc-400 p-1 text-center">{num(valueExcl)}</td>
-                        <td className="border border-zinc-400 p-1"></td>
-                    </tr>
-                </tbody>
-            </table>
-
-            <table className="mt-4 ml-auto w-full max-w-xs border-collapse border border-zinc-400 text-[13px]">
-                <tbody>
-                    <tr>
-                        <td className="border border-zinc-400 p-1 px-2">Value Excl. S.Tax</td>
-                        <td className="border border-zinc-400 p-1 px-2 text-right">{num(valueExcl)}</td>
-                    </tr>
-                    <tr>
-                        <td className="border border-zinc-400 p-1 px-2">Sales Tax Value ({record.saleTaxPercent}%)</td>
-                        <td className="border border-zinc-400 p-1 px-2 text-right">{num(salesTaxValue)}</td>
-                    </tr>
-                    <tr className="bg-[#e4e4e4] font-bold">
-                        <td className="border border-zinc-400 p-1 px-2">Value Incl. S.Tax</td>
-                        <td className="border border-zinc-400 p-1 px-2 text-right">{num(valueIncl)}</td>
                     </tr>
                 </tbody>
             </table>

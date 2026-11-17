@@ -70,19 +70,6 @@ const getReceivedFromVendor = async (vendorId, excludeReturnId) => {
     });
     const nameById = new Map(inventories.map((item) => [item.id, item.itemName]));
 
-    // The rate of the claim: the rate of the latest PO of this vendor that has the item
-    const orders = await prisma.purchaseOrder.findMany({
-        where: { vendorId },
-        orderBy: { id: "desc" },
-        select: { code: true, rate: true },
-    });
-    const rateByItem = new Map();
-    for (const order of orders) {
-        order.code.forEach((inventoryId, index) => {
-            if (!rateByItem.has(inventoryId)) rateByItem.set(inventoryId, order.rate[index] || 0);
-        });
-    }
-
     return received
         .filter((row) => (row._sum.rejQty || 0) > 0)
         .map((row) => {
@@ -99,7 +86,6 @@ const getReceivedFromVendor = async (vendorId, excludeReturnId) => {
                 returnedQty,
                 maxQty,
                 suggestedQty: maxQty,
-                rate: rateByItem.get(row.inventoryId) || 0,
             };
         })
         .sort((a, b) => a.itemName.localeCompare(b.itemName));
@@ -137,8 +123,6 @@ const normalizeItems = (items) =>
     items.map((item) => ({
         inventoryId: Number(item.inventoryId),
         rej: Number(item.rej),
-        rate: Number(item.rate),
-        amount: Number(item.rej) * Number(item.rate),
         report: item.report || "",
     }));
 
@@ -163,7 +147,7 @@ const getByIdRejectionReturn = asyncHandler(async (req, res) => {
 });
 
 const createRejectionReturn = asyncHandler(async (req, res) => {
-    const { date, vendorId, address, contactNo, saleTaxNo, transport, builtyNo, bookNo, receivedBy, saleTaxPercent, stInvNo } = req.body;
+    const { date, vendorId, address, contactNo, saleTaxNo, transport, builtyNo, bookNo, receivedBy } = req.body;
     const items = normalizeItems(req.body.items);
 
     console.log(
@@ -189,8 +173,6 @@ const createRejectionReturn = asyncHandler(async (req, res) => {
             builtyNo: builtyNo || "",
             bookNo: bookNo || "",
             receivedBy,
-            saleTaxPercent: Number(saleTaxPercent),
-            stInvNo,
             createdById: req.user?.id,
             items: { create: items },
         },
@@ -215,10 +197,9 @@ const updateRejectionReturn = asyncHandler(async (req, res) => {
         await assertVendorExists(Number(body.vendorId));
         data.vendorId = Number(body.vendorId);
     }
-    for (const field of ["address", "contactNo", "saleTaxNo", "transport", "builtyNo", "bookNo", "receivedBy", "stInvNo"]) {
+    for (const field of ["address", "contactNo", "saleTaxNo", "transport", "builtyNo", "bookNo", "receivedBy"]) {
         if (body[field] !== undefined) data[field] = body[field];
     }
-    if (body.saleTaxPercent !== undefined) data.saleTaxPercent = Number(body.saleTaxPercent);
 
     const items = body.items !== undefined ? normalizeItems(body.items) : null;
     if (items) {
@@ -246,7 +227,7 @@ const updateRejectionReturn = asyncHandler(async (req, res) => {
                 if (current) {
                     await tx.rejectionReturnItem.update({
                         where: { id: current.id },
-                        data: { rej: item.rej, rate: item.rate, amount: item.amount, report: item.report },
+                        data: { rej: item.rej, report: item.report },
                     });
                 } else {
                     await tx.rejectionReturnItem.create({ data: { ...item, rejectionReturnId: returnId } });

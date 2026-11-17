@@ -25,6 +25,7 @@ export const INWARDS = "/inwards";
 export const ACCOUNT_CODES = "/account-codes";
 export const SALE_GATE_PASSES = "/sale-gate-passes";
 export const REJECTION_RETURN_TO_VENDOR = "/rejection-returns-to-vendor";
+export const VENDOR_CLAIM_NOTES = "/vendor-claim-notes";
 export const REJECTION_RECEIVED_FROM_DEALER = "/rejection-received-from-dealer";
 export const STORE_ISSUES = "/store-issues";
 export const ITEM_RETURNS = "/item-returns";

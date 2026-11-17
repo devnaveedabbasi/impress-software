@@ -6,10 +6,10 @@ import { LabeledField } from "@/components/ui/LabeledField";
 import { Button } from "@/components/ui/Button";
 import useDebounce from "@/hooks/useDebounce";
 import {
-    rejectionReturnToVendorSchema,
-    type RejectionReturnToVendorFormValues,
+    vendorClaimNoteSchema,
+    type VendorClaimNoteFormValues,
 } from "@/lib/validations/master";
-import { REJECTION_RETURN_TO_VENDOR } from "@/utlis/apiRoutes";
+import { VENDOR_CLAIM_NOTES } from "@/utlis/apiRoutes";
 import api from "@/lib/axios";
 import toast from "react-hot-toast";
 import { usePermissions } from "@/hooks/usePermissions";
@@ -28,7 +28,7 @@ type ReturnItemRow = {
     report: string;
 };
 
-type RejectionReturnRow = {
+type VendorClaimNoteRow = {
     id: number; // the Claim Note No
     date: string;
     vendorId: number;
@@ -80,7 +80,7 @@ const padRows = <T,>(rows: T[], makeRow: () => T): T[] => {
 const defaultRow = () => ({ inventoryId: "", itemName: "", rej: "", rate: "", report: "" });
 const today = () => new Date().toISOString().split("T")[0];
 
-const initialValues: RejectionReturnToVendorFormValues = {
+const initialValues: VendorClaimNoteFormValues = {
     id: "",
     date: today(),
     vendorId: "",
@@ -97,15 +97,11 @@ const initialValues: RejectionReturnToVendorFormValues = {
     items: Array.from({ length: MIN_ROWS }, defaultRow),
 };
 
-// Rejection Return To Vendor Gate Pass: rejected parts going back to a vendor.
-// The Claim Note No is the automatic id of the gate pass.
-export function RejectionReturnToVendorForm({
-    title = "Rejection Return To Vendor Gate Pass",
-    printAs = "gatepass",
-}: {
-    title?: string;
-    printAs?: "gatepass" | "claim";
-}) {
+// Vendor Claim Note: the claim of the rejected parts of a vendor (rate, sales tax and value). Its own document,
+// apart from the Rejection Return to Vendor gate pass.
+// The Claim Note No is the automatic id of the claim note.
+export function VendorClaimNoteForm() {
+    const title = "Vendor Claim Note";
     const [isNewMode, setIsNewMode] = useState(true);
     const [isEditing, setIsEditing] = useState(true);
     const [pickerRowIndex, setPickerRowIndex] = useState<number | null>(null);
@@ -116,15 +112,15 @@ export function RejectionReturnToVendorForm({
     const [isReceivedLoading, setIsReceivedLoading] = useState(false);
     const receivedKeyRef = useRef("");
 
-    const { hasPermission } = usePermissions();
-    const canCreate = hasPermission("rejection_return_to_vendor", "create");
-    const canUpdate = hasPermission("rejection_return_to_vendor", "update");
-    const canView = hasPermission("rejection_return_to_vendor", "view");
+    const { hasPermission, isSuperAdmin } = usePermissions();
+    const canCreate = hasPermission("vendor_claim_note", "create");
+    const canUpdate = hasPermission("vendor_claim_note", "update");
+    const canView = hasPermission("vendor_claim_note", "view");
 
     const [isIdLoading, setIsIdLoading] = useState(true);
     const [nextId, setNextId] = useState("");
     const [isViewAllOpen, setIsViewAllOpen] = useState(false);
-    const [rejectionReturns, setRejectionReturns] = useState<RejectionReturnRow[]>([]);
+    const [rejectionReturns, setRejectionReturns] = useState<VendorClaimNoteRow[]>([]);
     const [hasLoadedRejectionReturns, setHasLoadedRejectionReturns] = useState(false);
     const [isRejectionReturnsLoading, setIsRejectionReturnsLoading] = useState(false);
     const [rejectionReturnsError, setRejectionReturnsError] = useState("");
@@ -139,19 +135,19 @@ export function RejectionReturnToVendorForm({
         setValue,
         watch,
         formState: { errors, isSubmitting },
-    } = useForm<RejectionReturnToVendorFormValues>({ defaultValues: initialValues });
+    } = useForm<VendorClaimNoteFormValues>({ defaultValues: initialValues });
     const values = watch();
 
     // An error goes away as soon as the user changes that field, it does not stay red until the next Save
     useEffect(() => {
         const subscription = watch((_, { name }) => {
-            if (name) clearErrors(name.split(".")[0] as keyof RejectionReturnToVendorFormValues);
+            if (name) clearErrors(name.split(".")[0] as keyof VendorClaimNoteFormValues);
         });
         return () => subscription.unsubscribe();
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [watch, clearErrors]);
 
-    const freshForm = (id: string): RejectionReturnToVendorFormValues => ({
+    const freshForm = (id: string): VendorClaimNoteFormValues => ({
         ...initialValues,
         id,
         date: today(),
@@ -161,7 +157,7 @@ export function RejectionReturnToVendorForm({
     const fetchNextId = async () => {
         setIsIdLoading(true);
         try {
-            const { data } = await api.get(`${REJECTION_RETURN_TO_VENDOR}/next-id`, {
+            const { data } = await api.get(`${VENDOR_CLAIM_NOTES}/next-id`, {
                 params: { _ts: Date.now() },
             });
             const fetchedNextId = String(data.data.nextId);
@@ -177,7 +173,7 @@ export function RejectionReturnToVendorForm({
         }
     };
 
-    const mapReturnToForm = (record: RejectionReturnRow): RejectionReturnToVendorFormValues => ({
+    const mapReturnToForm = (record: VendorClaimNoteRow): VendorClaimNoteFormValues => ({
         id: String(record.id),
         date: record.date ? new Date(record.date).toISOString().split("T")[0] : today(),
         vendorId: String(record.vendorId),
@@ -203,7 +199,7 @@ export function RejectionReturnToVendorForm({
         ),
     });
 
-    const withListFields = (item: RejectionReturnRow): RejectionReturnRow => ({
+    const withListFields = (item: VendorClaimNoteRow): VendorClaimNoteRow => ({
         ...item,
         date: item.date ? new Date(item.date).toISOString().split("T")[0] : "",
         vendorName: item.vendor?.vendorName || `Vendor #${item.vendorId}`,
@@ -217,18 +213,18 @@ export function RejectionReturnToVendorForm({
         setIsRejectionReturnsLoading(true);
         setRejectionReturnsError("");
         try {
-            const { data } = await api.get(REJECTION_RETURN_TO_VENDOR);
+            const { data } = await api.get(VENDOR_CLAIM_NOTES);
             setRejectionReturns((data.data || []).map(withListFields));
             setHasLoadedRejectionReturns(true);
         } catch (error: unknown) {
             const apiError = error as ApiError;
-            setRejectionReturnsError(apiError.response?.data?.message || "Failed to fetch Rejection Returns");
+            setRejectionReturnsError(apiError.response?.data?.message || "Failed to fetch Vendor Claim Notes");
         } finally {
             setIsRejectionReturnsLoading(false);
         }
     };
 
-    const addReturnToCache = (item: RejectionReturnRow) => {
+    const addReturnToCache = (item: VendorClaimNoteRow) => {
         setRejectionReturns((current) => {
             const cached = withListFields(item);
             const existingIndex = current.findIndex((c) => String(c.id) === String(item.id));
@@ -251,7 +247,7 @@ export function RejectionReturnToVendorForm({
             if (field === "items" && typeof rowIndex === "number") {
                 if (!rows[rowIndex]) rows[rowIndex] = { field: String(rowField ?? "inventoryId"), message: issue.message };
             } else if (typeof field === "string") {
-                setError(field as keyof RejectionReturnToVendorFormValues, { type: "manual", message: issue.message });
+                setError(field as keyof VendorClaimNoteFormValues, { type: "manual", message: issue.message });
             }
         }
         setRowErrors(rows);
@@ -264,15 +260,15 @@ export function RejectionReturnToVendorForm({
         );
     };
 
-    const onSubmit = async (formData: RejectionReturnToVendorFormValues) => {
+    const onSubmit = async (formData: VendorClaimNoteFormValues) => {
         // A received item that was filled in automatically and has no Rej qty (and no report) is simply not returned
-        const data: RejectionReturnToVendorFormValues = {
+        const data: VendorClaimNoteFormValues = {
             ...formData,
             items: formData.items.map((row) => (row.inventoryId && !row.rej && !row.report ? defaultRow() : row)),
         };
         clearErrors();
         setRowErrors({});
-        const validationResult = rejectionReturnToVendorSchema.safeParse(data);
+        const validationResult = vendorClaimNoteSchema.safeParse(data);
         if (!validationResult.success) {
             showValidationIssues(validationResult.error.issues);
             return;
@@ -320,10 +316,10 @@ export function RejectionReturnToVendorForm({
 
         try {
             const response = isNewMode
-                ? await api.post(REJECTION_RETURN_TO_VENDOR, payload)
-                : await api.put(`${REJECTION_RETURN_TO_VENDOR}/${data.id}`, payload);
+                ? await api.post(VENDOR_CLAIM_NOTES, payload)
+                : await api.put(`${VENDOR_CLAIM_NOTES}/${data.id}`, payload);
 
-            toast.success(response.data.message || "Gate pass saved successfully");
+            toast.success(response.data.message || "Claim note saved successfully");
             if (hasLoadedRejectionReturns) {
                 setHasLoadedRejectionReturns(false);
                 await fetchAllRejectionReturns(false, true);
@@ -332,7 +328,7 @@ export function RejectionReturnToVendorForm({
         } catch (error: unknown) {
             const apiError = error as ApiError;
             console.error("Rejection return save failed:", apiError.response?.data || error);
-            toast.error(apiError.response?.data?.message || "Failed to save gate pass");
+            toast.error(apiError.response?.data?.message || "Failed to save claim note");
         }
     };
 
@@ -344,7 +340,7 @@ export function RejectionReturnToVendorForm({
     }, [isSubmitting]);
 
     const debouncedId = useDebounce(values.id, 500);
-    const returnColumns: ViewAllColumn<RejectionReturnRow>[] = [
+    const returnColumns: ViewAllColumn<VendorClaimNoteRow>[] = [
         { key: "id", header: "Claim Note No" },
         { key: "date", header: "Date" },
         { key: "vendorName", header: "Vendor" },
@@ -379,11 +375,11 @@ export function RejectionReturnToVendorForm({
             setIsIdLoading(true);
             try {
                 const cached = rejectionReturns.find((item) => String(item.id) === debouncedId);
-                const record: RejectionReturnRow | undefined =
-                    cached || (await api.get(`${REJECTION_RETURN_TO_VENDOR}/${debouncedId}`)).data.data;
+                const record: VendorClaimNoteRow | undefined =
+                    cached || (await api.get(`${VENDOR_CLAIM_NOTES}/${debouncedId}`)).data.data;
 
                 if (!record) {
-                    toast.error("Gate pass not found");
+                    toast.error("Claim note not found");
                     resetToNextId();
                     return;
                 }
@@ -397,7 +393,7 @@ export function RejectionReturnToVendorForm({
                 toast.error(
                     apiError.response?.status === 403
                         ? apiError.response?.data?.message || "Access denied. You do not have permission."
-                        : "Gate pass not found"
+                        : "Claim note not found"
                 );
                 resetToNextId();
             } finally {
@@ -466,7 +462,7 @@ export function RejectionReturnToVendorForm({
         receivedKeyRef.current = key;
         setIsReceivedLoading(true);
         try {
-            const { data } = await api.get(`${REJECTION_RETURN_TO_VENDOR}/received-items`, {
+            const { data } = await api.get(`${VENDOR_CLAIM_NOTES}/received-items`, {
                 // _ts keeps this answer out of the page cache: the received / returned quantities must be current
                 params: { vendorId, ...(excludeId ? { excludeId } : {}), _ts: Date.now() },
             });
@@ -485,7 +481,7 @@ export function RejectionReturnToVendorForm({
         }
     };
 
-    // While a gate pass is being written or edited, its vendor's received items are known (they limit the Rej qty)
+    // While a claim note is being written or edited, its vendor's received items are known (they limit the Rej qty)
     useEffect(() => {
         if (!values.vendorId || !isEditing) {
             if (!values.vendorId) setReceivedItems([]);
@@ -574,10 +570,10 @@ export function RejectionReturnToVendorForm({
 
     const handlePrint = () => {
         if (isNewMode || !values.id) {
-            toast.error("Open a saved gate pass first (enter its Claim Note No or use View All) to print it");
+            toast.error("Open a saved claim note first (enter its Claim Note No or use View All) to print it");
             return;
         }
-        window.open(`/print/rejection-return-slip?id=${values.id}${printAs === "claim" ? "&as=claim" : ""}`, "_blank");
+        window.open(`/print/vendor-claim-note-slip?id=${values.id}`, "_blank");
     };
 
     return (
@@ -927,7 +923,8 @@ export function RejectionReturnToVendorForm({
                         variant="secondary"
                         shape="rounded"
                         onClick={() => setIsEditing(true)}
-                        disabled={isSubmitting || isNewMode || isEditing || !canUpdate}
+                        disabled={isSubmitting || isNewMode || isEditing || !canUpdate || !isSuperAdmin}
+                        title={!isNewMode && !isSuperAdmin ? "A posted claim note can only be changed by a Super Admin" : undefined}
                         className="border border-zinc-400 bg-white px-6 hover:bg-zinc-50"
                     >
                         Edit
@@ -937,7 +934,7 @@ export function RejectionReturnToVendorForm({
                         variant="secondary"
                         shape="rounded"
                         isLoading={isSubmitting}
-                        disabled={!isEditing || (isNewMode ? !canCreate : !canUpdate)}
+                        disabled={!isEditing || (isNewMode ? !canCreate : !canUpdate || !isSuperAdmin)}
                         className="border border-zinc-400 bg-white px-8 hover:bg-zinc-50"
                     >
                         Save
@@ -948,7 +945,7 @@ export function RejectionReturnToVendorForm({
                         shape="rounded"
                         onClick={handlePrint}
                         disabled={isSubmitting || isNewMode || !canView}
-                        title={isNewMode ? "Open a saved gate pass to print it" : "Print this gate pass"}
+                        title={isNewMode ? "Open a saved claim note to print it" : "Print this claim note"}
                         className="border border-zinc-400 bg-white px-6 hover:bg-zinc-50"
                     >
                         Print
@@ -984,7 +981,7 @@ export function RejectionReturnToVendorForm({
             <ViewAllModal
                 key={isViewAllOpen ? "open" : "closed"}
                 isOpen={isViewAllOpen}
-                title="All Rejection Return Gate Passes"
+                title="All Vendor Claim Note Claim Notees"
                 rows={rejectionReturns}
                 columns={returnColumns}
                 searchKeys={["id", "date", "vendorName", "transport", "builtyNo", "itemsSummary"]}

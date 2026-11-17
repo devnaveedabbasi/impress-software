@@ -37,6 +37,7 @@ const operations = [
   "shortage_report",
   "vendor_bill_posting",
   "vendor_bill_pending_report",
+  "vendor_claim_note",
 ];
 
 const actions = ["view", "create", "update", "delete"];

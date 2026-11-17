@@ -138,10 +138,10 @@ const updateInward = asyncHandler(async (req, res) => {
         throw new ApiError(404, "Inward not found");
     }
 
-    // An inward whose bill is approved (posted) is locked with it
+    // An inward whose bill is approved (posted) is locked with it, only a Super Admin can change it
     const postedBill = await prisma.vendorBill.findUnique({ where: { inwardId }, select: { id: true, status: true } });
-    if (postedBill?.status === "APPROVED") {
-        throw new ApiError(400, `Inward #${inwardId} has an approved vendor bill (#${postedBill.id}) and cannot be changed`);
+    if (postedBill?.status === "APPROVED" && !req.user?.isSuperAdmin) {
+        throw new ApiError(403, `Inward #${inwardId} has an approved vendor bill (#${postedBill.id}). Only a Super Admin can change it.`);
     }
 
     const data = { updatedById: req.user?.id };
