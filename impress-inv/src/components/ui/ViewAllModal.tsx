@@ -2,6 +2,7 @@
 
 import { useMemo, useState, type ReactNode } from "react";
 import { Icon } from "@iconify/react";
+import toast from "react-hot-toast";
 import { Button } from "@/components/ui/Button";
 import useDebounce from "@/hooks/useDebounce";
 import { useViewAll } from "@/hooks/useViewAll";
@@ -165,7 +166,8 @@ export function ViewAllModal<T extends Record<string, unknown>>({
                             aria-label="Delete"
                             onClick={(event) => {
                               event.stopPropagation();
-                              onDelete(row);
+                              // Deleting records is not available yet (the server refuses it as well)
+                              toast("Delete functionality will be added soon", { id: "delete-soon", icon: "🚧" });
                             }}
                             className="text-red-500 transition-colors hover:text-red-700"
                           >

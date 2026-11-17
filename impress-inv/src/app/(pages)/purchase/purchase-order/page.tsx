@@ -540,11 +540,11 @@ export default function PurchaseOrderPage() {
     useEffect(() => {
         const total = (values.items || []).reduce((sum, row) => sum + (Number(row.amount) || 0), 0);
         const saleTaxPercent = Number(values.saleTaxPercent) || 0;
-        const saleTaxAmount = (total * saleTaxPercent) / 100;
+        const saleTaxAmount = Math.round((total * saleTaxPercent) / 100);
         const totalWithSaleTax = total + saleTaxAmount;
 
         const withHoldingPercent = Number(values.withHoldingPercent) || 0;
-        const withHoldingAmount = (totalWithSaleTax * withHoldingPercent) / 100;
+        const withHoldingAmount = Math.round((totalWithSaleTax * withHoldingPercent) / 100);
         const grandTotal = totalWithSaleTax - withHoldingAmount;
 
         setValue("total", total > 0 ? String(total.toFixed(2)) : "", { shouldDirty: false });
@@ -553,7 +553,7 @@ export default function PurchaseOrderPage() {
         setValue("grandTotal", grandTotal > 0 ? String(grandTotal.toFixed(2)) : "", { shouldDirty: false });
     }, [values.items, values.saleTaxPercent, values.withHoldingPercent, setValue]);
 
-    const saleTaxAmountComputed = (Number(values.total || 0) * (Number(values.saleTaxPercent) || 0)) / 100;
+    const saleTaxAmountComputed = Math.round((Number(values.total || 0) * (Number(values.saleTaxPercent) || 0)) / 100);
 
     return (
         <section className="mx-auto mt-10 w-full max-w-5xl bg-form-bg p-8 shadow-sm">

@@ -65,6 +65,27 @@ const assertInventoryExists = async (items) => {
     }
 };
 
+// A gate pass cannot send out more than the stock in hand. When a gate pass is edited, what it sent before goes
+// back first (alreadySent), because the new quantity replaces the old one.
+const assertEnoughStock = async (items, stockByInventory, alreadySent = new Map()) => {
+    const names = new Map(
+        (await prisma.inventory.findMany({ where: { id: { in: items.map((item) => item.inventoryId) } }, select: { id: true, itemName: true } })).map(
+            (item) => [item.id, item.itemName]
+        )
+    );
+    const problems = [];
+    items.forEach((item, index) => {
+        const available = (stockByInventory.get(item.inventoryId) || 0) + (alreadySent.get(item.inventoryId) || 0);
+        if (item.qty > available) {
+            problems.push({
+                field: `items.${index}.qty`,
+                message: `${names.get(item.inventoryId) || "Item"}: Qty (${item.qty}) is more than the stock in hand (${available})`,
+            });
+        }
+    });
+    if (problems.length > 0) throw new ApiError(400, problems[0].message, problems);
+};
+
 // Stock in hand = inventory master stock + the stock ledger (see stock.service.js)
 const readStockInHand = (inventoryIds) => getStockInHand(inventoryIds);
 
@@ -117,6 +138,7 @@ const createSaleGatePass = asyncHandler(async (req, res) => {
     await assertVendorAccount(accountName);
     await assertInventoryExists(items);
     const stockByInventory = await readStockInHand(items.map((item) => item.inventoryId));
+    await assertEnoughStock(items, stockByInventory);
 
     // Sync PostgreSQL auto-increment sequence
     for (const table of ["SaleGatePass", "SaleGatePassItem"]) {
@@ -179,6 +201,10 @@ const updateSaleGatePass = asyncHandler(async (req, res) => {
         await assertInventoryExists(items);
     }
     const stockByInventory = items ? await readStockInHand(items.map((item) => item.inventoryId)) : new Map();
+    if (items) {
+        const before = await prisma.saleGatePassItem.findMany({ where: { saleGatePassId: Number(id) }, select: { inventoryId: true, qty: true } });
+        await assertEnoughStock(items, stockByInventory, new Map(before.map((row) => [row.inventoryId, row.qty])));
+    }
 
     const saleGatePass = await getActiveDatabaseClient().$transaction(async (tx) => {
         const data = { updatedById: req.user?.id };

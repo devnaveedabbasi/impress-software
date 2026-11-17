@@ -112,7 +112,6 @@ export default function VendorBillPostingPage() {
     const { hasPermission, isSuperAdmin } = usePermissions();
     const canCreate = hasPermission("vendor_bill_posting", "create");
     const canUpdate = hasPermission("vendor_bill_posting", "update");
-    const canDelete = hasPermission("vendor_bill_posting", "delete");
     const canView = hasPermission("vendor_bill_posting", "view");
 
     const [isNewMode, setIsNewMode] = useState(true);
@@ -342,22 +341,6 @@ export default function VendorBillPostingPage() {
             toast.error((error as ApiError).response?.data?.message || "Failed to approve the vendor bill");
         } finally {
             setIsApproving(false);
-        }
-    };
-
-    const handleDelete = async (row: BillRow) => {
-        if (row.status === "APPROVED" && !isSuperAdmin) {
-            toast.error("An approved bill can only be deleted by a Super Admin");
-            return;
-        }
-        if (!window.confirm(`Delete bill #${row.id}?`)) return;
-        try {
-            const response = await api.delete(`${VENDOR_BILLS}/${row.id}`);
-            toast.success(response.data.message || "Vendor bill deleted successfully");
-            setBills((current) => current.filter((item) => item.id !== row.id));
-            if (String(values.id) === String(row.id)) void fetchNextId();
-        } catch (error: unknown) {
-            toast.error((error as ApiError).response?.data?.message || "Failed to delete the vendor bill");
         }
     };
 
@@ -685,7 +668,7 @@ export default function VendorBillPostingPage() {
                     setIsEditing(false);
                     setIsViewAllOpen(false);
                 }}
-                onDelete={canDelete ? (row) => void handleDelete(row) : undefined}
+                onDelete={() => undefined}
             />
         </section>
     );

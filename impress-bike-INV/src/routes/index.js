@@ -30,6 +30,14 @@ import syncRoutes from "./sync.routes.js";
 
 const router = Router();
 
+// Deleting records is switched off for now: every DELETE request is refused before it reaches a route.
+router.use((req, res, next) => {
+  if (req.method === "DELETE") {
+    return res.status(403).json({ success: false, message: "Delete functionality will be added soon" });
+  }
+  next();
+});
+
 router.use("/auth", authRoutes);
 router.use("/roles", roleRoutes);
 router.use("/admins", adminRoutes);

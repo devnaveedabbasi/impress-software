@@ -7,6 +7,20 @@ import prisma, {
     getActiveDatabaseName,
 } from "../config/prisma.js";
 
+// The totals of a PO are worked out here, from the rows and the two percents. What the page sent for the totals
+// is not trusted, and a row whose Amount is not Qty x Rate is refused. Money is saved in whole numbers.
+const worthOf = ({ quantity, rate, amount, saleTaxPercent, withHoldingPercent }) => {
+    quantity.forEach((qty, index) => {
+        if (Number(amount[index]) !== Number(qty) * Number(rate[index])) {
+            throw new ApiError(400, `Row ${index + 1}: Amount must be Qty x Rate (${qty} x ${rate[index]} = ${Number(qty) * Number(rate[index])})`);
+        }
+    });
+    const total = amount.reduce((sum, value) => sum + Number(value), 0);
+    const totalWithSaleTax = total + Math.round((total * Number(saleTaxPercent)) / 100);
+    const withHoldingAmount = Math.round((totalWithSaleTax * Number(withHoldingPercent)) / 100);
+    return { total, totalWithSaleTax, withHoldingAmount, grandTotal: totalWithSaleTax - withHoldingAmount };
+};
+
 const getAllPurchaseOrders = asyncHandler(async (req, res) => {
     const purchaseOrders = await prisma.purchaseOrder.findMany({
         include: { vendor: true, quotation: true },
@@ -44,6 +58,8 @@ const createPurchaseOrder = asyncHandler(async (req, res) => {
         )
     `;
 
+    const worth = worthOf({ quantity, rate, amount, saleTaxPercent, withHoldingPercent });
+
     const purchaseOrder = await prisma.purchaseOrder.create({
         data: {
             date: new Date(date),
@@ -57,12 +73,12 @@ const createPurchaseOrder = asyncHandler(async (req, res) => {
             quantity: quantity.map(Number),
             rate: rate.map(Number),
             amount: amount.map(Number),
-            total: Number(total),
+            total: worth.total,
             saleTaxPercent: Number(saleTaxPercent),
-            totalWithSaleTax: Number(totalWithSaleTax),
+            totalWithSaleTax: worth.totalWithSaleTax,
             withHoldingPercent: Number(withHoldingPercent),
-            withHoldingAmount: Number(withHoldingAmount),
-            grandTotal: Number(grandTotal),
+            withHoldingAmount: worth.withHoldingAmount,
+            grandTotal: worth.grandTotal,
             createdById: req.user?.id
         }
     });
@@ -96,12 +112,21 @@ const updatePurchaseOrder = asyncHandler(async (req, res) => {
     if (body.rate !== undefined) data.rate = body.rate.map(Number);
     if (body.amount !== undefined) data.amount = body.amount.map(Number);
 
-    if (body.total !== undefined) data.total = Number(body.total);
     if (body.saleTaxPercent !== undefined) data.saleTaxPercent = Number(body.saleTaxPercent);
-    if (body.totalWithSaleTax !== undefined) data.totalWithSaleTax = Number(body.totalWithSaleTax);
     if (body.withHoldingPercent !== undefined) data.withHoldingPercent = Number(body.withHoldingPercent);
-    if (body.withHoldingAmount !== undefined) data.withHoldingAmount = Number(body.withHoldingAmount);
-    if (body.grandTotal !== undefined) data.grandTotal = Number(body.grandTotal);
+
+    // Rows or a percent changed: the amounts are checked and the totals are worked out again
+    const moneyChanged = ["quantity", "rate", "amount", "saleTaxPercent", "withHoldingPercent"].some((key) => body[key] !== undefined);
+    if (moneyChanged) {
+        const merged = {
+            quantity: data.quantity ?? existingPurchaseOrder.quantity,
+            rate: data.rate ?? existingPurchaseOrder.rate,
+            amount: data.amount ?? existingPurchaseOrder.amount,
+            saleTaxPercent: data.saleTaxPercent ?? existingPurchaseOrder.saleTaxPercent,
+            withHoldingPercent: data.withHoldingPercent ?? existingPurchaseOrder.withHoldingPercent,
+        };
+        Object.assign(data, worthOf(merged));
+    }
 
     const purchaseOrder = await prisma.purchaseOrder.update({
         where: { id: Number(id) },
@@ -117,6 +142,12 @@ const deletePurchaseOrder = asyncHandler(async (req, res) => {
     const existingPurchaseOrder = await prisma.purchaseOrder.findUnique({ where: { id: Number(id) } });
     if (!existingPurchaseOrder) {
         throw new ApiError(404, "Purchase Order not found");
+    }
+
+    // An inward is made against the PO: the PO stays as long as it has one
+    const inwards = await prisma.inward.count({ where: { purchaseOrderId: Number(id) } });
+    if (inwards > 0) {
+        throw new ApiError(400, `PO #${id} has ${inwards} inward record(s) and cannot be deleted`);
     }
 
     await prisma.purchaseOrder.delete({ where: { id: Number(id) } });

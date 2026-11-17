@@ -280,23 +280,6 @@ export default function AdminsPage() {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [isSubmitting]);
 
-    const handleDelete = async (row: AdminRow) => {
-        if (String(currentUser?.id) === String(row.id)) {
-            toast.error("You cannot delete your own account");
-            return;
-        }
-        if (!window.confirm(`Delete admin "${row.name}"?`)) return;
-        try {
-            const response = await api.delete(`${ADMINS}/${row.id}`);
-            toast.success(response.data.message || "Admin deleted successfully");
-            setAdmins((current) => current.filter((item) => item.id !== row.id));
-            if (String(values.id) === String(row.id)) void fetchNextId();
-        } catch (error: unknown) {
-            const apiError = error as ApiError;
-            toast.error(apiError.response?.data?.message || "Failed to delete admin");
-        }
-    };
-
     const debouncedId = useDebounce(values.id, 500);
     const adminColumns: ViewAllColumn<AdminRow>[] = [
         { key: "id", header: "Admin ID" },
@@ -647,7 +630,7 @@ export default function AdminsPage() {
                     setIsEditing(false);
                     setIsViewAllOpen(false);
                 }}
-                onDelete={(row) => void handleDelete(row)}
+                onDelete={() => undefined}
             />
         </section>
     );

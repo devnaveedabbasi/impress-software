@@ -97,6 +97,14 @@ const deleteQuotation = asyncHandler(async (req, res) => {
         throw new ApiError(404, "Quotation not found");
     }
 
+    // A purchase order (or an inward) is made from the quotation: it stays as long as it is used
+    const usedBy =
+        (await prisma.purchaseOrder.count({ where: { quotationId: Number(id) } })) +
+        (await prisma.inward.count({ where: { quotationId: Number(id) } }));
+    if (usedBy > 0) {
+        throw new ApiError(400, `Quotation #${id} is used in ${usedBy} purchase order / inward record(s) and cannot be deleted`);
+    }
+
     await prisma.quotation.delete({ where: { id: Number(id) } });
 
     return res.status(200).json(new ApiResponse(200, null, "Quotation deleted successfully"));

@@ -158,9 +158,10 @@ export const inventorySchema = z.object({
     .max(200, { message: "Item Name must be at most 200 characters" }),
   categoryId: z.string().min(1, { message: "Category is required" }),
   departmentId: z.string().min(1, { message: "Department is required" }),
-  pack: numericRange("Pack", 1, 100_000),
-  rate: numericRange("Rate", 0, 100_000_000),
-  unitPerBike: numericRange("Unit Per Bike", 0, 10_000),
+  pack: numericRange("Pack", 1, 100_000).refine((v) => Number.isInteger(Number(v)), { message: "Pack must be a whole number" }),
+  rate: numericRange("Rate", 0, 100_000_000).refine((v) => Number.isInteger(Number(v)), { message: "Rate must be a whole number" }),
+  // A whole number from 0 (the server checks the same)
+  unitPerBike: numericRange("Unit Per Bike", 0, 1000).refine((v) => Number.isInteger(Number(v)), { message: "Unit Per Bike must be a whole number" }),
   colorRows: z
     .array(
       z.object({

@@ -15,6 +15,16 @@ const isInventoryConflict = (error) => {
     );
 };
 
+// An item name is used once (capital letters and extra spaces do not make it a different name). The PO and the
+// quotation find an item by its name, so two items with one name would be mixed up.
+const assertNameFree = async (name, exceptId) => {
+    const same = await prisma.inventory.findFirst({
+        where: { itemName: { equals: name, mode: "insensitive" }, ...(exceptId ? { id: { not: exceptId } } : {}) },
+        select: { id: true },
+    });
+    if (same) throw new ApiError(409, `An item named "${name}" already exists (code ${same.id})`);
+};
+
 const handleInventoryWrite = async (operation) => {
     try {
         return await operation();
@@ -111,6 +121,7 @@ const createInventory = asyncHandler(async (req, res) => {
     }
 
     const trimmedItemName = itemName.trim();
+    await assertNameFree(trimmedItemName);
     const stocks = normalizeStocks(req.body.stocks);
 
     console.log(
@@ -154,6 +165,11 @@ const updateInventory = asyncHandler(async (req, res) => {
     const existingInventory = await prisma.inventory.findUnique({ where: { id: inventoryId } });
     if (!existingInventory) {
         throw new ApiError(404, "Inventory not found");
+    }
+
+    // Old items may share a name: the name is only checked when it is changed
+    if (itemName !== undefined && itemName.trim().toLowerCase() !== existingInventory.itemName.trim().toLowerCase()) {
+        await assertNameFree(itemName.trim(), inventoryId);
     }
 
     const stocks = req.body.stocks !== undefined ? normalizeStocks(req.body.stocks) : null;
