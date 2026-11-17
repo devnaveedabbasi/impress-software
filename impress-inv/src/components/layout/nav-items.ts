@@ -90,8 +90,4 @@ export const NAV_ITEMS: NavItem[] = [
       { label: "Window 2", href: "/window/window2", operation: "window2" },
     ],
   },
-  {
-    label: "Data Sync",
-    href: "/data-sync",
-  },
 ];

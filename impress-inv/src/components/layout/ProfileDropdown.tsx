@@ -89,6 +89,15 @@ export function ProfileDropdown({
                 <Icon icon="mdi:lock-outline" className="h-5 w-5 text-zinc-400" />
                 Change Password
               </Link>
+
+              <Link
+                href="/data-sync"
+                className="flex items-center gap-2 px-1 py-2 text-sm text-zinc-700 hover:bg-zinc-100"
+                onClick={() => setIsOpen(false)}
+              >
+                <Icon icon="mdi:cloud-sync-outline" className="h-5 w-5 text-zinc-400" />
+                Data Sync
+              </Link>
             </div>
 
             <div className="mt-2 border-t border-zinc-100 pt-2">
