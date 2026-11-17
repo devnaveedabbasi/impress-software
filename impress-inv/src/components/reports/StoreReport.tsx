@@ -10,7 +10,7 @@ import { GroupedReportTables } from "@/components/reports/GroupedReportTables";
 import { fetchAllReportRows } from "@/lib/reportFetch";
 import { usePermissions } from "@/hooks/usePermissions";
 import { cn } from "@/lib/utils";
-import { CATEGORIES, COLORS, DEPARTMENTS, INVENTORY } from "@/utlis/apiRoutes";
+import { CATEGORIES, COLORS, DEPARTMENTS, INVENTORY, VENDORS } from "@/utlis/apiRoutes";
 import {
   ALL,
   PRINT_MAX_ROWS,
@@ -35,6 +35,7 @@ const SOURCES: Record<NonNullable<FilterDef["source"]>, { url: string; label: (i
   departments: { url: DEPARTMENTS, label: (item) => String(item.name ?? "") },
   colors: { url: COLORS, label: (item) => String(item.name ?? "") },
   items: { url: INVENTORY, label: (item) => `${item.id} - ${item.itemName}` },
+  vendors: { url: VENDORS, label: (item) => String(item.vendorName ?? "") },
 };
 
 // One page for every Store report: the filters on top, then the table (page by page), the totals and Print.

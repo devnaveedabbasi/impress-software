@@ -3,6 +3,7 @@ import {
   STOCK_POSITION,
   STOCK_SHORTAGE,
   STOCK_ISSUES,
+  VENDOR_BILLS,
 } from "@/utlis/apiRoutes";
 
 // The Store Department reports (Stock Register, Stock Ledger, Shortage and Issue report) are described here once.
@@ -19,7 +20,7 @@ export type FilterDef = {
   label: string;
   type: "date" | "select" | "number" | "text";
   /** Select options loaded from the server */
-  source?: "categories" | "departments" | "colors" | "items";
+  source?: "categories" | "departments" | "colors" | "items" | "vendors";
   /** Select options that never change */
   options?: { label: string; value: string }[];
   /** Adds a first choice that means "no filter" */
@@ -49,18 +50,22 @@ export type StoreReportDef = {
   summary: (totals: StoreReportTotals) => [label: string, value: number][];
   emptyText: string;
   /** All rows are loaded and shown in grouped tables (no pages): by department, or by department and category */
-  grouped?: "department" | "departmentCategory";
+  grouped?: "department" | "departmentCategory" | "vendor";
 };
 
 // Rows grouped like the printed "Store Stock Position": department, then category, then the items
 export type ReportGroup = { department: string; categories: { category: string; rows: StoreReportRow[] }[] };
 
-export const groupRows = (rows: StoreReportRow[], by: "department" | "departmentCategory" = "departmentCategory"): ReportGroup[] => {
+export const groupRows = (
+  rows: StoreReportRow[],
+  by: "department" | "departmentCategory" | "vendor" = "departmentCategory"
+): ReportGroup[] => {
   const groups: ReportGroup[] = [];
   for (const row of rows) {
-    const department = String(row.departmentName ?? "-");
+    // "vendor": the vendor takes the place of the department heading
+    const department = String(by === "vendor" ? row.vendorName ?? "-" : row.departmentName ?? "-");
     // Grouped by department only: all of its items are one table
-    const category = by === "department" ? "" : String(row.categoryName ?? "-");
+    const category = by === "departmentCategory" ? String(row.categoryName ?? "-") : "";
     let group = groups.find((item) => item.department === department);
     if (!group) groups.push((group = { department, categories: [] }));
     let section = group.categories.find((item) => item.category === category);
@@ -221,6 +226,29 @@ export const STORE_REPORTS: Record<string, StoreReportDef> = {
     summary: (t) => [["Total issued", t.issueQty ?? 0]],
     emptyText: "No issue found for these filters.",
   },
+};
+
+// The pending inwards of the vendors: Vendor Bill Pending Report
+STORE_REPORTS["vendor-bill-pending"] = {
+  key: "vendor-bill-pending",
+  title: "Vendor Bill Pending Report",
+  description: "The inwards against a PO whose vendor bill is not posted yet (no bill, a pending bill or a rejected bill), by vendor.",
+  endpoint: `${VENDOR_BILLS}/pending-report`,
+  operation: "vendor_bill_pending_report",
+  grouped: "vendor",
+  filters: [
+    { key: "vendorId", label: "Vendor", type: "select", source: "vendors", allLabel: "All vendors" },
+    { key: "fromDate", label: "From date", type: "date" },
+    { key: "toDate", label: "To date", type: "date" },
+  ],
+  columns: [
+    { header: "Inward No", align: "center", render: (r) => text(r.id) },
+    { header: "GR Date", align: "center", render: (r) => date(r.date) },
+    { header: "PO No", align: "center", render: (r) => text(r.purchaseOrderId) },
+    { header: "Remarks", render: (r) => `DC # ${r.dcNo ?? ""}  BILL # ${r.billNo ?? ""}  (${text(r.billStatus)})` },
+  ],
+  summary: (t) => [["Pending inwards", t.inwards ?? 0]],
+  emptyText: "Every inward has its bill posted.",
 };
 
 export const findStoreReport = (key: string | null | undefined) => (key ? STORE_REPORTS[key] : undefined);

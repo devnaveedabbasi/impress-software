@@ -29,6 +29,7 @@ export const NAV_ITEMS: NavItem[] = [
       { label: "Inward Quality Control Report", href: "/store/inward-quality-control-report", operation: "inward_quality_control_report" },
       { label: "Gate Pass for Sold Item", href: "/store/gate-pass-sold-item", operation: "sale_gate_pass" },
       { label: "Rejection Return to Vendor", href: "/store/rejection-return-to-vendor", operation: "rejection_return_to_vendor" },
+      { label: "Vendor Claim Note", href: "/store/vendor-claim-note", operation: "rejection_return_to_vendor" },
       // { label: "Rejection Received from Dealer", href: "/store/rejection-received-from-dealer", operation: "rejection_received_from_dealer" },
       { label: "Issue from Line", href: "/store/issue-from-line", operation: "issue_from_line" },
       { label: "Item Return from Department", href: "/store/item-return-from-department", operation: "item_return_from_department" },
@@ -51,6 +52,8 @@ export const NAV_ITEMS: NavItem[] = [
       { label: "Enter Vendor Quotation", href: "/purchase/quotation", operation: "quotation" },
       { label: "Purchase Order", href: "/purchase/purchase-order", operation: "purchase_order" },
       { label: "Purchase Order Report", href: "/purchase/purchase-order-report", operation: "purchase_order" },
+      { label: "Vendor Bill Posting", href: "/purchase/vendor-bill-posting", operation: "vendor_bill_posting" },
+      { label: "Vendor Bill Pending Report", href: "/purchase/vendor-bill-pending-report", operation: "vendor_bill_pending_report" },
     ]
   },
   {

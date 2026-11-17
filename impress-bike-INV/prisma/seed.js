@@ -35,6 +35,8 @@ const operations = [
   "stock_ledger",
   "stock_register",
   "shortage_report",
+  "vendor_bill_posting",
+  "vendor_bill_pending_report",
 ];
 
 const actions = ["view", "create", "update", "delete"];

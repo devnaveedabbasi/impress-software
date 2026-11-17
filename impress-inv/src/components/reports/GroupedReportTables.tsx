@@ -14,7 +14,7 @@ export function GroupedReportTables({
     columns: ColumnDef[];
     emptyText: string;
     variant?: "screen" | "print";
-    by?: "department" | "departmentCategory";
+    by?: "department" | "departmentCategory" | "vendor";
 }) {
     if (rows.length === 0) {
         return <p className="py-10 text-center text-sm text-zinc-500">{emptyText}</p>;
@@ -27,7 +27,14 @@ export function GroupedReportTables({
         <div className="text-black">
             {groupRows(rows, by).map((group) => (
                 <section key={group.department} className="mb-6">
-                    <h2 className="mb-1 text-lg font-bold underline">{group.department}</h2>
+                    <h2
+                        className={cn(
+                            "mb-1 font-bold",
+                            by === "vendor" ? "text-sm uppercase tracking-wide text-primary-700" : "text-lg underline"
+                        )}
+                    >
+                        {group.department}
+                    </h2>
                     {group.categories.map((section) => (
                         <div key={section.category} className="mb-4">
                             {by === "departmentCategory" && (
@@ -60,6 +67,7 @@ export function GroupedReportTables({
                                     </tbody>
                                 </table>
                             </div>
+                            {by === "vendor" && <p className="mt-0.5 text-center text-[13px] font-semibold">{section.rows.length}</p>}
                         </div>
                     ))}
                 </section>

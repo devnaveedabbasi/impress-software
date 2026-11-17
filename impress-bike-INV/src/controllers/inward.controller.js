@@ -138,6 +138,12 @@ const updateInward = asyncHandler(async (req, res) => {
         throw new ApiError(404, "Inward not found");
     }
 
+    // An inward whose bill is approved (posted) is locked with it
+    const postedBill = await prisma.vendorBill.findUnique({ where: { inwardId }, select: { id: true, status: true } });
+    if (postedBill?.status === "APPROVED") {
+        throw new ApiError(400, `Inward #${inwardId} has an approved vendor bill (#${postedBill.id}) and cannot be changed`);
+    }
+
     const data = { updatedById: req.user?.id };
 
     if (body.date !== undefined) data.date = new Date(body.date);
@@ -192,6 +198,11 @@ const deleteInward = asyncHandler(async (req, res) => {
     const existingInward = await prisma.inward.findUnique({ where: { id: Number(id) } });
     if (!existingInward) {
         throw new ApiError(404, "Inward not found");
+    }
+
+    const bill = await prisma.vendorBill.findUnique({ where: { inwardId: Number(id) }, select: { id: true } });
+    if (bill) {
+        throw new ApiError(400, `Inward #${id} has vendor bill #${bill.id}. Delete the bill first.`);
     }
 
     // The ledger lines of the inward are removed with it. Item rows are removed automatically (onDelete: Cascade)

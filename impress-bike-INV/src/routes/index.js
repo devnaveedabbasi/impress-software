@@ -24,6 +24,7 @@ import storeIssueRoutes from "./store-issue.routes.js";
 import itemReturnRoutes from "./item-return.routes.js";
 import stockTransferRoutes from "./stock-transfer.routes.js";
 import stockRoutes from "./stock.routes.js";
+import vendorBillRoutes from "./vendor-bill.routes.js";
 import syncRoutes from "./sync.routes.js";
 
 const router = Router();
@@ -53,6 +54,7 @@ router.use("/store-issues", storeIssueRoutes);
 router.use("/item-returns", itemReturnRoutes);
 router.use("/stock-transfers", stockTransferRoutes);
 router.use("/stock", stockRoutes);
+router.use("/vendor-bills", vendorBillRoutes);
 router.use("/sync", syncRoutes);
 
 export default router;

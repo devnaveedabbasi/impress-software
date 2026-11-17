@@ -11,6 +11,12 @@ export const rejectionReturnIdSchema = z.object({
 const itemSchema = z.object({
     inventoryId: inventoryIdField,
     rej: itemQty("Rej qty"),
+    // The rate of the claim (the PO rate, it can be changed)
+    rate: z.coerce
+        .number({ error: "Rate is required" })
+        .int("Rate must be a whole number")
+        .min(1, "Rate must be at least 1")
+        .max(10_000_000, "Rate is too large"),
     report: z.string().trim().max(255, "Report must be at most 255 characters").optional().default(""),
 });
 
@@ -30,6 +36,14 @@ const saleTaxNo = z
 const transport = z.string().trim().min(2, "Transport must be at least 2 characters").max(100, "Transport must be at most 100 characters");
 const receivedBy = z.string().trim().min(2, "Received By must be at least 2 characters").max(100, "Received By must be at most 100 characters");
 
+// Sales tax of the claim and the number of the sales tax invoice
+const saleTaxPercent = z.coerce
+    .number({ error: "Sales Tax % is required" })
+    .int("Sales Tax % must be a whole number")
+    .min(0, "Sales Tax % cannot be negative")
+    .max(100, "Sales Tax % cannot be more than 100");
+const stInvNo = codeText("S.T.Inv No").min(1, "S.T.Inv No is required");
+
 const headerFields = {
     date: pastOrTodayDate,
     vendorId: z.coerce.number({ error: "Please select a vendor" }).int().min(1, "Please select a vendor"),
@@ -40,6 +54,8 @@ const headerFields = {
     builtyNo: codeText("Builty No").optional().default(""),
     bookNo: codeText("Book No").optional().default(""),
     receivedBy,
+    saleTaxPercent,
+    stInvNo,
 };
 
 export const createRejectionReturnSchema = z.object({
@@ -63,6 +79,8 @@ export const updateRejectionReturnSchema = z.object({
         builtyNo: codeText("Builty No").optional(),
         bookNo: codeText("Book No").optional(),
         receivedBy: receivedBy.optional(),
+        saleTaxPercent: saleTaxPercent.optional(),
+        stInvNo: stInvNo.optional(),
         items: uniqueItems(itemSchema).optional(),
     }),
 });

@@ -588,6 +588,17 @@ export const rejectionReturnToVendorSchema = z.object({
     .trim()
     .min(2, { message: "Transport must be at least 2 characters" })
     .max(100, { message: "Transport must be at most 100 characters" }),
+  saleTaxPercent: z
+    .string()
+    .min(1, { message: "Sales Tax % is required" })
+    .regex(/^\d+$/, { message: "Sales Tax % must be a whole number" })
+    .refine((value) => Number(value) <= 100, { message: "Sales Tax % cannot be more than 100" }),
+  stInvNo: z
+    .string()
+    .trim()
+    .min(1, { message: "S.T.Inv No is required" })
+    .max(50, { message: "S.T.Inv No must be at most 50 characters" })
+    .regex(/^[A-Za-z0-9\-\/ ]+$/, { message: "S.T.Inv No can only have letters, numbers, spaces, - and /" }),
   builtyNo: optionalCode("Builty No"),
   bookNo: optionalCode("Book No"),
   receivedBy: z
@@ -602,6 +613,7 @@ export const rejectionReturnToVendorSchema = z.object({
         inventoryId: z.string().optional().or(z.literal("")),
         itemName: z.string().trim().optional().or(z.literal("")),
         rej: z.string().optional().or(z.literal("")),
+        rate: z.string().optional().or(z.literal("")),
         report: z.string().trim().max(255, { message: "Report must be at most 255 characters" }).optional().or(z.literal("")),
       })
     )
@@ -632,6 +644,18 @@ export const rejectionReturnToVendorSchema = z.object({
             path: [index, "inventoryId"],
             message: `"${row.itemName}" is already added in row ${(seen.get(row.inventoryId) as number) + 1}`,
           });
+          return;
+        }
+        if (!row.rate || Number(row.rate) < 1) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: [index, "rate"],
+            message: "Rate must be at least 1",
+          });
+          return;
+        }
+        if (Number(row.rate) > 10_000_000) {
+          ctx.addIssue({ code: z.ZodIssueCode.custom, path: [index, "rate"], message: "Rate is too large" });
           return;
         }
         seen.set(row.inventoryId, index);
@@ -929,3 +953,26 @@ export const stockTransferSchema = z.object({
 });
 
 export type StockTransferFormValues = z.infer<typeof stockTransferSchema>;
+
+// ---------------- Vendor Bill Posting ----------------
+const requiredCode = (label: string) =>
+  z
+    .string()
+    .trim()
+    .min(1, { message: `${label} is required` })
+    .max(50, { message: `${label} must be at most 50 characters` })
+    .regex(/^[A-Za-z0-9\-\/ ]+$/, { message: `${label} can only have letters, numbers, spaces, - and /` });
+
+export const vendorBillSchema = z.object({
+  id: z.string().optional(), // the Bill Posting No (generated automatically)
+  inwardId: z.string().min(1, { message: "Please select the inward (QC #)" }),
+  stInvNo: requiredCode("S.Tax Inv No"),
+  stInvDate: pastOrTodayDate,
+  saleTaxPercent: z
+    .string()
+    .min(1, { message: "Sales Tax rate is required" })
+    .regex(/^\d+$/, { message: "Sales Tax rate must be a whole number" })
+    .refine((value) => Number(value) <= 100, { message: "Sales Tax rate cannot be more than 100" }),
+});
+
+export type VendorBillFormValues = z.infer<typeof vendorBillSchema>;

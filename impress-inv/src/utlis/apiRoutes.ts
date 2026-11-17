@@ -35,6 +35,7 @@ export const STOCK_POSITION = "/stock/position";
 export const STOCK_SHORTAGE = "/stock/shortage";
 export const STOCK_ISSUES = "/stock/issues";
 export const STOCK_TRANSFERS = "/stock-transfers";
+export const VENDOR_BILLS = "/vendor-bills";
 
 // Sync APIs (Offline <-> Online)
 export const SYNC_STATUS = "/sync/status";

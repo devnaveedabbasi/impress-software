@@ -61,6 +61,8 @@ export const SYNC_MODELS = [
   "purchaseOrder",
   "inward",
   "inwardItem", // must come after "inward" and "inventory" (foreign keys)
+  "vendorBill", // must come after "inward" (foreign key)
+  "vendorBillItem", // must come after "vendorBill" and "inventory" (foreign keys)
   "saleGatePass",
   "saleGatePassItem", // must come after "saleGatePass" and "inventory" (foreign keys)
   "rejectionReturnToVendor",

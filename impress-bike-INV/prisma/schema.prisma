@@ -196,6 +196,7 @@ model Dealer {
 
 // 05 Vendor Manegment
 model Vendor {
+  vendorClaimNotes VendorClaimNote[]
   id         Int      @id @default(autoincrement())
   vendorName String
   address    String
@@ -273,6 +274,8 @@ model Color {
 
 // 06 Inventory  Manegment
 model Inventory {
+  vendorClaimNoteItems VendorClaimNoteItem[]
+  vendorBillItems VendorBillItem[]
   id         Int      @id @default(autoincrement())
   itemName   String
   pack       Int
@@ -395,7 +398,8 @@ model Inward {
   billNO          Int?
   detail          String
 
-  items InwardItem[]
+  items      InwardItem[]
+  vendorBill VendorBill?
 
   createdById Int?
   updatedById Int?
@@ -475,7 +479,6 @@ model RejectionReturnToVendor {
   builtyNo   String   @default("")
   bookNo     String   @default("")
   receivedBy String
-
   items RejectionReturnItem[]
 
   createdById Int?
@@ -678,3 +681,103 @@ model StockMovement {
   @@index([sourceType, sourceId])
 }
 
+
+// 10.2 Vendor Bill Posting — the bill of the vendor for one inward (the OK quantity at the PO rate).
+// The id is the Bill Posting No. A DRAFT (Pending) or REJECTED bill can still be changed, an APPROVED (posted) bill is locked.
+enum VendorBillStatus {
+  DRAFT // shown as Pending
+  APPROVED
+  REJECTED
+}
+
+model VendorBill {
+  id             Int              @id @default(autoincrement())
+  inwardId       Int              @unique
+  inward         Inward           @relation(fields: [inwardId], references: [id])
+  billNo         String
+  stInvNo        String
+  stInvDate      DateTime
+  saleTaxPercent Int
+  period         String // the month of the bill date, e.g. 2026-03
+  exclAmount     Int
+  gstAmount      Int
+  inclAmount     Int
+  status         VendorBillStatus @default(DRAFT)
+  approvedDate   DateTime?
+  approvedById   Int?
+
+  items VendorBillItem[]
+
+  createdById Int?
+  updatedById Int?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([status])
+}
+
+// 10.3 Vendor Bill item rows — a copy of the inward lines with the PO rate, taken when the bill is saved
+model VendorBillItem {
+  id           Int        @id @default(autoincrement())
+  vendorBillId Int
+  vendorBill   VendorBill @relation(fields: [vendorBillId], references: [id], onDelete: Cascade)
+  inventoryId  Int
+  inventory    Inventory  @relation(fields: [inventoryId], references: [id])
+  recQty       Int
+  rejQty       Int
+  okQty        Int
+  rate         Int
+  exclAmount   Int
+  gstAmount    Int
+  inclAmount   Int
+
+  @@unique([vendorBillId, inventoryId])
+  @@index([inventoryId])
+}
+
+// 12.3 Vendor Claim Note: the claim (rate, sales tax, value) of the rejected parts of a vendor.
+// "id" is the Claim Note No (generated automatically). It is a document of its own, apart from the
+// Rejection Return to Vendor gate pass.
+model VendorClaimNote {
+  id             Int      @id @default(autoincrement())
+  date           DateTime
+  vendorId       Int
+  vendor         Vendor   @relation(fields: [vendorId], references: [id])
+  address        String
+  contactNo      String
+  saleTaxNo      String
+  transport      String
+  builtyNo       String   @default("")
+  bookNo         String   @default("")
+  receivedBy     String
+  saleTaxPercent Int
+  stInvNo        String
+
+  items VendorClaimNoteItem[]
+
+  createdById Int?
+  updatedById Int?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([vendorId])
+}
+
+// 12.4 Vendor Claim Note item rows: the rate is the PO rate (it can be changed), amount = rej x rate
+model VendorClaimNoteItem {
+  id                Int             @id @default(autoincrement())
+  vendorClaimNoteId Int
+  vendorClaimNote   VendorClaimNote @relation(fields: [vendorClaimNoteId], references: [id], onDelete: Cascade)
+  inventoryId       Int
+  inventory         Inventory       @relation(fields: [inventoryId], references: [id])
+  rej               Int
+  rate              Int
+  amount            Int
+  report            String          @default("")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([vendorClaimNoteId, inventoryId])
+  @@index([inventoryId])
+}
