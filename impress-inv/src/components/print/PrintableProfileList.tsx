@@ -1,10 +1,11 @@
 "use client";
 
+import { useEffect } from "react";
 import { usePrintableList } from "@/hooks/usePrintableList";
+import { COMPANY_NAME } from "@/lib/company";
 import { PrintStatus } from "@/components/print/PrintStatus";
 import { PrintButton } from "@/components/print/PrintButton";
 
-const COMPANY_NAME = "SINDH AUTO INDUSTRIES PVT LTD";
 
 export interface PrintableRecord {
     id: number;
@@ -30,6 +31,11 @@ export function PrintableProfileList({
     emptyMessage = "No records found.",
 }: PrintableProfileListProps) {
     const { rows: records, state, errorMessage, retry } = usePrintableList<PrintableRecord>(apiPath, (raw) => raw.map(mapRecord));
+
+    // The title is the suggested name of a saved PDF
+    useEffect(() => {
+        document.title = subtitle;
+    }, [subtitle]);
 
     if (state !== "ready") {
         return <PrintStatus state={state} message={errorMessage} onRetry={retry} />;

@@ -1,11 +1,15 @@
 "use client";
 
+import { Suspense } from "react";
+import { useSearchParams } from "next/navigation";
+import { useEffect } from "react";
 import { usePrintableList } from "@/hooks/usePrintableList";
+import { COMPANY_NAME } from "@/lib/company";
+import { selectPrintRecords, PRINT_ALL_MAX } from "@/lib/printSelection";
 import { PrintStatus } from "@/components/print/PrintStatus";
 import { PrintButton } from "@/components/print/PrintButton";
 import { INVENTORY } from "@/utlis/apiRoutes";
 
-const COMPANY_NAME = "SINDH AUTO INDUSTRIES PVT LTD";
 
 interface InventoryRow {
     id: number;
@@ -17,12 +21,21 @@ interface InventoryRow {
     unitPerBike: number;
 }
 
-export default function InventoryPrintPage() {
-    const { rows: items, state, errorMessage, retry } = usePrintableList<InventoryRow>(INVENTORY, (raw) => raw as InventoryRow[]);
+function InventorySheet() {
+    const searchParams = useSearchParams();
+    const { rows: all, state, errorMessage, retry } = usePrintableList<InventoryRow>(INVENTORY, (raw) => raw as InventoryRow[]);
+
+    // The title is the suggested name of a saved PDF
+    useEffect(() => {
+        document.title = "Inventory Items";
+    }, []);
 
     if (state !== "ready") {
         return <PrintStatus state={state} message={errorMessage} onRetry={retry} />;
     }
+
+    // Only what was chosen in the Print dialog (this record, a range, the last N, or all)
+    const { rows: items, total, truncated, label } = selectPrintRecords(all, searchParams);
 
     return (
         <div className="min-h-screen bg-zinc-100 px-4 py-8 print:bg-white print:p-0">
@@ -34,6 +47,12 @@ export default function InventoryPrintPage() {
                 <h2 className="mt-1 text-center text-xl font-semibold uppercase tracking-wide">
                     Inventory Items
                 </h2>
+                {label !== "All records" && <p className="mt-1 text-center text-sm font-medium text-zinc-600">{label}</p>}
+                {truncated && (
+                    <p className="mt-2 border border-zinc-400 bg-zinc-100 p-2 text-center text-xs">
+                        Showing the first {PRINT_ALL_MAX.toLocaleString()} of {total.toLocaleString()} records. Choose a range to print the rest.
+                    </p>
+                )}
 
                 <div className="mt-6 space-y-4">
                     {items.map((item) => (
@@ -86,5 +105,13 @@ export default function InventoryPrintPage() {
                 </div>
             </div>
         </div>
+    );
+}
+
+export default function InventoryPrintPage() {
+    return (
+        <Suspense fallback={null}>
+            <InventorySheet />
+        </Suspense>
     );
 }
