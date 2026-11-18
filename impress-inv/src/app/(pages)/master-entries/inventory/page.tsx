@@ -15,7 +15,8 @@ import api from "@/lib/axios";
 import toast from "react-hot-toast";
 import { usePermissions } from "@/hooks/usePermissions";
 import type { ViewAllColumn } from "@/components/ui/ViewAllModal";
-import { InfiniteViewAllModal, useRefreshMasterList } from "@/components/ui/InfiniteViewAllModal";
+import { InfiniteViewAllModal, masterListKey, useRefreshMasterList } from "@/components/ui/InfiniteViewAllModal";
+import { useQuery } from "@tanstack/react-query";
 import { EntryActions } from "@/components/ui/EntryActions";
 import { useMasterRecord } from "@/hooks/useMasterRecord";
 import { PrintOptionsModal } from "@/components/print/PrintOptionsModal";
@@ -36,6 +37,7 @@ type InventoryRow = {
     pack: number;
     rate: number;
     unitPerBike: number;
+    stockInHand?: number;
     stocks?: StockRow[];
     categoryName?: string;
     departmentName?: string;
@@ -197,6 +199,19 @@ export default function InventoryPage() {
         void fetchOptions();
     }, []);
 
+    // The stock the item has right now: the opening stock of this page + every inward - issue - gate pass ... (from the
+    // server, so it is always the latest). A new item has none yet. A save drops it (refreshList), so it is read again.
+    const stockItemId = !isNewMode && /^\d+$/.test(String(values.id)) ? String(values.id) : "";
+    const { data: stockInHand, isFetching: isStockLoading } = useQuery({
+        queryKey: [...masterListKey("inventory"), "stock", stockItemId],
+        enabled: Boolean(stockItemId) && canView,
+        staleTime: 10_000,
+        queryFn: async () => {
+            const { data } = await api.get(`${INVENTORY}/${stockItemId}`, { params: { _ts: Date.now() } });
+            return Number(data.data?.stockInHand ?? 0);
+        },
+    });
+
     const updateColorRow = (
         index: number,
         field: "stationId" | "colorId" | "qty",
@@ -297,6 +312,7 @@ export default function InventoryPage() {
         { key: "categoryName", header: "Category" },
         { key: "departmentName", header: "Department" },
         { key: "rate", header: "Rate" },
+        { key: "stockInHand", header: "Stock in Hand" },
     ];
 
     useEffect(() => {
@@ -488,6 +504,22 @@ export default function InventoryPage() {
                         }
                         error={errors.rate?.message}
                         disabled={!isEditing || isOptionsLoading}
+                        wrapperClassName="md:col-span-2"
+                    />
+                    <LabeledField
+                        label="Stock in Hand"
+                        value={
+                            isNewMode
+                                ? "0"
+                                : stockInHand === undefined
+                                  ? isStockLoading
+                                      ? "Loading..."
+                                      : ""
+                                  : String(stockInHand)
+                        }
+                        readOnly
+                        disabled
+                        title="The stock right now: the opening stock below + all inwards - issues - gate passes. It cannot be typed."
                         wrapperClassName="md:col-span-2"
                     />
                 </div>
