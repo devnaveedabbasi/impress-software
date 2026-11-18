@@ -86,7 +86,6 @@ export default function VendorPage() {
     const [isVendorsLoading, setIsVendorsLoading] = useState(false);
     const [vendorsError, setVendorsError] = useState("");
     const skipNextIdLookup = useRef(false);
-    const refreshNextIdAfterSubmit = useRef(false);
 
     const {
         handleSubmit,
@@ -262,20 +261,21 @@ export default function VendorPage() {
                 setHasLoadedVendors(false);
                 await fetchAllVendors(false, true);
             }
-            refreshNextIdAfterSubmit.current = true;
+            // This page has a Print button: after Save the record stays on the screen (it does not jump to the next new
+            // record). Only the next number is read again, quietly, so a new record still gets the right number.
+            setIsNewMode(false);
+            setIsEditing(false);
+            skipNextIdLookup.current = true;
+            void api
+                .get(`${VENDORS}/next-id`, { params: { _ts: Date.now() } })
+                .then(({ data }) => setNextId(String(data.data.nextId)))
+                .catch(() => { skipNextIdLookup.current = false; });
         } catch (error: unknown) {
             const apiError = error as ApiError;
             console.error("Vendor save failed:", apiError.response?.data || error);
             toast.error(apiError.response?.data?.message || "Failed to save vendor");
         }
     };
-
-    useEffect(() => {
-        if (!isSubmitting && refreshNextIdAfterSubmit.current) {
-            refreshNextIdAfterSubmit.current = false;
-            void fetchNextId();
-        }
-    }, [isSubmitting]);
 
     const debouncedId = useDebounce(values.id, 500);
     const vendorColumns: ViewAllColumn<VendorRow>[] = [

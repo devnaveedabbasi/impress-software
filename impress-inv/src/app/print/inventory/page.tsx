@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import api from "@/lib/axios";
+import { usePrintableList } from "@/hooks/usePrintableList";
+import { PrintStatus } from "@/components/print/PrintStatus";
+import { PrintButton } from "@/components/print/PrintButton";
 import { INVENTORY } from "@/utlis/apiRoutes";
 
 const COMPANY_NAME = "SINDH AUTO INDUSTRIES PVT LTD";
@@ -17,25 +18,15 @@ interface InventoryRow {
 }
 
 export default function InventoryPrintPage() {
-    const [items, setItems] = useState<InventoryRow[]>([]);
-    const [loaded, setLoaded] = useState(false);
+    const { rows: items, state, errorMessage, retry } = usePrintableList<InventoryRow>(INVENTORY, (raw) => raw as InventoryRow[]);
 
-    useEffect(() => {
-        api
-            .get(INVENTORY)
-            .then(({ data }) => setItems(data.data || []))
-            .finally(() => setLoaded(true));
-    }, []);
-
-    useEffect(() => {
-        if (loaded && items.length > 0) {
-            const timer = setTimeout(() => window.print(), 300);
-            return () => clearTimeout(timer);
-        }
-    }, [loaded, items.length]);
+    if (state !== "ready") {
+        return <PrintStatus state={state} message={errorMessage} onRetry={retry} />;
+    }
 
     return (
         <div className="min-h-screen bg-zinc-100 px-4 py-8 print:bg-white print:p-0">
+            <PrintButton />
             <div className="mx-auto max-w-4xl bg-white p-8 text-black print:p-0">
                 <h1 className="text-center text-2xl font-bold uppercase tracking-wide">
                     {COMPANY_NAME}
@@ -89,10 +80,9 @@ export default function InventoryPrintPage() {
                         </div>
                     ))}
 
-                    {loaded && items.length === 0 && (
+                    {items.length === 0 && (
                         <p className="text-center text-zinc-500">No inventory items found.</p>
                     )}
-                    {!loaded && <p className="text-center text-zinc-500">Loading...</p>}
                 </div>
             </div>
         </div>

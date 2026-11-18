@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import api from "@/lib/axios";
+import { usePrintableList } from "@/hooks/usePrintableList";
+import { PrintStatus } from "@/components/print/PrintStatus";
+import { PrintButton } from "@/components/print/PrintButton";
 
 const COMPANY_NAME = "SINDH AUTO INDUSTRIES PVT LTD";
 
@@ -28,26 +29,15 @@ export function PrintableProfileList({
     mapRecord,
     emptyMessage = "No records found.",
 }: PrintableProfileListProps) {
-    const [records, setRecords] = useState<PrintableRecord[]>([]);
-    const [loaded, setLoaded] = useState(false);
+    const { rows: records, state, errorMessage, retry } = usePrintableList<PrintableRecord>(apiPath, (raw) => raw.map(mapRecord));
 
-    useEffect(() => {
-        api
-            .get(apiPath)
-            .then(({ data }) => setRecords((data.data || []).map(mapRecord)))
-            .finally(() => setLoaded(true));
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [apiPath]);
-
-    useEffect(() => {
-        if (loaded && records.length > 0) {
-            const timer = setTimeout(() => window.print(), 300);
-            return () => clearTimeout(timer);
-        }
-    }, [loaded, records.length]);
+    if (state !== "ready") {
+        return <PrintStatus state={state} message={errorMessage} onRetry={retry} />;
+    }
 
     return (
         <div className="min-h-screen bg-zinc-100 px-4 py-8 print:bg-white print:p-0">
+            <PrintButton />
             <div className="mx-auto max-w-4xl bg-white p-8 text-black print:p-0">
                 <h1 className="text-center text-2xl font-bold uppercase tracking-wide">
                     {COMPANY_NAME}
@@ -93,10 +83,9 @@ export function PrintableProfileList({
                         </div>
                     ))}
 
-                    {loaded && records.length === 0 && (
+                    {records.length === 0 && (
                         <p className="text-center text-zinc-500">{emptyMessage}</p>
                     )}
-                    {!loaded && <p className="text-center text-zinc-500">Loading...</p>}
                 </div>
             </div>
         </div>
