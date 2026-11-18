@@ -6,6 +6,8 @@ import { ApiError } from "../utils/apiError.js";
 import { ApiResponse } from "../utils/apiResponse.js";
 import asyncHandler from "../utils/asyncHandler.js";
 
+import { isPagedRequest, findPage, isPrintRequest, findPrintRows } from "../utils/listQuery.js";
+
 const isVendorConflict = (error) => {
     const message = String(error?.message || "");
     return (
@@ -82,6 +84,18 @@ const createVendor = asyncHandler(async (req, res) => {
 });
 
 const getAllVendors = asyncHandler(async (req, res) => {
+    if (isPrintRequest(req)) {
+        const printed = await findPrintRows(prisma.vendor, req);
+        return res.status(200).json(new ApiResponse(200, printed, "Fetched successfully"));
+    }
+    if (isPagedRequest(req)) {
+        const page = await findPage(prisma.vendor, req, {
+            searchFields: ["vendorName", "contactNo"],
+            relationFields: [["city", "name"]],
+            include: { city: true, province: true },
+        });
+        return res.status(200).json(new ApiResponse(200, page, "Fetched successfully"));
+    }
     const vendors = await prisma.vendor.findMany({
         orderBy: { id: "asc" },
         include: {

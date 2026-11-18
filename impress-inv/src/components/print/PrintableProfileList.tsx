@@ -3,7 +3,7 @@
 import { Suspense, useEffect } from "react";
 import { useSearchParams } from "next/navigation";
 import { usePrintableList } from "@/hooks/usePrintableList";
-import { selectPrintRecords, PRINT_ALL_MAX } from "@/lib/printSelection";
+import { describePrintSelection, printRequestParams, PRINT_ALL_MAX } from "@/lib/printSelection";
 import { COMPANY_NAME } from "@/lib/company";
 import { PrintStatus } from "@/components/print/PrintStatus";
 
@@ -32,7 +32,11 @@ function ProfileListSheet({
     emptyMessage = "No records found.",
 }: PrintableProfileListProps) {
     const searchParams = useSearchParams();
-    const { rows: all, state, errorMessage, retry } = usePrintableList<PrintableRecord>(apiPath, (raw) => raw.map(mapRecord));
+    const { rows: records, total, truncated, state, errorMessage, retry } = usePrintableList<PrintableRecord>(
+        apiPath,
+        (raw) => raw.map(mapRecord),
+        printRequestParams(searchParams)
+    );
 
     // The title is the suggested name of a saved PDF
     useEffect(() => {
@@ -43,8 +47,8 @@ function ProfileListSheet({
         return <PrintStatus state={state} message={errorMessage} onRetry={retry} />;
     }
 
-    // Only what was chosen in the Print dialog (this record, a range, the last N, or all)
-    const { rows: records, total, truncated, label } = selectPrintRecords(all, searchParams);
+    // The server sent only what was chosen in the Print dialog (this record, a range, the last N, or all)
+    const label = describePrintSelection(searchParams, records.length);
 
     return (
         <div>

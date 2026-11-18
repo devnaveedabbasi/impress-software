@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { fetchAllReportRows, type ReportMeta } from "@/lib/reportFetch";
+import { PRINT_KEEP_MS } from "@/lib/printCache";
 
 export type PrintReportState = "loading" | "ready" | "error" | "forbidden";
 
@@ -23,8 +24,9 @@ interface UsePrintReportOptions {
   maxRows?: number;
 }
 
-// Loads a report for printing, page by page, and opens the print dialog once - only after the data is on screen.
-// A temporary failure is retried by itself; a real failure is shown with a Retry button and never prints.
+// Loads a report for printing, page by page, and shows it on the page as a preview;
+// the print dialog opens only when the user presses the Print button.
+// A temporary failure is retried by itself; a real failure is shown with a Retry button.
 export function usePrintReport<T>({ url, params, canView, maxRows }: UsePrintReportOptions) {
   const [rows, setRows] = useState<T[]>([]);
   const [total, setTotal] = useState(0);
@@ -34,7 +36,6 @@ export function usePrintReport<T>({ url, params, canView, maxRows }: UsePrintRep
   const [errorMessage, setErrorMessage] = useState("");
   const [reloadKey, setReloadKey] = useState(0);
   const requestRef = useRef(0);
-  const printedKeyRef = useRef("");
 
   const queryKey = `${url}?${params}#${reloadKey}`;
 
@@ -51,7 +52,7 @@ export function usePrintReport<T>({ url, params, canView, maxRows }: UsePrintRep
     const load = async () => {
       for (let attempt = 1; ; attempt++) {
         try {
-          const result = await fetchAllReportRows<T>(url, new URLSearchParams(params), maxRows);
+          const result = await fetchAllReportRows<T>(url, new URLSearchParams(params), maxRows, attempt === 1 && reloadKey === 0 ? PRINT_KEEP_MS : 0);
           if (requestId !== requestRef.current) return;
           setRows(result.rows);
           setTotal(result.total);
@@ -78,17 +79,6 @@ export function usePrintReport<T>({ url, params, canView, maxRows }: UsePrintRep
 
     void load();
   }, [url, params, canView, maxRows, reloadKey]);
-
-  // Print once per loaded report, after the browser has drawn the data
-  useEffect(() => {
-    if (state !== "ready") return;
-    const timer = setTimeout(() => {
-      if (printedKeyRef.current === queryKey) return;
-      printedKeyRef.current = queryKey;
-      window.print();
-    }, 600);
-    return () => clearTimeout(timer);
-  }, [state, queryKey]);
 
   const retry = useCallback(() => setReloadKey((key) => key + 1), []);
 

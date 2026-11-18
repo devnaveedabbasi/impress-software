@@ -6,6 +6,8 @@ import asyncHandler from "../utils/asyncHandler.js";
 import { ApiResponse } from "../utils/apiResponse.js";
 import { ApiError } from "../utils/apiError.js";
 
+import { isPagedRequest, findPage } from "../utils/listQuery.js";
+
 const isDepartmentNameConflict = (error) => {
     const target = Array.isArray(error?.meta?.target)
         ? error.meta.target.join(",")
@@ -32,6 +34,10 @@ const handleDepartmentWrite = async (operation) => {
 };
 
 const getAllDepartments = asyncHandler(async (req, res) => {
+    if (isPagedRequest(req)) {
+        const page = await findPage(prisma.department, req, { searchFields: ["name"] });
+        return res.status(200).json(new ApiResponse(200, page, "Fetched successfully"));
+    }
     const departments = await prisma.department.findMany({
         orderBy: { id: "asc" },
     });

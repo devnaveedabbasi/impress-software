@@ -4,6 +4,9 @@ import { useEffect, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { LabeledField } from "@/components/ui/LabeledField";
 import { LabeledSelect } from "@/components/ui/LabeledSelect";
+import { PriceField } from "@/components/ui/PriceField";
+import { RowDeleteButton, deletableRowClassName } from "@/components/ui/RowDeleteButton";
+import { AddRowButton } from "@/components/ui/AddRowButton";
 import { Button } from "@/components/ui/Button";
 import useDebounce from "@/hooks/useDebounce";
 import { inventorySchema, type InventoryFormValues } from "@/lib/validations/master";
@@ -11,7 +14,10 @@ import { INVENTORY, CATEGORIES, DEPARTMENTS, STATIONS, COLORS } from "@/utlis/ap
 import api from "@/lib/axios";
 import toast from "react-hot-toast";
 import { usePermissions } from "@/hooks/usePermissions";
-import { ViewAllModal, type ViewAllColumn } from "@/components/ui/ViewAllModal";
+import type { ViewAllColumn } from "@/components/ui/ViewAllModal";
+import { InfiniteViewAllModal, useRefreshMasterList } from "@/components/ui/InfiniteViewAllModal";
+import { EntryActions } from "@/components/ui/EntryActions";
+import { useMasterRecord } from "@/hooks/useMasterRecord";
 import { PrintOptionsModal } from "@/components/print/PrintOptionsModal";
 
 // One stock row of an inventory item, linked to a Station and a Color
@@ -70,11 +76,6 @@ const initialValues: InventoryFormValues = {
     colorRows: [defaultRow(), defaultRow(), defaultRow(), defaultRow()],
 };
 
-const QTY_LIST = Array.from({ length: 50 }, (_, i) => ({
-    label: String(i + 1),
-    value: String(i + 1),
-}));
-
 export default function InventoryPage() {
     const [isNewMode, setIsNewMode] = useState(true);
     const [isPrintOpen, setIsPrintOpen] = useState(false);
@@ -93,10 +94,9 @@ export default function InventoryPage() {
     const [isIdLoading, setIsIdLoading] = useState(true);
     const [nextId, setNextId] = useState("");
     const [isViewAllOpen, setIsViewAllOpen] = useState(false);
+    const refreshList = useRefreshMasterList("inventory");
+    const { fetchOne, prefetchNear } = useMasterRecord("inventory", INVENTORY);
     const [inventories, setInventories] = useState<InventoryRow[]>([]);
-    const [hasLoadedInventories, setHasLoadedInventories] = useState(false);
-    const [isInventoriesLoading, setIsInventoriesLoading] = useState(false);
-    const [inventoriesError, setInventoriesError] = useState("");
     const skipNextIdLookup = useRef(false);
 
     const {
@@ -177,29 +177,6 @@ export default function InventoryPage() {
         }
     };
 
-    const fetchAllInventories = async (openModal = true, force = false) => {
-        if (openModal) setIsViewAllOpen(true);
-        if (hasLoadedInventories && !force) return;
-
-        setIsInventoriesLoading(true);
-        setInventoriesError("");
-        try {
-            const { data } = await api.get(INVENTORY);
-            const list: InventoryRow[] = (data.data || []).map((inv: InventoryRow) => ({
-                ...inv,
-                categoryName: inv.category?.name || `Category #${inv.categoryId}`,
-                departmentName: inv.department?.name || `Dept #${inv.departmentId}`,
-            }));
-            setInventories(list);
-            setHasLoadedInventories(true);
-        } catch (error: unknown) {
-            const apiError = error as ApiError;
-            setInventoriesError(apiError.response?.data?.message || "Failed to fetch inventories");
-        } finally {
-            setIsInventoriesLoading(false);
-        }
-    };
-
     const addInventoryToCache = (inv: InventoryRow) => {
         setInventories((current) => {
             const categoryName = inv.category?.name || inv.categoryName || `Category #${inv.categoryId}`;
@@ -213,13 +190,11 @@ export default function InventoryPage() {
                 index === existingIndex ? cached : item
             );
         });
-        setHasLoadedInventories(true);
     };
 
     useEffect(() => {
         void fetchNextId();
         void fetchOptions();
-        void fetchAllInventories(false);
     }, []);
 
     const updateColorRow = (
@@ -231,6 +206,20 @@ export default function InventoryPage() {
         currentRows[index] = { ...currentRows[index], [field]: value };
         setValue("colorRows", currentRows, { shouldDirty: true, shouldValidate: true });
     };
+
+    // Remove a row of the table (it is gone from the item when Save is pressed); the table keeps at least 4 rows
+    const removeColorRow = (index: number) => {
+        const remaining = values.colorRows.filter((_, i) => i !== index);
+        while (remaining.length < 4) remaining.push(defaultRow());
+        setValue("colorRows", remaining, { shouldDirty: true, shouldValidate: true });
+    };
+
+    const addColorRow = () => {
+        setValue("colorRows", [...values.colorRows, defaultRow()], { shouldDirty: true });
+    };
+
+    const rowHasData = (row: { stationId?: string; colorId?: string; qty?: string }) =>
+        Boolean(row.stationId || row.colorId || row.qty);
 
     const isRowDisabled = (index: number) => {
         if (!isEditing || isOptionsLoading) return true;
@@ -283,10 +272,8 @@ export default function InventoryPage() {
                 : await api.put(`${INVENTORY}/${validationResult.data.id}`, payload);
 
             toast.success(response.data.message || "Inventory saved successfully");
-            if (hasLoadedInventories) {
-                setHasLoadedInventories(false);
-                await fetchAllInventories(false, true);
-            }
+            setInventories([]); // the looked-up copies are old now
+            void refreshList();
             // This page has a Print button: after Save the record stays on the screen (it does not jump to the next new
             // record). Only the next number is read again, quietly, so a new record still gets the right number.
             setIsNewMode(false);
@@ -340,7 +327,8 @@ export default function InventoryPage() {
             setIsIdLoading(true);
             try {
                 const cached = inventories.find((inv) => String(inv.id) === debouncedId);
-                const inv: InventoryRow = cached || (await api.get(`${INVENTORY}/${debouncedId}`)).data.data;
+                const inv: InventoryRow = cached || (await fetchOne(debouncedId));
+                prefetchNear(debouncedId, Number(nextId));
 
                 if (!inv) {
                     toast.error("Inventory item not found");
@@ -395,9 +383,9 @@ export default function InventoryPage() {
             >
                 <div className="grid gap-3 md:grid-cols-2">
                     <LabeledField
-                        type={isIdLoading ? "text" : "number"}
+                        type="number"
                         label="Inventory ID"
-                        value={isIdLoading ? "Loading..." : values.id || ""}
+                        value={values.id || ""}
                         onChange={(event) => {
                             if (/^\d*$/.test(event.target.value)) {
                                 setValue("id", event.target.value, { shouldDirty: true });
@@ -414,7 +402,6 @@ export default function InventoryPage() {
                         inputMode="numeric"
                         error={errors.id?.message}
                         wrapperClassName="w-32"
-                        disabled={isIdLoading}
                         min={1}
                         max={Number(nextId) || 1}
                     />
@@ -490,19 +477,17 @@ export default function InventoryPage() {
                         disabled={!isEditing || isOptionsLoading}
                         min={1}
                     />
-                    <LabeledField
-                        type="number"
+                    <PriceField
                         label="Rate"
                         value={values.rate}
-                        onChange={(event) =>
-                            setValue("rate", event.target.value, {
+                        onValueChange={(digits) =>
+                            setValue("rate", digits, {
                                 shouldDirty: true,
                                 shouldValidate: true,
                             })
                         }
                         error={errors.rate?.message}
                         disabled={!isEditing || isOptionsLoading}
-                        min={0}
                         wrapperClassName="md:col-span-2"
                     />
                 </div>
@@ -524,120 +509,75 @@ export default function InventoryPage() {
                         </thead>
                         <tbody>
                             {values.colorRows.map((row, index) => (
-                                <tr key={index} className="border-b border-zinc-300 last:border-b-0">
+                                <tr key={index} className={deletableRowClassName}>
                                     <td className="border-r border-zinc-300 p-0">
-                                        <select
+                                        <LabeledSelect
+                                            variant="cell"
+                                            label="Station"
+                                            options={stations}
                                             value={row.stationId}
-                                            onChange={(e) =>
-                                                updateColorRow(index, "stationId", e.target.value)
-                                            }
+                                            onChange={(val) => updateColorRow(index, "stationId", val)}
                                             disabled={isRowDisabled(index)}
-                                            className="w-full bg-transparent px-2 py-1.5 text-[13px] text-black font-medium outline-none disabled:bg-[#f3f4f6] disabled:text-zinc-500"
-                                        >
-                                            <option value="" disabled hidden></option>
-                                            {stations.map((s) => (
-                                                <option key={s.value} value={s.value}>
-                                                    {s.label}
-                                                </option>
-                                            ))}
-                                        </select>
+                                            searchThreshold={0}
+                                            placeholder=" "
+                                        />
                                     </td>
                                     <td className="border-r border-zinc-300 p-0">
-                                        <select
+                                        <LabeledSelect
+                                            variant="cell"
+                                            label="Color"
+                                            options={colorOptions}
                                             value={row.colorId}
-                                            onChange={(e) =>
-                                                updateColorRow(index, "colorId", e.target.value)
-                                            }
+                                            onChange={(val) => updateColorRow(index, "colorId", val)}
                                             disabled={isRowDisabled(index)}
-                                            className="w-full bg-transparent px-2 py-1.5 text-[13px] text-black font-medium outline-none disabled:bg-[#f3f4f6] disabled:text-zinc-500"
-                                        >
-                                            <option value="" disabled hidden></option>
-                                            {colorOptions.map((c) => (
-                                                <option key={c.value} value={c.value}>
-                                                    {c.label}
-                                                </option>
-                                            ))}
-                                        </select>
+                                            searchThreshold={0}
+                                            placeholder=" "
+                                        />
                                     </td>
-                                    <td className="p-0">
-                                        <select
+                                    <td className="relative p-0">
+                                        <input
+                                            type="text"
+                                            inputMode="numeric"
+                                            aria-label="Qty"
+                                            autoComplete="off"
                                             value={row.qty}
                                             onChange={(e) =>
-                                                updateColorRow(index, "qty", e.target.value)
+                                                updateColorRow(index, "qty", e.target.value.replace(/\D/g, "").replace(/^0+(?=\d)/, "").slice(0, 7))
                                             }
                                             disabled={isRowDisabled(index)}
-                                            className="w-full bg-transparent px-2 py-1.5 text-[13px] text-black font-medium outline-none disabled:bg-[#f3f4f6] disabled:text-zinc-500"
-                                        >
-                                            <option value="" disabled hidden></option>
-                                            {QTY_LIST.map((q) => (
-                                                <option key={q.value} value={q.value}>
-                                                    {q.label}
-                                                </option>
-                                            ))}
-                                        </select>
+                                            className="w-full bg-transparent px-2 py-1.5 pr-8 text-[13px] text-black font-medium outline-none focus:bg-primary-50 disabled:bg-[#f3f4f6] disabled:text-zinc-500"
+                                        />
+                                        {isEditing && rowHasData(row) && (
+                                            <RowDeleteButton rowNumber={index + 1} onClick={() => removeColorRow(index)} />
+                                        )}
                                     </td>
                                 </tr>
                             ))}
                         </tbody>
                     </table>
                 </div>
+                <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs text-zinc-500">
+                        {isEditing ? "Tip: hover a row and click the trash icon to remove it" : ""}
+                    </span>
+                    <AddRowButton onClick={addColorRow} disabled={!isEditing || isOptionsLoading} />
+                </div>
 
                 {errors.colorRows && (
                     <p className="text-center text-xs text-red-500">{errors.colorRows.message}</p>
                 )}
 
-                <div className="flex flex-wrap items-center justify-center gap-3 pt-6">
-                    <Button
-                        type="button"
-                        variant="secondary"
-                        shape="rounded"
-                        onClick={fetchNextId}
-                        disabled={isSubmitting || !canCreate}
-                        className="border border-zinc-400 bg-white px-6 hover:bg-zinc-50"
-                    >
-                        New
-                    </Button>
-                    <Button
-                        type="button"
-                        variant="secondary"
-                        shape="rounded"
-                        onClick={() => fetchAllInventories()}
-                        disabled={isSubmitting || !canView}
-                        className="border border-zinc-400 bg-white px-6 hover:bg-zinc-50"
-                    >
-                        View All
-                    </Button>
-                    <Button
-                        type="button"
-                        variant="secondary"
-                        shape="rounded"
-                        onClick={() => setIsEditing(true)}
-                        disabled={isSubmitting || isNewMode || isEditing || !canUpdate}
-                        className="border border-zinc-400 bg-white px-6 hover:bg-zinc-50"
-                    >
-                        Edit
-                    </Button>
-
-                    <Button
-                        type="submit"
-                        variant="secondary"
-                        shape="rounded"
-                        isLoading={isSubmitting}
-                        disabled={!isEditing || (isNewMode ? !canCreate : !canUpdate)}
-                        className="border border-zinc-400 bg-white px-8 hover:bg-zinc-50"
-                    >
-                        Save
-                    </Button>
-                    <Button
-                        type="button"
-                        variant="secondary"
-                        shape="rounded"
-                        onClick={() => setIsPrintOpen(true)}
-                        className="border border-zinc-400 bg-white px-6 hover:bg-zinc-50"
-                    >
-                        Print
-                    </Button>
-                </div>
+                <EntryActions
+                    onNew={fetchNextId}
+                    newDisabled={isSubmitting || !canCreate}
+                    onViewAll={() => setIsViewAllOpen(true)}
+                    viewAllDisabled={isSubmitting || !canView}
+                    onEdit={() => setIsEditing(true)}
+                    editDisabled={isSubmitting || isNewMode || isEditing || !canUpdate}
+                    saveLoading={isSubmitting}
+                    saveDisabled={!isEditing || (isNewMode ? !canCreate : !canUpdate)}
+                    onPrint={() => setIsPrintOpen(true)}
+                />
             </form>
 
             <PrintOptionsModal
@@ -647,18 +587,15 @@ export default function InventoryPage() {
                 printPath="/print/inventory"
                 recordId={isNewMode ? null : values.id || null}
                 maxCode={Number(nextId) > 1 ? Number(nextId) - 1 : undefined}
-                totalCount={hasLoadedInventories ? inventories.length : undefined}
             />
 
-            <ViewAllModal
-                key={isViewAllOpen ? "open" : "closed"}
+            <InfiniteViewAllModal
                 isOpen={isViewAllOpen}
                 title="All Inventory"
-                rows={inventories}
+                endpoint={INVENTORY}
+                name="inventory"
+                mapRow={(row) => ({ ...row, categoryName: row.category?.name || `Category #${row.categoryId}`, departmentName: row.department?.name || `Dept #${row.departmentId}` })}
                 columns={inventoryColumns}
-                searchKeys={["id", "itemName", "categoryName", "departmentName"]}
-                isLoading={isInventoriesLoading}
-                error={inventoriesError}
                 onClose={() => setIsViewAllOpen(false)}
                 onRowSelect={(inv) => {
                     reset({
@@ -675,7 +612,6 @@ export default function InventoryPage() {
                     setIsEditing(false);
                     setIsViewAllOpen(false);
                 }}
-                onDelete={() => undefined}
             />
         </section>
     );

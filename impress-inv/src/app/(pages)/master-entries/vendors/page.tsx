@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { LabeledField } from "@/components/ui/LabeledField";
 import { LabeledSelect } from "@/components/ui/LabeledSelect";
+import { PriceField } from "@/components/ui/PriceField";
 import { Button } from "@/components/ui/Button";
 import useDebounce from "@/hooks/useDebounce";
 import { vendorSchema, type VendorFormValues } from "@/lib/validations/master";
@@ -11,7 +12,10 @@ import { VENDORS, CITIES, PROVINCES } from "@/utlis/apiRoutes";
 import api from "@/lib/axios";
 import toast from "react-hot-toast";
 import { usePermissions } from "@/hooks/usePermissions";
-import { ViewAllModal, type ViewAllColumn } from "@/components/ui/ViewAllModal";
+import type { ViewAllColumn } from "@/components/ui/ViewAllModal";
+import { InfiniteViewAllModal, useRefreshMasterList } from "@/components/ui/InfiniteViewAllModal";
+import { EntryActions } from "@/components/ui/EntryActions";
+import { useMasterRecord } from "@/hooks/useMasterRecord";
 import { PrintOptionsModal } from "@/components/print/PrintOptionsModal";
 
 type VendorRow = {
@@ -83,10 +87,9 @@ export default function VendorPage() {
     const [isIdLoading, setIsIdLoading] = useState(true);
     const [nextId, setNextId] = useState("");
     const [isViewAllOpen, setIsViewAllOpen] = useState(false);
+    const refreshList = useRefreshMasterList("vendors");
+    const { fetchOne, prefetchNear } = useMasterRecord("vendors", VENDORS);
     const [vendors, setVendors] = useState<VendorRow[]>([]);
-    const [hasLoadedVendors, setHasLoadedVendors] = useState(false);
-    const [isVendorsLoading, setIsVendorsLoading] = useState(false);
-    const [vendorsError, setVendorsError] = useState("");
     const skipNextIdLookup = useRef(false);
 
     const {
@@ -170,29 +173,6 @@ export default function VendorPage() {
         }
     };
 
-    const fetchAllVendors = async (openModal = true, force = false) => {
-        if (openModal) setIsViewAllOpen(true);
-        if (hasLoadedVendors && !force) return;
-
-        setIsVendorsLoading(true);
-        setVendorsError("");
-        try {
-            const { data } = await api.get(VENDORS);
-            const list: VendorRow[] = (data.data || []).map((v: VendorRow) => ({
-                ...v,
-                cityName: v.city?.name || `City #${v.cityId}`,
-                provinceName: v.province?.name || `Province #${v.provinceId}`,
-            }));
-            setVendors(list);
-            setHasLoadedVendors(true);
-        } catch (error: unknown) {
-            const apiError = error as ApiError;
-            setVendorsError(apiError.response?.data?.message || "Failed to fetch vendors");
-        } finally {
-            setIsVendorsLoading(false);
-        }
-    };
-
     const addVendorToCache = (vendor: VendorRow) => {
         setVendors((current) => {
             const cityName = vendor.city?.name || vendor.cityName || `City #${vendor.cityId}`;
@@ -206,13 +186,11 @@ export default function VendorPage() {
                 index === existingIndex ? cached : item
             );
         });
-        setHasLoadedVendors(true);
     };
 
     useEffect(() => {
         void fetchNextId();
         void fetchProvinces();
-        void fetchAllVendors(false);
     }, []);
 
     const handleProvinceChange = (provinceId: string) => {
@@ -259,10 +237,8 @@ export default function VendorPage() {
                 : await api.put(`${VENDORS}/${validationResult.data.id}`, payload);
 
             toast.success(response.data.message || "Vendor saved successfully");
-            if (hasLoadedVendors) {
-                setHasLoadedVendors(false);
-                await fetchAllVendors(false, true);
-            }
+            setVendors([]); // the looked-up copies are old now
+            void refreshList();
             // This page has a Print button: after Save the record stays on the screen (it does not jump to the next new
             // record). Only the next number is read again, quietly, so a new record still gets the right number.
             setIsNewMode(false);
@@ -316,7 +292,8 @@ export default function VendorPage() {
             setIsIdLoading(true);
             try {
                 const cached = vendors.find((v) => String(v.id) === debouncedId);
-                const vendor: VendorRow = cached || (await api.get(`${VENDORS}/${debouncedId}`)).data.data;
+                const vendor: VendorRow = cached || (await fetchOne(debouncedId));
+                prefetchNear(debouncedId, Number(nextId));
 
                 if (!vendor) {
                     toast.error("Vendor not found");
@@ -380,9 +357,9 @@ export default function VendorPage() {
             >
                 <div className="grid gap-3 md:grid-cols-2">
                     <LabeledField
-                        type={isIdLoading ? "text" : "number"}
+                        type="number"
                         label="Vendor ID"
-                        value={isIdLoading ? "Loading..." : values.id || ""}
+                        value={values.id || ""}
                         onChange={(event) => {
                             if (/^\d*$/.test(event.target.value)) {
                                 setValue("id", event.target.value, { shouldDirty: true });
@@ -399,7 +376,6 @@ export default function VendorPage() {
                         inputMode="numeric"
                         error={errors.id?.message}
                         wrapperClassName="w-24"
-                        disabled={isIdLoading}
                         min={1}
                         max={Number(nextId) || 1}
                     />
@@ -549,20 +525,17 @@ export default function VendorPage() {
                         max={365}
                     />
 
-                    <LabeledField
-                        type="number"
+                    <PriceField
                         label="Account Limit"
                         value={values.amoutLimit}
-                        onChange={(event) =>
-                            setValue("amoutLimit", event.target.value, {
+                        onValueChange={(digits) =>
+                            setValue("amoutLimit", digits, {
                                 shouldDirty: true,
                                 shouldValidate: true,
                             })
                         }
                         error={errors.amoutLimit?.message}
                         disabled={!isEditing}
-                        min={0}
-                        max={100000000}
                     />
                     <LabeledField
                         label="NTN No"
@@ -579,75 +552,32 @@ export default function VendorPage() {
                         maxLength={9}
                     />
 
-                    <LabeledField
-                        type="number"
+                    <PriceField
                         label="Opening Balance"
                         value={values.openingBalance}
-                        onChange={(event) =>
-                            setValue("openingBalance", event.target.value, {
+                        onValueChange={(digits) =>
+                            setValue("openingBalance", digits, {
                                 shouldDirty: true,
                                 shouldValidate: true,
                             })
                         }
+                        allowNegative
                         error={errors.openingBalance?.message}
                         disabled={!isEditing}
-                        min={-100000000}
-                        max={1000000000}
                     />
                 </div>
 
-                <div className="flex flex-wrap items-center justify-center gap-3 pt-6">
-                    <Button
-                        type="button"
-                        variant="secondary"
-                        shape="rounded"
-                        onClick={fetchNextId}
-                        disabled={isSubmitting || !canCreate}
-                        className="border border-zinc-400 bg-white px-6 hover:bg-zinc-50"
-                    >
-                        New
-                    </Button>
-                    <Button
-                        type="button"
-                        variant="secondary"
-                        shape="rounded"
-                        onClick={() => fetchAllVendors()}
-                        disabled={isSubmitting || !canView}
-                        className="border border-zinc-400 bg-white px-6 hover:bg-zinc-50"
-                    >
-                        View All
-                    </Button>
-                    <Button
-                        type="button"
-                        variant="secondary"
-                        shape="rounded"
-                        onClick={() => setIsEditing(true)}
-                        disabled={isSubmitting || isNewMode || isEditing || !canUpdate}
-                        className="border border-zinc-400 bg-white px-6 hover:bg-zinc-50"
-                    >
-                        Edit
-                    </Button>
-
-                    <Button
-                        type="submit"
-                        variant="secondary"
-                        shape="rounded"
-                        isLoading={isSubmitting}
-                        disabled={!isEditing || (isNewMode ? !canCreate : !canUpdate)}
-                        className="border border-zinc-400 bg-white px-8 hover:bg-zinc-50"
-                    >
-                        Save
-                    </Button>
-                    <Button
-                        type="button"
-                        variant="secondary"
-                        shape="rounded"
-                        onClick={() => setIsPrintOpen(true)}
-                        className="border border-zinc-400 bg-white px-6 hover:bg-zinc-50"
-                    >
-                        Print
-                    </Button>
-                </div>
+                <EntryActions
+                    onNew={fetchNextId}
+                    newDisabled={isSubmitting || !canCreate}
+                    onViewAll={() => setIsViewAllOpen(true)}
+                    viewAllDisabled={isSubmitting || !canView}
+                    onEdit={() => setIsEditing(true)}
+                    editDisabled={isSubmitting || isNewMode || isEditing || !canUpdate}
+                    saveLoading={isSubmitting}
+                    saveDisabled={!isEditing || (isNewMode ? !canCreate : !canUpdate)}
+                    onPrint={() => setIsPrintOpen(true)}
+                />
             </form>
 
             <PrintOptionsModal
@@ -657,18 +587,15 @@ export default function VendorPage() {
                 printPath="/print/vendors"
                 recordId={isNewMode ? null : values.id || null}
                 maxCode={Number(nextId) > 1 ? Number(nextId) - 1 : undefined}
-                totalCount={hasLoadedVendors ? vendors.length : undefined}
             />
 
-            <ViewAllModal
-                key={isViewAllOpen ? "open" : "closed"}
+            <InfiniteViewAllModal
                 isOpen={isViewAllOpen}
                 title="All Vendors"
-                rows={vendors}
+                endpoint={VENDORS}
+                name="vendors"
+                mapRow={(row) => ({ ...row, cityName: row.city?.name || `City #${row.cityId}`, provinceName: row.province?.name || `Province #${row.provinceId}` })}
                 columns={vendorColumns}
-                searchKeys={["id", "vendorName", "contactNo", "cityName"]}
-                isLoading={isVendorsLoading}
-                error={vendorsError}
                 onClose={() => setIsViewAllOpen(false)}
                 onRowSelect={async (vendor) => {
                     const provinceIdStr = String(vendor.provinceId);
@@ -693,7 +620,6 @@ export default function VendorPage() {
                     setIsEditing(false);
                     setIsViewAllOpen(false);
                 }}
-                onDelete={() => undefined}
             />
         </section>
     );

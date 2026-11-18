@@ -6,6 +6,8 @@ import asyncHandler from "../utils/asyncHandler.js";
 import { ApiResponse } from "../utils/apiResponse.js";
 import { ApiError } from "../utils/apiError.js";
 
+import { isPagedRequest, findPage } from "../utils/listQuery.js";
+
 const isProvinceNameConflict = (error) => {
     const target = Array.isArray(error?.meta?.target)
         ? error.meta.target.join(",")
@@ -75,6 +77,10 @@ const createProvince = asyncHandler(async (req, res) => {
 });
 
 const getAllProvinces = asyncHandler(async (req, res) => {
+    if (isPagedRequest(req)) {
+        const page = await findPage(prisma.province, req, { searchFields: ["name"] });
+        return res.status(200).json(new ApiResponse(200, page, "Fetched successfully"));
+    }
     const provinces = await prisma.province.findMany({
         orderBy: { id: "asc" },
     });

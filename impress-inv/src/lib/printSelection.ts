@@ -51,3 +51,26 @@ export function selectPrintRecords<T extends PrintRecordLike>(records: T[], para
 
   return { rows: sorted.slice(0, PRINT_ALL_MAX), total: sorted.length, truncated: sorted.length > PRINT_ALL_MAX, label: "All records" };
 }
+
+// The print page asks the server for only the chosen records (the server does the selecting, so a print of 50
+// records does not read the whole table). These are the parts of the address that carry the choice.
+export const printRequestParams = (params: URLSearchParams) => {
+  const out: Record<string, string> = { print: "1" };
+  for (const key of ["id", "from", "to", "last"]) {
+    const value = wholeNumber(params.get(key));
+    if (value !== null) out[key] = String(value);
+  }
+  return out;
+};
+
+// The line under the heading of the paper, which says what was chosen
+export function describePrintSelection(params: URLSearchParams, shown: number, codeWord = "Codes") {
+  const id = wholeNumber(params.get("id"));
+  if (id !== null) return `Record ${id}`;
+  const from = wholeNumber(params.get("from"));
+  const to = wholeNumber(params.get("to"));
+  if (from !== null && to !== null) return `${codeWord} ${from} to ${to}`;
+  const last = wholeNumber(params.get("last"));
+  if (last !== null && last > 0) return `Last ${shown} records`;
+  return "All records";
+}

@@ -11,7 +11,10 @@ import { CITIES, PROVINCES } from "@/utlis/apiRoutes";
 import api from "@/lib/axios";
 import toast from "react-hot-toast";
 import { usePermissions } from "@/hooks/usePermissions";
-import { ViewAllModal, type ViewAllColumn } from "@/components/ui/ViewAllModal";
+import type { ViewAllColumn } from "@/components/ui/ViewAllModal";
+import { InfiniteViewAllModal, useRefreshMasterList } from "@/components/ui/InfiniteViewAllModal";
+import { EntryActions } from "@/components/ui/EntryActions";
+import { useMasterRecord } from "@/hooks/useMasterRecord";
 
 type CityRow = {
     id: number;
@@ -45,10 +48,9 @@ export default function CityPage() {
     const [nextId, setNextId] = useState("");
     const [isProvincesLoading, setIsProvincesLoading] = useState(true);
     const [isViewAllOpen, setIsViewAllOpen] = useState(false);
+    const refreshList = useRefreshMasterList("cities");
+    const { fetchOne, prefetchNear } = useMasterRecord("cities", CITIES);
     const [cities, setCities] = useState<CityRow[]>([]);
-    const [hasLoadedCities, setHasLoadedCities] = useState(false);
-    const [isCitiesLoading, setIsCitiesLoading] = useState(false);
-    const [citiesError, setCitiesError] = useState("");
     const skipNextIdLookup = useRef(false);
 
     const {
@@ -108,34 +110,6 @@ export default function CityPage() {
         }
     };
 
-    const fetchAllCities = async (openModal = true, force = false) => {
-        if (openModal) setIsViewAllOpen(true);
-        if (hasLoadedCities && !force) return;
-
-        setIsCitiesLoading(true);
-        setCitiesError("");
-        try {
-            const { data } = await api.get(CITIES);
-            const provinceNames = new Map(
-                provinces.map((province) => [province.value, province.label])
-            );
-            setCities(
-                (data.data || []).map((city: CityRow) => ({
-                    ...city,
-                    provinceName:
-                        provinceNames.get(String(city.provinceId)) ||
-                        `Province #${city.provinceId}`,
-                }))
-            );
-            setHasLoadedCities(true);
-        } catch (error: unknown) {
-            const apiError = error as ApiError;
-            setCitiesError(apiError.response?.data?.message || "Failed to fetch cities");
-        } finally {
-            setIsCitiesLoading(false);
-        }
-    };
-
     const addCityToCache = (city: CityRow) => {
         setCities((currentCities) => {
             const provinceName =
@@ -153,13 +127,11 @@ export default function CityPage() {
                 index === existingIndex ? cachedCity : currentCity
             );
         });
-        setHasLoadedCities(true);
     };
 
     useEffect(() => {
         void fetchNextId();
         void fetchProvinces();
-        void fetchAllCities(false);
     }, []);
 
     const onSubmit = async (data: CityFormValues) => {
@@ -188,10 +160,8 @@ export default function CityPage() {
                 : await api.put(`${CITIES}/${validationResult.data.id}`, payload);
 
             toast.success(response.data.message || "City saved successfully");
-            if (hasLoadedCities) {
-                setHasLoadedCities(false);
-                await fetchAllCities(false, true);
-            }
+            setCities([]); // the looked-up copies are old now
+            void refreshList();
             // After Save the record stays on the screen (it does not jump to the next new one: the New button does that).
             // Only the next number is read again, quietly, so a new record still gets the right number.
             setIsNewMode(false);
@@ -245,7 +215,8 @@ export default function CityPage() {
             setIsIdLoading(true);
             try {
                 const cachedCity = cities.find((city) => String(city.id) === debouncedId);
-                const city = cachedCity || (await api.get(`${CITIES}/${debouncedId}`)).data.data;
+                const city = cachedCity || (await fetchOne(debouncedId));
+                prefetchNear(debouncedId, Number(nextId));
 
                 if (!city) {
                     toast.error("City not found");
@@ -293,9 +264,9 @@ export default function CityPage() {
                 className="space-y-3"
             >
                 <LabeledField
-                    type={isIdLoading ? "text" : "number"}
+                    type="number"
                     label="City ID"
-                    value={isIdLoading ? "Loading..." : values.id || ""}
+                    value={values.id || ""}
                     onChange={(event) => {
                         if (/^\d*$/.test(event.target.value)) {
                             setValue("id", event.target.value, { shouldDirty: true });
@@ -311,7 +282,6 @@ export default function CityPage() {
                     }}
                     inputMode="numeric"
                     error={errors.id?.message}
-                    disabled={isIdLoading}
                     min={1}
                     max={Number(nextId) || 1}
                 />
@@ -342,59 +312,25 @@ export default function CityPage() {
                     placeholder={isProvincesLoading ? "Loading provinces..." : "Select Province"}
                 />
 
-                <div className="grid grid-cols-2 gap-3 pt-6 sm:flex sm:flex-wrap sm:items-center sm:justify-center">
-                    <Button
-                        type="button"
-                        variant="secondary"
-                        shape="rounded"
-                        onClick={fetchNextId}
-                        disabled={isSubmitting || !canCreate}
-                        className="border border-zinc-400 bg-white px-6 hover:bg-zinc-50"
-                    >
-                        New
-                    </Button>
-                    <Button
-                        type="button"
-                        variant="secondary"
-                        shape="rounded"
-                        onClick={() => fetchAllCities()}
-                        disabled={isSubmitting || !canView}
-                        className="border border-zinc-400 bg-white px-6 hover:bg-zinc-50"
-                    >
-                        View All
-                    </Button>
-                    <Button
-                        type="button"
-                        variant="secondary"
-                        shape="rounded"
-                        onClick={() => setIsEditing(true)}
-                        disabled={isSubmitting || isNewMode || isEditing || !canUpdate}
-                        className="border border-zinc-400 bg-white px-6 hover:bg-zinc-50"
-                    >
-                        Edit
-                    </Button>
-                    <Button
-                        type="submit"
-                        variant="secondary"
-                        shape="rounded"
-                        isLoading={isSubmitting}
-                        disabled={!isEditing || (isNewMode ? !canCreate : !canUpdate)}
-                        className="border border-zinc-400 bg-white px-8 hover:bg-zinc-50"
-                    >
-                        Save
-                    </Button>
-                </div>
+                <EntryActions
+                    onNew={fetchNextId}
+                    newDisabled={isSubmitting || !canCreate}
+                    onViewAll={() => setIsViewAllOpen(true)}
+                    viewAllDisabled={isSubmitting || !canView}
+                    onEdit={() => setIsEditing(true)}
+                    editDisabled={isSubmitting || isNewMode || isEditing || !canUpdate}
+                    saveLoading={isSubmitting}
+                    saveDisabled={!isEditing || (isNewMode ? !canCreate : !canUpdate)}
+                />
             </form>
 
-            <ViewAllModal
-                key={isViewAllOpen ? "open" : "closed"}
+            <InfiniteViewAllModal
                 isOpen={isViewAllOpen}
                 title="All Cities"
-                rows={cities}
+                endpoint={CITIES}
+                name="cities"
+                mapRow={(row) => ({ ...row, provinceName: (row as { province?: { name?: string } }).province?.name || `Province #${row.provinceId}` })}
                 columns={cityColumns}
-                searchKeys={["id", "name", "provinceName"]}
-                isLoading={isCitiesLoading}
-                error={citiesError}
                 onClose={() => setIsViewAllOpen(false)}
                 onRowSelect={(city) => {
                     reset({
@@ -406,7 +342,6 @@ export default function CityPage() {
                     setIsEditing(false);
                     setIsViewAllOpen(false);
                 }}
-                onDelete={() => undefined}
             />
         </section>
     );

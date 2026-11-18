@@ -6,6 +6,8 @@ import prisma, {
     getActiveDatabaseName,
 } from "../config/prisma.js";
 
+import { isPagedRequest, findPage } from "../utils/listQuery.js";
+
 const accountCodeGroup = ['expenses', 'currentassets', 'liabilities', 'capital', 'revenue', 'purchases', 'otherIncomeAndExpense', 'Expense'];
 
 const createAccountCode = asyncHandler(async (req, res) => {
@@ -62,6 +64,12 @@ const createAccountCode = asyncHandler(async (req, res) => {
 });
 
 const getAllAccountCodes = asyncHandler(async (req, res) => {
+    if (isPagedRequest(req)) {
+        const page = await findPage(prisma.accountCode, req, {
+            searchFields: ["headName"],
+        });
+        return res.status(200).json(new ApiResponse(200, page, "Fetched successfully"));
+    }
     const accountCodes = await prisma.accountCode.findMany({
         orderBy: { id: "asc" }
     });

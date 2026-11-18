@@ -6,6 +6,8 @@ import asyncHandler from "../utils/asyncHandler.js";
 import { ApiResponse } from "../utils/apiResponse.js";
 import { ApiError } from "../utils/apiError.js";
 
+import { isPagedRequest, findPage } from "../utils/listQuery.js";
+
 const isCategoryNameConflict = (error) => {
     const target = Array.isArray(error?.meta?.target)
         ? error.meta.target.join(",")
@@ -32,6 +34,10 @@ const handleCategoryWrite = async (operation) => {
 };
 
 const getAllCategories = asyncHandler(async (req, res) => {
+    if (isPagedRequest(req)) {
+        const page = await findPage(prisma.category, req, { searchFields: ["name"] });
+        return res.status(200).json(new ApiResponse(200, page, "Fetched successfully"));
+    }
     const categories = await prisma.category.findMany({
         orderBy: { id: "asc" },
     });

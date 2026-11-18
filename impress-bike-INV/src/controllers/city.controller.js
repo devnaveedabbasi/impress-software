@@ -6,6 +6,8 @@ import asyncHandler from "../utils/asyncHandler.js";
 import { ApiResponse } from "../utils/apiResponse.js";
 import { ApiError } from "../utils/apiError.js";
 
+import { isPagedRequest, findPage } from "../utils/listQuery.js";
+
 const isCityNameConflict = (error) => {
     const target = Array.isArray(error?.meta?.target)
         ? error.meta.target.join(",")
@@ -75,6 +77,14 @@ const createCity = asyncHandler(async (req, res) => {
 });
 
 const getAllCities = asyncHandler(async (req, res) => {
+    if (isPagedRequest(req)) {
+        const page = await findPage(prisma.city, req, {
+            searchFields: ["name"],
+            relationFields: [["province", "name"]],
+            include: { province: true },
+        });
+        return res.status(200).json(new ApiResponse(200, page, "Fetched successfully"));
+    }
     const cities = await prisma.city.findMany()
     return res.status(200).json(
         new ApiResponse(

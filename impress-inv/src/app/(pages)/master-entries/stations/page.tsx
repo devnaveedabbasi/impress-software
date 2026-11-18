@@ -10,7 +10,10 @@ import { STATIONS } from "@/utlis/apiRoutes";
 import api from "@/lib/axios";
 import toast from "react-hot-toast";
 import { usePermissions } from "@/hooks/usePermissions";
-import { ViewAllModal, type ViewAllColumn } from "@/components/ui/ViewAllModal";
+import type { ViewAllColumn } from "@/components/ui/ViewAllModal";
+import { InfiniteViewAllModal, useRefreshMasterList } from "@/components/ui/InfiniteViewAllModal";
+import { EntryActions } from "@/components/ui/EntryActions";
+import { useMasterRecord } from "@/hooks/useMasterRecord";
 
 type StationRow = {
     id: number;
@@ -39,10 +42,9 @@ export default function StationPage() {
     const [isIdLoading, setIsIdLoading] = useState(true);
     const [nextId, setNextId] = useState("");
     const [isViewAllOpen, setIsViewAllOpen] = useState(false);
+    const refreshList = useRefreshMasterList("stations");
+    const { fetchOne, prefetchNear } = useMasterRecord("stations", STATIONS);
     const [stations, setStations] = useState<StationRow[]>([]);
-    const [hasLoadedStations, setHasLoadedStations] = useState(false);
-    const [isStationsLoading, setIsStationsLoading] = useState(false);
-    const [stationsError, setStationsError] = useState("");
     const skipNextIdLookup = useRef(false);
 
     const {
@@ -84,24 +86,6 @@ export default function StationPage() {
         }
     };
 
-    const fetchAllStations = async (openModal = true, force = false) => {
-        if (openModal) setIsViewAllOpen(true);
-        if (hasLoadedStations && !force) return;
-
-        setIsStationsLoading(true);
-        setStationsError("");
-        try {
-            const { data } = await api.get(STATIONS);
-            setStations(data.data || []);
-            setHasLoadedStations(true);
-        } catch (error: unknown) {
-            const apiError = error as ApiError;
-            setStationsError(apiError.response?.data?.message || "Failed to fetch stations");
-        } finally {
-            setIsStationsLoading(false);
-        }
-    };
-
     const addStationToCache = (station: StationRow) => {
         setStations((current) => {
             const existingIndex = current.findIndex(
@@ -112,12 +96,10 @@ export default function StationPage() {
                 index === existingIndex ? station : item
             );
         });
-        setHasLoadedStations(true);
     };
 
     useEffect(() => {
         void fetchNextId();
-        void fetchAllStations(false);
     }, []);
 
     const onSubmit = async (data: StationFormValues) => {
@@ -145,10 +127,8 @@ export default function StationPage() {
                 : await api.put(`${STATIONS}/${validationResult.data.id}`, payload);
 
             toast.success(response.data.message || "Station saved successfully");
-            if (hasLoadedStations) {
-                setHasLoadedStations(false);
-                await fetchAllStations(false, true);
-            }
+            setStations([]); // the looked-up copies are old now
+            void refreshList();
             // After Save the record stays on the screen (it does not jump to the next new one: the New button does that).
             // Only the next number is read again, quietly, so a new record still gets the right number.
             setIsNewMode(false);
@@ -201,7 +181,8 @@ export default function StationPage() {
             setIsIdLoading(true);
             try {
                 const cached = stations.find((s) => String(s.id) === debouncedId);
-                const station = cached || (await api.get(`${STATIONS}/${debouncedId}`)).data.data;
+                const station = cached || (await fetchOne(debouncedId));
+                prefetchNear(debouncedId, Number(nextId));
 
                 if (!station) {
                     toast.error("Station not found");
@@ -248,9 +229,9 @@ export default function StationPage() {
                 className="space-y-3"
             >
                 <LabeledField
-                    type={isIdLoading ? "text" : "number"}
+                    type="number"
                     label="Station ID"
-                    value={isIdLoading ? "Loading..." : values.id || ""}
+                    value={values.id || ""}
                     onChange={(event) => {
                         if (/^\d*$/.test(event.target.value)) {
                             setValue("id", event.target.value, { shouldDirty: true });
@@ -266,7 +247,6 @@ export default function StationPage() {
                     }}
                     inputMode="numeric"
                     error={errors.id?.message}
-                    disabled={isIdLoading}
                     min={1}
                     max={Number(nextId) || 1}
                 />
@@ -283,59 +263,24 @@ export default function StationPage() {
                     disabled={!isEditing}
                 />
 
-                <div className="grid grid-cols-2 gap-3 pt-6 sm:flex sm:flex-wrap sm:items-center sm:justify-center">
-                    <Button
-                        type="button"
-                        variant="secondary"
-                        shape="rounded"
-                        onClick={fetchNextId}
-                        disabled={isSubmitting || !canCreate}
-                        className="border border-zinc-400 bg-white px-6 hover:bg-zinc-50"
-                    >
-                        New
-                    </Button>
-                    <Button
-                        type="button"
-                        variant="secondary"
-                        shape="rounded"
-                        onClick={() => fetchAllStations()}
-                        disabled={isSubmitting || !canView}
-                        className="border border-zinc-400 bg-white px-6 hover:bg-zinc-50"
-                    >
-                        View All
-                    </Button>
-                    <Button
-                        type="button"
-                        variant="secondary"
-                        shape="rounded"
-                        onClick={() => setIsEditing(true)}
-                        disabled={isSubmitting || isNewMode || isEditing || !canUpdate}
-                        className="border border-zinc-400 bg-white px-6 hover:bg-zinc-50"
-                    >
-                        Edit
-                    </Button>
-                    <Button
-                        type="submit"
-                        variant="secondary"
-                        shape="rounded"
-                        isLoading={isSubmitting}
-                        disabled={!isEditing || (isNewMode ? !canCreate : !canUpdate)}
-                        className="border border-zinc-400 bg-white px-8 hover:bg-zinc-50"
-                    >
-                        Save
-                    </Button>
-                </div>
+                <EntryActions
+                    onNew={fetchNextId}
+                    newDisabled={isSubmitting || !canCreate}
+                    onViewAll={() => setIsViewAllOpen(true)}
+                    viewAllDisabled={isSubmitting || !canView}
+                    onEdit={() => setIsEditing(true)}
+                    editDisabled={isSubmitting || isNewMode || isEditing || !canUpdate}
+                    saveLoading={isSubmitting}
+                    saveDisabled={!isEditing || (isNewMode ? !canCreate : !canUpdate)}
+                />
             </form>
 
-            <ViewAllModal
-                key={isViewAllOpen ? "open" : "closed"}
+            <InfiniteViewAllModal
                 isOpen={isViewAllOpen}
                 title="All Stations"
-                rows={stations}
+                endpoint={STATIONS}
+                name="stations"
                 columns={stationColumns}
-                searchKeys={["id", "name"]}
-                isLoading={isStationsLoading}
-                error={stationsError}
                 onClose={() => setIsViewAllOpen(false)}
                 onRowSelect={(station) => {
                     reset({
@@ -346,7 +291,6 @@ export default function StationPage() {
                     setIsEditing(false);
                     setIsViewAllOpen(false);
                 }}
-                onDelete={() => undefined}
             />
         </section>
     );

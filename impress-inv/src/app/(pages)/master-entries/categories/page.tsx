@@ -10,7 +10,10 @@ import { CATEGORIES } from "@/utlis/apiRoutes";
 import api from "@/lib/axios";
 import toast from "react-hot-toast";
 import { usePermissions } from "@/hooks/usePermissions";
-import { ViewAllModal, type ViewAllColumn } from "@/components/ui/ViewAllModal";
+import type { ViewAllColumn } from "@/components/ui/ViewAllModal";
+import { InfiniteViewAllModal, useRefreshMasterList } from "@/components/ui/InfiniteViewAllModal";
+import { EntryActions } from "@/components/ui/EntryActions";
+import { useMasterRecord } from "@/hooks/useMasterRecord";
 
 type CategoryRow = {
     id: number;
@@ -39,10 +42,9 @@ export default function CategoryPage() {
     const [isIdLoading, setIsIdLoading] = useState(true);
     const [nextId, setNextId] = useState("");
     const [isViewAllOpen, setIsViewAllOpen] = useState(false);
+    const refreshList = useRefreshMasterList("categories");
+    const { fetchOne, prefetchNear } = useMasterRecord("categories", CATEGORIES);
     const [categories, setCategories] = useState<CategoryRow[]>([]);
-    const [hasLoadedCategories, setHasLoadedCategories] = useState(false);
-    const [isCategoriesLoading, setIsCategoriesLoading] = useState(false);
-    const [categoriesError, setCategoriesError] = useState("");
     const skipNextIdLookup = useRef(false);
 
     const {
@@ -84,24 +86,6 @@ export default function CategoryPage() {
         }
     };
 
-    const fetchAllCategories = async (openModal = true, force = false) => {
-        if (openModal) setIsViewAllOpen(true);
-        if (hasLoadedCategories && !force) return;
-
-        setIsCategoriesLoading(true);
-        setCategoriesError("");
-        try {
-            const { data } = await api.get(CATEGORIES);
-            setCategories(data.data || []);
-            setHasLoadedCategories(true);
-        } catch (error: unknown) {
-            const apiError = error as ApiError;
-            setCategoriesError(apiError.response?.data?.message || "Failed to fetch categories");
-        } finally {
-            setIsCategoriesLoading(false);
-        }
-    };
-
     const addCategoryToCache = (category: CategoryRow) => {
         setCategories((current) => {
             const existingIndex = current.findIndex(
@@ -112,12 +96,10 @@ export default function CategoryPage() {
                 index === existingIndex ? category : item
             );
         });
-        setHasLoadedCategories(true);
     };
 
     useEffect(() => {
         void fetchNextId();
-        void fetchAllCategories(false);
     }, []);
 
     const onSubmit = async (data: CategoryFormValues) => {
@@ -145,10 +127,8 @@ export default function CategoryPage() {
                 : await api.put(`${CATEGORIES}/${validationResult.data.id}`, payload);
 
             toast.success(response.data.message || "Category saved successfully");
-            if (hasLoadedCategories) {
-                setHasLoadedCategories(false);
-                await fetchAllCategories(false, true);
-            }
+            setCategories([]); // the looked-up copies are old now
+            void refreshList();
             // After Save the record stays on the screen (it does not jump to the next new one: the New button does that).
             // Only the next number is read again, quietly, so a new record still gets the right number.
             setIsNewMode(false);
@@ -201,7 +181,8 @@ export default function CategoryPage() {
             setIsIdLoading(true);
             try {
                 const cached = categories.find((c) => String(c.id) === debouncedId);
-                const category = cached || (await api.get(`${CATEGORIES}/${debouncedId}`)).data.data;
+                const category = cached || (await fetchOne(debouncedId));
+                prefetchNear(debouncedId, Number(nextId));
 
                 if (!category) {
                     toast.error("Category not found");
@@ -248,9 +229,9 @@ export default function CategoryPage() {
                 className="space-y-3"
             >
                 <LabeledField
-                    type={isIdLoading ? "text" : "number"}
+                    type="number"
                     label="Category ID"
-                    value={isIdLoading ? "Loading..." : values.id || ""}
+                    value={values.id || ""}
                     onChange={(event) => {
                         if (/^\d*$/.test(event.target.value)) {
                             setValue("id", event.target.value, { shouldDirty: true });
@@ -266,7 +247,6 @@ export default function CategoryPage() {
                     }}
                     inputMode="numeric"
                     error={errors.id?.message}
-                    disabled={isIdLoading}
                     min={1}
                     max={Number(nextId) || 1}
                 />
@@ -283,59 +263,24 @@ export default function CategoryPage() {
                     disabled={!isEditing}
                 />
 
-                <div className="grid grid-cols-2 gap-3 pt-6 sm:flex sm:flex-wrap sm:items-center sm:justify-center">
-                    <Button
-                        type="button"
-                        variant="secondary"
-                        shape="rounded"
-                        onClick={fetchNextId}
-                        disabled={isSubmitting || !canCreate}
-                        className="border border-zinc-400 bg-white px-6 hover:bg-zinc-50"
-                    >
-                        New
-                    </Button>
-                    <Button
-                        type="button"
-                        variant="secondary"
-                        shape="rounded"
-                        onClick={() => fetchAllCategories()}
-                        disabled={isSubmitting || !canView}
-                        className="border border-zinc-400 bg-white px-6 hover:bg-zinc-50"
-                    >
-                        View All
-                    </Button>
-                    <Button
-                        type="button"
-                        variant="secondary"
-                        shape="rounded"
-                        onClick={() => setIsEditing(true)}
-                        disabled={isSubmitting || isNewMode || isEditing || !canUpdate}
-                        className="border border-zinc-400 bg-white px-6 hover:bg-zinc-50"
-                    >
-                        Edit
-                    </Button>
-                    <Button
-                        type="submit"
-                        variant="secondary"
-                        shape="rounded"
-                        isLoading={isSubmitting}
-                        disabled={!isEditing || (isNewMode ? !canCreate : !canUpdate)}
-                        className="border border-zinc-400 bg-white px-8 hover:bg-zinc-50"
-                    >
-                        Save
-                    </Button>
-                </div>
+                <EntryActions
+                    onNew={fetchNextId}
+                    newDisabled={isSubmitting || !canCreate}
+                    onViewAll={() => setIsViewAllOpen(true)}
+                    viewAllDisabled={isSubmitting || !canView}
+                    onEdit={() => setIsEditing(true)}
+                    editDisabled={isSubmitting || isNewMode || isEditing || !canUpdate}
+                    saveLoading={isSubmitting}
+                    saveDisabled={!isEditing || (isNewMode ? !canCreate : !canUpdate)}
+                />
             </form>
 
-            <ViewAllModal
-                key={isViewAllOpen ? "open" : "closed"}
+            <InfiniteViewAllModal
                 isOpen={isViewAllOpen}
                 title="All Categories"
-                rows={categories}
+                endpoint={CATEGORIES}
+                name="categories"
                 columns={categoryColumns}
-                searchKeys={["id", "name"]}
-                isLoading={isCategoriesLoading}
-                error={categoriesError}
                 onClose={() => setIsViewAllOpen(false)}
                 onRowSelect={(category) => {
                     reset({
@@ -346,7 +291,6 @@ export default function CategoryPage() {
                     setIsEditing(false);
                     setIsViewAllOpen(false);
                 }}
-                onDelete={() => undefined}
             />
         </section>
     );

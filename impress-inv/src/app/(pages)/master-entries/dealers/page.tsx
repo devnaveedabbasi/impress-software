@@ -8,10 +8,14 @@ import { DEALERS, CITIES, PROVINCES } from "@/utlis/apiRoutes";
 import api from "@/lib/axios";
 import toast from "react-hot-toast";
 import { usePermissions } from "@/hooks/usePermissions";
-import { ViewAllModal, type ViewAllColumn } from "@/components/ui/ViewAllModal";
+import type { ViewAllColumn } from "@/components/ui/ViewAllModal";
+import { InfiniteViewAllModal, useRefreshMasterList } from "@/components/ui/InfiniteViewAllModal";
+import { ExitButton } from "@/components/ui/ExitButton";
+import { useMasterRecord } from "@/hooks/useMasterRecord";
 import { PrintOptionsModal } from "@/components/print/PrintOptionsModal";
 import { LabeledField } from "@/components/ui/LabeledField";
 import { LabeledSelect } from "@/components/ui/LabeledSelect";
+import { PriceField } from "@/components/ui/PriceField";
 
 type DealerRow = {
     id: number;
@@ -80,10 +84,9 @@ export default function DealerPage() {
     const [isIdLoading, setIsIdLoading] = useState(true);
     const [nextId, setNextId] = useState("");
     const [isViewAllOpen, setIsViewAllOpen] = useState(false);
+    const refreshList = useRefreshMasterList("dealers");
+    const { fetchOne, prefetchNear } = useMasterRecord("dealers", DEALERS);
     const [dealers, setDealers] = useState<DealerRow[]>([]);
-    const [hasLoadedDealers, setHasLoadedDealers] = useState(false);
-    const [isDealersLoading, setIsDealersLoading] = useState(false);
-    const [dealersError, setDealersError] = useState("");
     const skipNextIdLookup = useRef(false);
 
     const {
@@ -165,29 +168,6 @@ export default function DealerPage() {
         }
     };
 
-    const fetchAllDealers = async (openModal = true, force = false) => {
-        if (openModal) setIsViewAllOpen(true);
-        if (hasLoadedDealers && !force) return;
-
-        setIsDealersLoading(true);
-        setDealersError("");
-        try {
-            const { data } = await api.get(DEALERS);
-            const list: DealerRow[] = (data.data || []).map((d: DealerRow) => ({
-                ...d,
-                cityName: d.city?.name || `City #${d.cityId}`,
-                provinceName: d.province?.name || `Province #${d.provinceId}`,
-            }));
-            setDealers(list);
-            setHasLoadedDealers(true);
-        } catch (error: unknown) {
-            const apiError = error as ApiError;
-            setDealersError(apiError.response?.data?.message || "Failed to fetch dealers");
-        } finally {
-            setIsDealersLoading(false);
-        }
-    };
-
     const addDealerToCache = (dealer: DealerRow) => {
         setDealers((current) => {
             const cityName = dealer.city?.name || dealer.cityName || `City #${dealer.cityId}`;
@@ -201,13 +181,11 @@ export default function DealerPage() {
                 index === existingIndex ? cached : item
             );
         });
-        setHasLoadedDealers(true);
     };
 
     useEffect(() => {
         void fetchNextId();
         void fetchProvinces();
-        void fetchAllDealers(false);
     }, []);
 
     const handleProvinceChange = (provinceId: string) => {
@@ -253,10 +231,8 @@ export default function DealerPage() {
                 : await api.put(`${DEALERS}/${validationResult.data.id}`, payload);
 
             toast.success(response.data.message || "Dealer saved successfully");
-            if (hasLoadedDealers) {
-                setHasLoadedDealers(false);
-                await fetchAllDealers(false, true);
-            }
+            setDealers([]); // the looked-up copies are old now
+            void refreshList();
             // This page has a Print button: after Save the record stays on the screen (it does not jump to the next new
             // record). Only the next number is read again, quietly, so a new record still gets the right number.
             setIsNewMode(false);
@@ -310,7 +286,8 @@ export default function DealerPage() {
             setIsIdLoading(true);
             try {
                 const cached = dealers.find((d) => String(d.id) === debouncedId);
-                const dealer: DealerRow = cached || (await api.get(`${DEALERS}/${debouncedId}`)).data.data;
+                const dealer: DealerRow = cached || (await fetchOne(debouncedId));
+                prefetchNear(debouncedId, Number(nextId));
 
                 if (!dealer) {
                     toast.error("Dealer not found");
@@ -377,9 +354,9 @@ export default function DealerPage() {
                 <div className="flex flex-col md:flex-row justify-between items-start gap-10">
                     <div className="flex-1 w-full space-y-1.5">
                         <LabeledField
-                            type={isIdLoading ? "text" : "number"}
+                            type="number"
                             label="Dealer ID"
-                            value={isIdLoading ? "Loading..." : values.id || ""}
+                            value={values.id || ""}
                             onChange={(event) => {
                                 if (/^\d*$/.test(event.target.value)) {
                                     setValue("id", event.target.value, { shouldDirty: true });
@@ -396,7 +373,6 @@ export default function DealerPage() {
                             inputMode="numeric"
                             error={errors.id?.message}
                             wrapperClassName="max-w-[200px]"
-                            disabled={isIdLoading}
                             min={1}
                             max={Number(nextId) || 1}
                         />
@@ -474,7 +450,7 @@ export default function DealerPage() {
                         </button>
                         <button
                             type="button"
-                            onClick={() => fetchAllDealers()}
+                            onClick={() => setIsViewAllOpen(true)}
                             className={btnClass}
                             disabled={isSubmitting || !canView}
                         >
@@ -502,6 +478,7 @@ export default function DealerPage() {
                         >
                             Edit
                         </button>
+                        <ExitButton plain className={btnClass} />
                     </div>
                 </div>
 
@@ -538,16 +515,16 @@ export default function DealerPage() {
                             error={errors.mobileNo?.message}
                             disabled={!isEditing}
                         />
-                        <LabeledField
-                            type="number"
+                        <PriceField
                             label="Opening Balance"
                             value={values.opeaningBalance}
-                            onChange={(event) =>
-                                setValue("opeaningBalance", event.target.value, {
+                            onValueChange={(digits) =>
+                                setValue("opeaningBalance", digits, {
                                     shouldDirty: true,
                                     shouldValidate: true,
                                 })
                             }
+                            allowNegative
                             error={errors.opeaningBalance?.message}
                             disabled={!isEditing}
                         />
@@ -624,18 +601,15 @@ export default function DealerPage() {
                 printPath="/print/dealers"
                 recordId={isNewMode ? null : values.id || null}
                 maxCode={Number(nextId) > 1 ? Number(nextId) - 1 : undefined}
-                totalCount={hasLoadedDealers ? dealers.length : undefined}
             />
 
-            <ViewAllModal
-                key={isViewAllOpen ? "open" : "closed"}
+            <InfiniteViewAllModal
                 isOpen={isViewAllOpen}
                 title="All Dealers"
-                rows={dealers}
+                endpoint={DEALERS}
+                name="dealers"
+                mapRow={(row) => ({ ...row, cityName: row.city?.name || `City #${row.cityId}`, provinceName: row.province?.name || `Province #${row.provinceId}` })}
                 columns={dealerColumns}
-                searchKeys={["id", "dealarShipName", "name", "contactNo"]}
-                isLoading={isDealersLoading}
-                error={dealersError}
                 onClose={() => setIsViewAllOpen(false)}
                 onRowSelect={async (dealer) => {
                     const provinceIdStr = String(dealer.provinceId);
@@ -659,7 +633,6 @@ export default function DealerPage() {
                     setIsEditing(false);
                     setIsViewAllOpen(false);
                 }}
-                onDelete={() => undefined}
             />
         </section>
     );

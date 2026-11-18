@@ -10,7 +10,10 @@ import { PROVINCES } from "@/utlis/apiRoutes";
 import api from "@/lib/axios";
 import toast from "react-hot-toast";
 import { usePermissions } from "@/hooks/usePermissions";
-import { ViewAllModal, type ViewAllColumn } from "@/components/ui/ViewAllModal";
+import type { ViewAllColumn } from "@/components/ui/ViewAllModal";
+import { InfiniteViewAllModal, useRefreshMasterList } from "@/components/ui/InfiniteViewAllModal";
+import { EntryActions } from "@/components/ui/EntryActions";
+import { useMasterRecord } from "@/hooks/useMasterRecord";
 
 type ProvinceRow = {
     id: number;
@@ -39,10 +42,9 @@ export default function ProvincePage() {
     const [isIdLoading, setIsIdLoading] = useState(true);
     const [nextId, setNextId] = useState("");
     const [isViewAllOpen, setIsViewAllOpen] = useState(false);
+    const refreshList = useRefreshMasterList("provinces");
+    const { fetchOne, prefetchNear } = useMasterRecord("provinces", PROVINCES);
     const [provinces, setProvinces] = useState<ProvinceRow[]>([]);
-    const [hasLoadedProvinces, setHasLoadedProvinces] = useState(false);
-    const [isProvincesLoading, setIsProvincesLoading] = useState(false);
-    const [provincesError, setProvincesError] = useState("");
     const skipNextIdLookup = useRef(false);
 
     const {
@@ -84,24 +86,6 @@ export default function ProvincePage() {
         }
     };
 
-    const fetchAllProvinces = async (openModal = true, force = false) => {
-        if (openModal) setIsViewAllOpen(true);
-        if (hasLoadedProvinces && !force) return;
-
-        setIsProvincesLoading(true);
-        setProvincesError("");
-        try {
-            const { data } = await api.get(PROVINCES);
-            setProvinces(data.data || []);
-            setHasLoadedProvinces(true);
-        } catch (error: unknown) {
-            const apiError = error as ApiError;
-            setProvincesError(apiError.response?.data?.message || "Failed to fetch provinces");
-        } finally {
-            setIsProvincesLoading(false);
-        }
-    };
-
     const addProvinceToCache = (province: ProvinceRow) => {
         setProvinces((current) => {
             const existingIndex = current.findIndex(
@@ -112,12 +96,10 @@ export default function ProvincePage() {
                 index === existingIndex ? province : item
             );
         });
-        setHasLoadedProvinces(true);
     };
 
     useEffect(() => {
         void fetchNextId();
-        void fetchAllProvinces(false);
     }, []);
 
     const onSubmit = async (data: ProvinceFormValues) => {
@@ -145,10 +127,8 @@ export default function ProvincePage() {
                 : await api.put(`${PROVINCES}/${validationResult.data.id}`, payload);
 
             toast.success(response.data.message || "Province saved successfully");
-            if (hasLoadedProvinces) {
-                setHasLoadedProvinces(false);
-                await fetchAllProvinces(false, true);
-            }
+            setProvinces([]); // the looked-up copies are old now
+            void refreshList();
             // After Save the record stays on the screen (it does not jump to the next new one: the New button does that).
             // Only the next number is read again, quietly, so a new record still gets the right number.
             setIsNewMode(false);
@@ -201,7 +181,8 @@ export default function ProvincePage() {
             setIsIdLoading(true);
             try {
                 const cached = provinces.find((p) => String(p.id) === debouncedId);
-                const province = cached || (await api.get(`${PROVINCES}/${debouncedId}`)).data.data;
+                const province = cached || (await fetchOne(debouncedId));
+                prefetchNear(debouncedId, Number(nextId));
 
                 if (!province) {
                     toast.error("Province not found");
@@ -248,9 +229,9 @@ export default function ProvincePage() {
                 className="space-y-3"
             >
                 <LabeledField
-                    type={isIdLoading ? "text" : "number"}
+                    type="number"
                     label="Province ID"
-                    value={isIdLoading ? "Loading..." : values.id || ""}
+                    value={values.id || ""}
                     onChange={(event) => {
                         if (/^\d*$/.test(event.target.value)) {
                             setValue("id", event.target.value, { shouldDirty: true });
@@ -266,7 +247,6 @@ export default function ProvincePage() {
                     }}
                     inputMode="numeric"
                     error={errors.id?.message}
-                    disabled={isIdLoading}
                     min={1}
                     max={Number(nextId) || 1}
                 />
@@ -283,59 +263,24 @@ export default function ProvincePage() {
                     disabled={!isEditing}
                 />
 
-                <div className="grid grid-cols-2 gap-3 pt-6 sm:flex sm:flex-wrap sm:items-center sm:justify-center">
-                    <Button
-                        type="button"
-                        variant="secondary"
-                        shape="rounded"
-                        onClick={fetchNextId}
-                        disabled={isSubmitting || !canCreate}
-                        className="border border-zinc-400 bg-white px-6 hover:bg-zinc-50"
-                    >
-                        New
-                    </Button>
-                    <Button
-                        type="button"
-                        variant="secondary"
-                        shape="rounded"
-                        onClick={() => fetchAllProvinces()}
-                        disabled={isSubmitting || !canView}
-                        className="border border-zinc-400 bg-white px-6 hover:bg-zinc-50"
-                    >
-                        View All
-                    </Button>
-                    <Button
-                        type="button"
-                        variant="secondary"
-                        shape="rounded"
-                        onClick={() => setIsEditing(true)}
-                        disabled={isSubmitting || isNewMode || isEditing || !canUpdate}
-                        className="border border-zinc-400 bg-white px-6 hover:bg-zinc-50"
-                    >
-                        Edit
-                    </Button>
-                    <Button
-                        type="submit"
-                        variant="secondary"
-                        shape="rounded"
-                        isLoading={isSubmitting}
-                        disabled={!isEditing || (isNewMode ? !canCreate : !canUpdate)}
-                        className="border border-zinc-400 bg-white px-8 hover:bg-zinc-50"
-                    >
-                        Save
-                    </Button>
-                </div>
+                <EntryActions
+                    onNew={fetchNextId}
+                    newDisabled={isSubmitting || !canCreate}
+                    onViewAll={() => setIsViewAllOpen(true)}
+                    viewAllDisabled={isSubmitting || !canView}
+                    onEdit={() => setIsEditing(true)}
+                    editDisabled={isSubmitting || isNewMode || isEditing || !canUpdate}
+                    saveLoading={isSubmitting}
+                    saveDisabled={!isEditing || (isNewMode ? !canCreate : !canUpdate)}
+                />
             </form>
 
-            <ViewAllModal
-                key={isViewAllOpen ? "open" : "closed"}
+            <InfiniteViewAllModal
                 isOpen={isViewAllOpen}
                 title="All Provinces"
-                rows={provinces}
+                endpoint={PROVINCES}
+                name="provinces"
                 columns={provinceColumns}
-                searchKeys={["id", "name"]}
-                isLoading={isProvincesLoading}
-                error={provincesError}
                 onClose={() => setIsViewAllOpen(false)}
                 onRowSelect={(province) => {
                     reset({
@@ -346,7 +291,6 @@ export default function ProvincePage() {
                     setIsEditing(false);
                     setIsViewAllOpen(false);
                 }}
-                onDelete={() => undefined}
             />
         </section>
     );

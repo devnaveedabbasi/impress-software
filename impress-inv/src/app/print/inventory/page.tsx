@@ -5,7 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { useEffect } from "react";
 import { usePrintableList } from "@/hooks/usePrintableList";
 import { COMPANY_NAME } from "@/lib/company";
-import { selectPrintRecords, PRINT_ALL_MAX } from "@/lib/printSelection";
+import { describePrintSelection, printRequestParams, PRINT_ALL_MAX } from "@/lib/printSelection";
 import { PrintStatus } from "@/components/print/PrintStatus";
 import { INVENTORY } from "@/utlis/apiRoutes";
 
@@ -22,7 +22,11 @@ interface InventoryRow {
 
 function InventorySheet() {
     const searchParams = useSearchParams();
-    const { rows: all, state, errorMessage, retry } = usePrintableList<InventoryRow>(INVENTORY, (raw) => raw as InventoryRow[]);
+    const { rows: items, total, truncated, state, errorMessage, retry } = usePrintableList<InventoryRow>(
+        INVENTORY,
+        (raw) => raw as InventoryRow[],
+        printRequestParams(searchParams)
+    );
 
     // The title is the suggested name of a saved PDF
     useEffect(() => {
@@ -33,8 +37,8 @@ function InventorySheet() {
         return <PrintStatus state={state} message={errorMessage} onRetry={retry} />;
     }
 
-    // Only what was chosen in the Print dialog (this record, a range, the last N, or all)
-    const { rows: items, total, truncated, label } = selectPrintRecords(all, searchParams);
+    // The server sent only what was chosen in the Print dialog (this record, a range, the last N, or all)
+    const label = describePrintSelection(searchParams, items.length);
 
     return (
         <div>

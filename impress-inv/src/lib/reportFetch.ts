@@ -15,7 +15,8 @@ export type ReportMeta = {
   document?: Record<string, string | number | null | undefined>;
 };
 
-export async function fetchAllReportRows<T>(url: string, params: URLSearchParams, maxRows = PRINT_MAX_ROWS) {
+// keepMs: how long the pages may be kept in the browser storage, so a print tab opened a moment later re-uses them
+export async function fetchAllReportRows<T>(url: string, params: URLSearchParams, maxRows = PRINT_MAX_ROWS, keepMs = 0) {
   const rows: T[] = [];
   let page = 1;
   let meta: ReportMeta | undefined;
@@ -25,7 +26,7 @@ export async function fetchAllReportRows<T>(url: string, params: URLSearchParams
     pageParams.set("page", String(page));
     pageParams.set("limit", String(PRINT_PAGE_SIZE));
 
-    const { data } = await api.get(`${url}?${pageParams.toString()}`);
+    const { data } = await api.get(`${url}?${pageParams.toString()}`, { persistMs: keepMs });
     rows.push(...((data.data as T[]) || []));
     meta = data.meta as ReportMeta | undefined;
 

@@ -89,12 +89,12 @@ export const vendorSchema = z.object({
     .trim()
     .regex(/^(\+92|0)?3\d{9}$/, { message: "Enter a valid mobile number (e.g. 03001234567)" }),
   daysLimit: numericRange("Days Limit", 0, 365),
-  amoutLimit: numericRange("Account Limit", 0, 100_000_000),
+  amoutLimit: numericRange("Account Limit", 0, 2_147_483_647),
   NTNNo: z
     .string()
     .trim()
     .min(5, { message: "NTN No is required" }),
-  openingBalance: numericRange("Opening Balance", -100_000_000, 1_000_000_000),
+  openingBalance: numericRange("Opening Balance", -2_147_483_648, 2_147_483_647),
   CNICNo: z
     .string()
     .trim()
@@ -144,7 +144,7 @@ export const dealerSchema = z.object({
     .trim()
     .regex(/^\d{5}-\d{7}-\d{1}$|^\d{13}$/, { message: "Enter a valid NIC/CNIC (e.g. 12345-1234567-1)" }),
   dealarType: z.enum(["single", "dealar"], { message: "Select a dealer type" }),
-  opeaningBalance: numericRange("Opening Balance", -100_000_000, 1_000_000_000),
+  opeaningBalance: numericRange("Opening Balance", -2_147_483_648, 2_147_483_647),
 });
 
 export type DealerFormValues = z.infer<typeof dealerSchema>;
@@ -159,7 +159,8 @@ export const inventorySchema = z.object({
   categoryId: z.string().min(1, { message: "Category is required" }),
   departmentId: z.string().min(1, { message: "Department is required" }),
   pack: numericRange("Pack", 1, 100_000).refine((v) => Number.isInteger(Number(v)), { message: "Pack must be a whole number" }),
-  rate: numericRange("Rate", 0, 100_000_000).refine((v) => Number.isInteger(Number(v)), { message: "Rate must be a whole number" }),
+  // no limit of our own; only what the database can hold (a 32-bit whole number)
+  rate: numericRange("Rate", 0, 2_147_483_647).refine((v) => Number.isInteger(Number(v)), { message: "Rate must be a whole number" }),
   // A whole number from 0 (the server checks the same)
   unitPerBike: numericRange("Unit Per Bike", 0, 1000).refine((v) => Number.isInteger(Number(v)), { message: "Unit Per Bike must be a whole number" }),
   colorRows: z

@@ -7,6 +7,65 @@ import axios, { type AxiosAdapter, type AxiosResponse } from "axios";
 //   - anything is saved, changed or deleted (POST / PUT / PATCH / DELETE), so the next read is always fresh
 // Not cached: sync status, "next id" lookups and anything that fails. A request can skip the cache with
 // { headers: { "x-no-cache": "1" } }.
+//
+// A print page opens in a NEW browser tab, which starts with empty memory. So a request can also ask to be kept in
+// the browser's storage for a short time ({ persistMs: 300000 }): the next print tab then re-uses it instead of
+// asking the server again. It is dropped by the same rules (any save, logout) and when its time is over.
+declare module "axios" {
+  interface AxiosRequestConfig {
+    persistMs?: number;
+  }
+}
+const PERSIST_PREFIX = "api-persist:";
+const PERSIST_MAX_CHARS = 2_000_000; // a bigger answer is not kept (the storage of a browser is small)
+
+const readPersisted = (key: string, config: Parameters<AxiosAdapter>[0]): AxiosResponse | null => {
+  try {
+    const raw = localStorage.getItem(PERSIST_PREFIX + key);
+    if (!raw) return null;
+    const entry = JSON.parse(raw) as { until: number; data: unknown };
+    if (Date.now() > entry.until) {
+      localStorage.removeItem(PERSIST_PREFIX + key);
+      return null;
+    }
+    return { data: entry.data, status: 200, statusText: "OK", headers: {}, config, request: {} } as AxiosResponse;
+  } catch {
+    return null;
+  }
+};
+
+const clearPersisted = () => {
+  try {
+    for (let i = localStorage.length - 1; i >= 0; i--) {
+      const name = localStorage.key(i);
+      if (name?.startsWith(PERSIST_PREFIX)) localStorage.removeItem(name);
+    }
+  } catch {
+    // the storage may be blocked: nothing was kept then
+  }
+};
+
+const writePersisted = (key: string, data: unknown, ms: number) => {
+  try {
+    const text = JSON.stringify({ until: Date.now() + ms, data });
+    if (text.length > PERSIST_MAX_CHARS) return;
+    localStorage.setItem(PERSIST_PREFIX + key, text);
+  } catch {
+    clearPersisted(); // the storage is full: start again
+  }
+};
+
+// A browser refresh (F5 / reload) always means "show me the newest": whatever was kept for the print pages is dropped
+// when a page is loaded by a refresh. (A new tab opened by the Print button is not a refresh, so it re-uses the data.)
+if (typeof window !== "undefined") {
+  try {
+    const navigation = performance.getEntriesByType("navigation")[0] as PerformanceNavigationTiming | undefined;
+    if (navigation?.type === "reload") clearPersisted();
+  } catch {
+    // an old browser without this information: nothing to do
+  }
+}
+
 const MAX_CACHED = 150;
 const cache = new Map<string, AxiosResponse>();
 const inFlight = new Map<string, Promise<AxiosResponse>>();
@@ -27,6 +86,7 @@ const copyOf = (response: AxiosResponse): AxiosResponse => ({
 export function clearApiCache() {
   cache.clear();
   inFlight.clear();
+  if (typeof window !== "undefined") clearPersisted();
 }
 
 const defaultAdapter = axios.getAdapter(axios.defaults.adapter);
@@ -50,6 +110,12 @@ const cachingAdapter: AxiosAdapter = async (config) => {
   const cached = cache.get(key);
   if (cached) return copyOf(cached);
 
+  const persistMs = typeof window !== "undefined" ? config.persistMs ?? 0 : 0;
+  if (persistMs > 0) {
+    const kept = readPersisted(key, config);
+    if (kept) return kept;
+  }
+
   // The same request asked twice at the same time is sent once
   let pending = inFlight.get(key);
   if (!pending) {
@@ -58,6 +124,7 @@ const cachingAdapter: AxiosAdapter = async (config) => {
         if (response.status >= 200 && response.status < 300 && inFlight.get(key) === pending) {
           if (cache.size >= MAX_CACHED) cache.delete(cache.keys().next().value as string);
           cache.set(key, response);
+          if (persistMs > 0) writePersisted(key, response.data, persistMs);
         }
         return response;
       })
@@ -131,6 +198,7 @@ axiosInstance.interceptors.response.use(
 
       const sessionReplaced = error.response?.data?.code === "SESSION_REPLACED";
       localStorage.removeItem("token");
+      clearApiCache();
       window.dispatchEvent(
         new CustomEvent("unauthorized", {
           detail: {

@@ -1,5 +1,6 @@
 import express from "express";
 import cors from "cors";
+import compression from "compression";
 import errorHandler from "./middlewares/errorHandler.middleware.js";
 import logger from "./middlewares/logger.middleware.js";
 import { runWithClientType } from "./config/prisma.js";
@@ -13,6 +14,7 @@ const corsOptions = {
 };
 
 app.use(cors(corsOptions));
+app.use(compression()); // gzip: the big JSON lists travel several times smaller
 
 // The desktop software marks its requests; everything else is treated as web (see config/prisma.js)
 app.use((req, res, next) => {

@@ -8,7 +8,14 @@ import useDebounce from "@/hooks/useDebounce";
 import toast from "react-hot-toast";
 import { usePermissions } from "@/hooks/usePermissions";
 import { ACCOUNT_CODES } from "@/utlis/apiRoutes";
-import { ViewAllModal, type ViewAllColumn } from "@/components/ui/ViewAllModal";
+import type { ViewAllColumn } from "@/components/ui/ViewAllModal";
+import { InfiniteViewAllModal, useRefreshMasterList } from "@/components/ui/InfiniteViewAllModal";
+import { EntryActions } from "@/components/ui/EntryActions";
+import { LabeledSelect } from "@/components/ui/LabeledSelect";
+import { RowDeleteButton, deletableRowClassName } from "@/components/ui/RowDeleteButton";
+import { AddRowButton } from "@/components/ui/AddRowButton";
+import { formatPrice, parsePrice } from "@/lib/price";
+import { useMasterRecord } from "@/hooks/useMasterRecord";
 import { Button } from "@/components/ui/Button";
 
 type AccountCodeRow = {
@@ -78,10 +85,9 @@ export default function AccountCodePage() {
     const [isIdLoading, setIsIdLoading] = useState(true);
     const [nextId, setNextId] = useState("");
     const [isViewAllOpen, setIsViewAllOpen] = useState(false);
+    const refreshList = useRefreshMasterList("account-codes");
+    const { fetchOne, prefetchNear } = useMasterRecord("account-codes", ACCOUNT_CODES);
     const [accountCodes, setAccountCodes] = useState<AccountCodeRow[]>([]);
-    const [hasLoadedAccountCodes, setHasLoadedAccountCodes] = useState(false);
-    const [isAccountCodesLoading, setIsAccountCodesLoading] = useState(false);
-    const [accountCodesError, setAccountCodesError] = useState("");
     const skipNextIdLookup = useRef(false);
 
     const {
@@ -161,24 +167,6 @@ export default function AccountCodePage() {
         };
     };
 
-    const fetchAllAccountCodes = async (openModal = true, force = false) => {
-        if (openModal) setIsViewAllOpen(true);
-        if (hasLoadedAccountCodes && !force) return;
-
-        setIsAccountCodesLoading(true);
-        setAccountCodesError("");
-        try {
-            const { data } = await api.get(ACCOUNT_CODES);
-            setAccountCodes(data.data || []);
-            setHasLoadedAccountCodes(true);
-        } catch (error: unknown) {
-            const apiError = error as ApiError;
-            setAccountCodesError(apiError.response?.data?.message || "Failed to fetch account codes");
-        } finally {
-            setIsAccountCodesLoading(false);
-        }
-    };
-
     const addAccountCodeToCache = (item: AccountCodeRow) => {
         setAccountCodes((current) => {
             const existingIndex = current.findIndex(
@@ -187,12 +175,10 @@ export default function AccountCodePage() {
             if (existingIndex === -1) return [...current, item];
             return current.map((c, index) => (index === existingIndex ? item : c));
         });
-        setHasLoadedAccountCodes(true);
     };
 
     useEffect(() => {
         void fetchNextId();
-        void fetchAllAccountCodes(false);
     }, []);
 
     const onSubmit = async (data: AccountCodeFormValues) => {
@@ -233,10 +219,8 @@ export default function AccountCodePage() {
                 : await api.put(`${ACCOUNT_CODES}/${data.id}`, payload);
 
             toast.success(response.data.message || "Account Form saved successfully");
-            if (hasLoadedAccountCodes) {
-                setHasLoadedAccountCodes(false);
-                await fetchAllAccountCodes(false, true);
-            }
+            setAccountCodes([]); // the looked-up copies are old now
+            void refreshList();
             // After Save the record stays on the screen (it does not jump to the next new one: the New button does that).
             // Only the next number is read again, quietly, so a new record still gets the right number.
             setIsNewMode(false);
@@ -294,7 +278,8 @@ export default function AccountCodePage() {
             setIsIdLoading(true);
             try {
                 const cached = accountCodes.find((item) => String(item.id) === debouncedId);
-                const ac = cached || (await api.get(`${ACCOUNT_CODES}/${debouncedId}`)).data.data;
+                const ac = cached || (await fetchOne(debouncedId));
+                prefetchNear(debouncedId, Number(nextId));
 
                 if (!ac) {
                     toast.error("Account Form not found");
@@ -322,6 +307,20 @@ export default function AccountCodePage() {
 
         void fetchDebouncedId();
     }, [debouncedId, nextId, canView, accountCodes]);
+
+    // Remove a row (it is gone from the form when Save is pressed); the table keeps at least 4 rows
+    const removeItemRow = (index: number) => {
+        const remaining = values.items.filter((_, i) => i !== index);
+        while (remaining.length < 4) remaining.push(defaultItemRow());
+        setValue("items", remaining, { shouldDirty: true, shouldValidate: true });
+    };
+
+    const addItemRow = () => {
+        setValue("items", [...values.items, defaultItemRow()], { shouldDirty: true });
+    };
+
+    const rowHasData = (row: { code?: string; name?: string; address?: string; contactNo?: string; saleTaxNo?: string; openingBalance?: string }) =>
+        Boolean(row.code || row.name || row.address || row.contactNo || row.saleTaxNo || row.openingBalance);
 
     const handleItemChange = (index: number, field: string, value: string) => {
         const newItems = [...values.items];
@@ -353,8 +352,8 @@ export default function AccountCodePage() {
                     <div className="flex items-center gap-4">
                         <label className="w-24 text-sm text-black">Head Code</label>
                         <input
-                            type={isIdLoading ? "text" : "number"}
-                            value={isIdLoading ? "Loading..." : values.id || ""}
+                            type="number"
+                            value={values.id || ""}
                             onChange={(event) => {
                                 if (/^\d*$/.test(event.target.value)) {
                                     setValue("id", event.target.value, { shouldDirty: true });
@@ -369,7 +368,6 @@ export default function AccountCodePage() {
                                 }
                             }}
                             inputMode="numeric"
-                            disabled={isIdLoading}
                             min={1}
                             max={Number(nextId) || 1}
                             className={`border border-zinc-300 px-2 py-1 outline-none text-sm w-32 text-black ${
@@ -405,25 +403,21 @@ export default function AccountCodePage() {
                             Group
                         </label>
                         <div className="flex-1 ml-5 border border-zinc-300 bg-white">
-                            <select
+                            <LabeledSelect
+                                variant="cell"
+                                label="Group"
+                                options={groupOptions}
                                 value={values.group}
-                                onChange={(e) =>
-                                    setValue("group", e.target.value, {
+                                onChange={(val) =>
+                                    setValue("group", val, {
                                         shouldDirty: true,
                                         shouldValidate: true,
                                     })
                                 }
                                 disabled={!isEditing}
-                                className={`w-full px-2 py-1 outline-none text-sm bg-transparent text-black ${
-                                    errors.group ? "border-red-500" : ""
-                                }`}
-                            >
-                                {groupOptions.map((opt) => (
-                                    <option key={opt.value} value={opt.value}>
-                                        {opt.label}
-                                    </option>
-                                ))}
-                            </select>
+                                searchThreshold={0}
+                                placeholder="Select Group"
+                            />
                         </div>
                     </div>
                     {errors.group && (
@@ -458,10 +452,7 @@ export default function AccountCodePage() {
                         </thead>
                         <tbody>
                             {values.items.map((item, idx) => (
-                                <tr
-                                    key={idx}
-                                    className="border-b border-zinc-300 last:border-0 hover:bg-zinc-50"
-                                >
+                                <tr key={idx} className={deletableRowClassName}>
                                     <td className="border-r border-zinc-300">
                                         <input
                                             type="text"
@@ -507,16 +498,21 @@ export default function AccountCodePage() {
                                             className="w-full px-2 py-1.5 outline-none bg-transparent text-black"
                                         />
                                     </td>
-                                    <td>
+                                    <td className="relative">
                                         <input
-                                            type="number"
-                                            value={item.openingBalance}
+                                            type="text"
+                                            inputMode="text"
+                                            autoComplete="off"
+                                            value={formatPrice(item.openingBalance)}
                                             onChange={(e) =>
-                                                handleItemChange(idx, "openingBalance", e.target.value)
+                                                handleItemChange(idx, "openingBalance", parsePrice(e.target.value, true))
                                             }
                                             disabled={!isEditing}
-                                            className="w-full px-2 py-1.5 outline-none bg-transparent text-black"
+                                            className="w-full px-2 py-1.5 pr-8 outline-none bg-transparent text-black"
                                         />
+                                        {isEditing && rowHasData(item) && (
+                                            <RowDeleteButton rowNumber={idx + 1} onClick={() => removeItemRow(idx)} />
+                                        )}
                                     </td>
                                 </tr>
                             ))}
@@ -524,64 +520,36 @@ export default function AccountCodePage() {
                     </table>
                 </div>
 
+                <div className="-mt-6 mb-4 flex items-center justify-between gap-2">
+                    <span className="text-xs text-zinc-500">
+                        {isEditing ? "Tip: hover a row and click the trash icon to remove it" : ""}
+                    </span>
+                    <AddRowButton onClick={addItemRow} disabled={!isEditing} />
+                </div>
+
                 {errors.items && (
                     <div className="text-red-500 text-sm mb-4">{errors.items.message}</div>
                 )}
 
                 {/* Action Buttons */}
-                <div className="flex flex-wrap items-center justify-center gap-3">
-                    <Button
-                        type="button"
-                        variant="secondary"
-                        shape="rounded"
-                        onClick={fetchNextId}
-                        disabled={isSubmitting || !canCreate}
-                        className="border border-zinc-400 bg-white px-6 hover:bg-zinc-50"
-                    >
-                        New
-                    </Button>
-                    <Button
-                        type="button"
-                        variant="secondary"
-                        shape="rounded"
-                        onClick={() => fetchAllAccountCodes()}
-                        disabled={isSubmitting || !canView}
-                        className="border border-zinc-400 bg-white px-6 hover:bg-zinc-50"
-                    >
-                        View All
-                    </Button>
-                    <Button
-                        type="button"
-                        variant="secondary"
-                        shape="rounded"
-                        onClick={() => setIsEditing(true)}
-                        disabled={isSubmitting || isNewMode || isEditing || !canUpdate}
-                        className="border border-zinc-400 bg-white px-6 hover:bg-zinc-50"
-                    >
-                        Edit
-                    </Button>
-                    <Button
-                        type="submit"
-                        variant="secondary"
-                        shape="rounded"
-                        isLoading={isSubmitting}
-                        disabled={!isEditing || (isNewMode ? !canCreate : !canUpdate)}
-                        className="border border-zinc-400 bg-white px-8 hover:bg-zinc-50"
-                    >
-                        Save
-                    </Button>
-                </div>
+                <EntryActions
+                    onNew={fetchNextId}
+                    newDisabled={isSubmitting || !canCreate}
+                    onViewAll={() => setIsViewAllOpen(true)}
+                    viewAllDisabled={isSubmitting || !canView}
+                    onEdit={() => setIsEditing(true)}
+                    editDisabled={isSubmitting || isNewMode || isEditing || !canUpdate}
+                    saveLoading={isSubmitting}
+                    saveDisabled={!isEditing || (isNewMode ? !canCreate : !canUpdate)}
+                />
             </form>
 
-            <ViewAllModal
-                key={isViewAllOpen ? "open" : "closed"}
+            <InfiniteViewAllModal
                 isOpen={isViewAllOpen}
                 title="All Account Codes"
-                rows={accountCodes}
+                endpoint={ACCOUNT_CODES}
+                name="account-codes"
                 columns={accountCodeColumns}
-                searchKeys={["id", "headName", "group"]}
-                isLoading={isAccountCodesLoading}
-                error={accountCodesError}
                 onClose={() => setIsViewAllOpen(false)}
                 onRowSelect={(item) => {
                     reset(mapAccountCodeToForm(item));
@@ -589,7 +557,6 @@ export default function AccountCodePage() {
                     setIsEditing(false);
                     setIsViewAllOpen(false);
                 }}
-                onDelete={() => undefined}
             />
         </section>
     );

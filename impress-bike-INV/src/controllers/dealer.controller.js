@@ -6,6 +6,8 @@ import { ApiError } from "../utils/apiError.js";
 import { ApiResponse } from "../utils/apiResponse.js";
 import asyncHandler from "../utils/asyncHandler.js";
 
+import { isPagedRequest, findPage, isPrintRequest, findPrintRows } from "../utils/listQuery.js";
+
 const dealerTypes = ['single', 'dealar'];
 
 const isDealerConflict = (error) => {
@@ -87,6 +89,17 @@ const createDealer = asyncHandler(async (req, res) => {
 });
 
 const getAllDealers = asyncHandler(async (req, res) => {
+    if (isPrintRequest(req)) {
+        const printed = await findPrintRows(prisma.dealer, req);
+        return res.status(200).json(new ApiResponse(200, printed, "Fetched successfully"));
+    }
+    if (isPagedRequest(req)) {
+        const page = await findPage(prisma.dealer, req, {
+            searchFields: ["dealarShipName", "name", "contactNo"],
+            include: { province: true, city: true },
+        });
+        return res.status(200).json(new ApiResponse(200, page, "Fetched successfully"));
+    }
     const dealers = await prisma.dealer.findMany({
         orderBy: { id: "asc" },
         include: {

@@ -10,7 +10,10 @@ import { DEPARTMENTS } from "@/utlis/apiRoutes";
 import api from "@/lib/axios";
 import toast from "react-hot-toast";
 import { usePermissions } from "@/hooks/usePermissions";
-import { ViewAllModal, type ViewAllColumn } from "@/components/ui/ViewAllModal";
+import type { ViewAllColumn } from "@/components/ui/ViewAllModal";
+import { InfiniteViewAllModal, useRefreshMasterList } from "@/components/ui/InfiniteViewAllModal";
+import { EntryActions } from "@/components/ui/EntryActions";
+import { useMasterRecord } from "@/hooks/useMasterRecord";
 
 type DepartmentRow = {
     id: number;
@@ -39,10 +42,9 @@ export default function DepartmentPage() {
     const [isIdLoading, setIsIdLoading] = useState(true);
     const [nextId, setNextId] = useState("");
     const [isViewAllOpen, setIsViewAllOpen] = useState(false);
+    const refreshList = useRefreshMasterList("departments");
+    const { fetchOne, prefetchNear } = useMasterRecord("departments", DEPARTMENTS);
     const [departments, setDepartments] = useState<DepartmentRow[]>([]);
-    const [hasLoadedDepartments, setHasLoadedDepartments] = useState(false);
-    const [isDepartmentsLoading, setIsDepartmentsLoading] = useState(false);
-    const [departmentsError, setDepartmentsError] = useState("");
     const skipNextIdLookup = useRef(false);
 
     const {
@@ -84,24 +86,6 @@ export default function DepartmentPage() {
         }
     };
 
-    const fetchAllDepartments = async (openModal = true, force = false) => {
-        if (openModal) setIsViewAllOpen(true);
-        if (hasLoadedDepartments && !force) return;
-
-        setIsDepartmentsLoading(true);
-        setDepartmentsError("");
-        try {
-            const { data } = await api.get(DEPARTMENTS);
-            setDepartments(data.data || []);
-            setHasLoadedDepartments(true);
-        } catch (error: unknown) {
-            const apiError = error as ApiError;
-            setDepartmentsError(apiError.response?.data?.message || "Failed to fetch departments");
-        } finally {
-            setIsDepartmentsLoading(false);
-        }
-    };
-
     const addDepartmentToCache = (department: DepartmentRow) => {
         setDepartments((current) => {
             const existingIndex = current.findIndex(
@@ -112,12 +96,10 @@ export default function DepartmentPage() {
                 index === existingIndex ? department : item
             );
         });
-        setHasLoadedDepartments(true);
     };
 
     useEffect(() => {
         void fetchNextId();
-        void fetchAllDepartments(false);
     }, []);
 
     const onSubmit = async (data: DepartmentFormValues) => {
@@ -145,10 +127,8 @@ export default function DepartmentPage() {
                 : await api.put(`${DEPARTMENTS}/${validationResult.data.id}`, payload);
 
             toast.success(response.data.message || "Department saved successfully");
-            if (hasLoadedDepartments) {
-                setHasLoadedDepartments(false);
-                await fetchAllDepartments(false, true);
-            }
+            setDepartments([]); // the looked-up copies are old now
+            void refreshList();
             // After Save the record stays on the screen (it does not jump to the next new one: the New button does that).
             // Only the next number is read again, quietly, so a new record still gets the right number.
             setIsNewMode(false);
@@ -201,7 +181,8 @@ export default function DepartmentPage() {
             setIsIdLoading(true);
             try {
                 const cached = departments.find((d) => String(d.id) === debouncedId);
-                const department = cached || (await api.get(`${DEPARTMENTS}/${debouncedId}`)).data.data;
+                const department = cached || (await fetchOne(debouncedId));
+                prefetchNear(debouncedId, Number(nextId));
 
                 if (!department) {
                     toast.error("Department not found");
@@ -248,9 +229,9 @@ export default function DepartmentPage() {
                 className="space-y-3"
             >
                 <LabeledField
-                    type={isIdLoading ? "text" : "number"}
+                    type="number"
                     label="Department ID"
-                    value={isIdLoading ? "Loading..." : values.id || ""}
+                    value={values.id || ""}
                     onChange={(event) => {
                         if (/^\d*$/.test(event.target.value)) {
                             setValue("id", event.target.value, { shouldDirty: true });
@@ -266,7 +247,6 @@ export default function DepartmentPage() {
                     }}
                     inputMode="numeric"
                     error={errors.id?.message}
-                    disabled={isIdLoading}
                     min={1}
                     max={Number(nextId) || 1}
                 />
@@ -283,59 +263,24 @@ export default function DepartmentPage() {
                     disabled={!isEditing}
                 />
 
-                <div className="grid grid-cols-2 gap-3 pt-6 sm:flex sm:flex-wrap sm:items-center sm:justify-center">
-                    <Button
-                        type="button"
-                        variant="secondary"
-                        shape="rounded"
-                        onClick={fetchNextId}
-                        disabled={isSubmitting || !canCreate}
-                        className="border border-zinc-400 bg-white px-6 hover:bg-zinc-50"
-                    >
-                        New
-                    </Button>
-                    <Button
-                        type="button"
-                        variant="secondary"
-                        shape="rounded"
-                        onClick={() => fetchAllDepartments()}
-                        disabled={isSubmitting || !canView}
-                        className="border border-zinc-400 bg-white px-6 hover:bg-zinc-50"
-                    >
-                        View All
-                    </Button>
-                    <Button
-                        type="button"
-                        variant="secondary"
-                        shape="rounded"
-                        onClick={() => setIsEditing(true)}
-                        disabled={isSubmitting || isNewMode || isEditing || !canUpdate}
-                        className="border border-zinc-400 bg-white px-6 hover:bg-zinc-50"
-                    >
-                        Edit
-                    </Button>
-                    <Button
-                        type="submit"
-                        variant="secondary"
-                        shape="rounded"
-                        isLoading={isSubmitting}
-                        disabled={!isEditing || (isNewMode ? !canCreate : !canUpdate)}
-                        className="border border-zinc-400 bg-white px-8 hover:bg-zinc-50"
-                    >
-                        Save
-                    </Button>
-                </div>
+                <EntryActions
+                    onNew={fetchNextId}
+                    newDisabled={isSubmitting || !canCreate}
+                    onViewAll={() => setIsViewAllOpen(true)}
+                    viewAllDisabled={isSubmitting || !canView}
+                    onEdit={() => setIsEditing(true)}
+                    editDisabled={isSubmitting || isNewMode || isEditing || !canUpdate}
+                    saveLoading={isSubmitting}
+                    saveDisabled={!isEditing || (isNewMode ? !canCreate : !canUpdate)}
+                />
             </form>
 
-            <ViewAllModal
-                key={isViewAllOpen ? "open" : "closed"}
+            <InfiniteViewAllModal
                 isOpen={isViewAllOpen}
                 title="All Departments"
-                rows={departments}
+                endpoint={DEPARTMENTS}
+                name="departments"
                 columns={departmentColumns}
-                searchKeys={["id", "name"]}
-                isLoading={isDepartmentsLoading}
-                error={departmentsError}
                 onClose={() => setIsViewAllOpen(false)}
                 onRowSelect={(department) => {
                     reset({
@@ -346,7 +291,6 @@ export default function DepartmentPage() {
                     setIsEditing(false);
                     setIsViewAllOpen(false);
                 }}
-                onDelete={() => undefined}
             />
         </section>
     );

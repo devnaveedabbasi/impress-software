@@ -4,6 +4,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import api from "@/lib/axios";
 import type { PrintReportState } from "@/hooks/usePrintReport";
 
+import { PRINT_KEEP_MS } from "@/lib/printCache";
+
 const MAX_ATTEMPTS = 3;
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -15,15 +17,15 @@ const isTemporary = (error: unknown) => {
   return !status || status >= 500 || status === 408 || status === 429;
 };
 
-// Loads ONE document (for example a gate pass slip) for printing and opens the print dialog once, after it is
-// on screen. A temporary failure is retried by itself, a real failure is shown with Retry and never prints.
+// Loads ONE document (for example a gate pass slip) for printing and shows it on the page as a preview. The
+// print dialog opens only when the user presses the Print button. A temporary failure is retried by itself, a real
+// failure is shown with Retry.
 export function usePrintDocument<T>(url: string | null, canView: boolean) {
   const [data, setData] = useState<T | null>(null);
   const [state, setState] = useState<PrintReportState>("loading");
   const [errorMessage, setErrorMessage] = useState("");
   const [reloadKey, setReloadKey] = useState(0);
   const requestRef = useRef(0);
-  const printedKeyRef = useRef("");
   const queryKey = `${url}#${reloadKey}`;
 
   useEffect(() => {
@@ -44,7 +46,7 @@ export function usePrintDocument<T>(url: string | null, canView: boolean) {
     const load = async () => {
       for (let attempt = 1; ; attempt++) {
         try {
-          const response = await api.get(url);
+          const response = await api.get(url, { persistMs: attempt === 1 && reloadKey === 0 ? PRINT_KEEP_MS : 0 });
           if (requestId !== requestRef.current) return;
           setData(response.data.data as T);
           setState("ready");
@@ -71,17 +73,6 @@ export function usePrintDocument<T>(url: string | null, canView: boolean) {
 
     void load();
   }, [url, canView, reloadKey]);
-
-  // Print once per loaded document, after the browser has drawn it
-  useEffect(() => {
-    if (state !== "ready") return;
-    const timer = setTimeout(() => {
-      if (printedKeyRef.current === queryKey) return;
-      printedKeyRef.current = queryKey;
-      window.print();
-    }, 600);
-    return () => clearTimeout(timer);
-  }, [state, queryKey]);
 
   const retry = useCallback(() => setReloadKey((key) => key + 1), []);
 

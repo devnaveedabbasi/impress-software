@@ -4,6 +4,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import api from "@/lib/axios";
 import type { PrintReportState } from "@/hooks/usePrintReport";
 
+import { PRINT_KEEP_MS } from "@/lib/printCache";
+
 const MAX_ATTEMPTS = 3;
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -15,17 +17,23 @@ const isTemporary = (error: unknown) => {
   return !status || status >= 500 || status === 408 || status === 429;
 };
 
-// Loads the list of a master entry (vendors, dealers, inventory) for its print page and opens the print dialog once
-// the data is on screen. A temporary failure is retried by itself; a real failure is shown with a Retry button,
-// so the page is never silently empty. The print page also has a Print button, in case the browser blocks the
-// automatic print dialog.
-export function usePrintableList<T>(apiPath: string, mapRows: (raw: unknown[]) => T[]) {
+// Loads the list of a master entry (vendors, dealers, inventory) for its print page and shows it on the page
+// as a preview of the paper. The print dialog opens only when the user presses the Print button of the page.
+// A temporary failure is retried by itself; a real failure is shown with a Retry button, so the page is never
+// silently empty.
+export function usePrintableList<T>(
+  apiPath: string,
+  mapRows: (raw: unknown[]) => T[],
+  // what the Print dialog chose (see printRequestParams): the server sends only those records
+  selection: Record<string, string> = {}
+) {
   const [rows, setRows] = useState<T[]>([]);
+  const [meta, setMeta] = useState({ total: 0, truncated: false });
+  const selectionKey = JSON.stringify(selection);
   const [state, setState] = useState<PrintReportState>("loading");
   const [errorMessage, setErrorMessage] = useState("");
   const [reloadKey, setReloadKey] = useState(0);
   const requestRef = useRef(0);
-  const printedKeyRef = useRef("");
   const mapRef = useRef(mapRows);
   mapRef.current = mapRows;
 
@@ -37,9 +45,15 @@ export function usePrintableList<T>(apiPath: string, mapRows: (raw: unknown[]) =
       for (let attempt = 1; ; attempt++) {
         try {
           // _ts: the printed list must be current, never an answer remembered by the page
-          const { data } = await api.get(apiPath, { params: { _ts: Date.now() } });
+          // a print tab opened a moment ago (or the same print again) re-uses the list; a Retry reads it fresh
+          const { data } = await api.get(apiPath, {
+            params: JSON.parse(selectionKey),
+            persistMs: attempt === 1 && reloadKey === 0 ? PRINT_KEEP_MS : 0,
+          });
           if (requestId !== requestRef.current) return;
-          setRows(mapRef.current((data.data || []) as unknown[]));
+          const result = data.data as { items?: unknown[]; total?: number; truncated?: boolean };
+          setRows(mapRef.current(result?.items || []));
+          setMeta({ total: result?.total ?? 0, truncated: Boolean(result?.truncated) });
           setState("ready");
           return;
         } catch (error) {
@@ -61,21 +75,9 @@ export function usePrintableList<T>(apiPath: string, mapRows: (raw: unknown[]) =
     };
 
     void load();
-  }, [apiPath, reloadKey]);
-
-  // Print once per loaded list, after the browser has drawn the data
-  useEffect(() => {
-    if (state !== "ready" || rows.length === 0) return;
-    const key = `${apiPath}#${reloadKey}`;
-    const timer = setTimeout(() => {
-      if (printedKeyRef.current === key) return;
-      printedKeyRef.current = key;
-      window.print();
-    }, 600);
-    return () => clearTimeout(timer);
-  }, [state, rows.length, apiPath, reloadKey]);
+  }, [apiPath, reloadKey, selectionKey]);
 
   const retry = useCallback(() => setReloadKey((key) => key + 1), []);
 
-  return { rows, state, errorMessage, retry };
+  return { rows, total: meta.total, truncated: meta.truncated, state, errorMessage, retry };
 }

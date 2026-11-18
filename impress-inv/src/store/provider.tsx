@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Provider } from "react-redux";
 import { store } from ".";
 import { AuthGuard } from "@/components/layout/AuthGuard";
@@ -25,12 +26,18 @@ function AppInitializer({ children }: { children: React.ReactNode }) {
 }
 
 export function Providers({ children }: { children: React.ReactNode }) {
+  // the cache of the server lists (TanStack Query): a list that was read a moment ago is not read again
+  const [queryClient] = useState(
+    () => new QueryClient({ defaultOptions: { queries: { refetchOnWindowFocus: false, retry: 1 } } })
+  );
   return (
     <Provider store={store}>
-      <AppInitializer>
-        <AutoSyncManager />
-        <AuthGuard>{children}</AuthGuard>
-      </AppInitializer>
+      <QueryClientProvider client={queryClient}>
+        <AppInitializer>
+          <AutoSyncManager />
+          <AuthGuard>{children}</AuthGuard>
+        </AppInitializer>
+      </QueryClientProvider>
     </Provider>
   );
 }

@@ -7,6 +7,8 @@ import { ApiResponse } from "../utils/apiResponse.js";
 import { getStockInHand } from "../services/stock.service.js";
 import asyncHandler from "../utils/asyncHandler.js";
 
+import { isPagedRequest, findPage, isPrintRequest, findPrintRows } from "../utils/listQuery.js";
+
 const isInventoryConflict = (error) => {
     const message = String(error?.message || "");
     return (
@@ -84,6 +86,23 @@ const syncSequence = (table) =>
     `);
 
 const getAllInventories = asyncHandler(async (req, res) => {
+    if (isPrintRequest(req)) {
+        const printed = await findPrintRows(prisma.inventory, req, { include: { category: true, department: true } });
+        return res.status(200).json(new ApiResponse(200, printed, "Fetched successfully"));
+    }
+    if (isPagedRequest(req)) {
+        const page = await findPage(prisma.inventory, req, {
+            searchFields: ["itemName"],
+            relationFields: [["category", "name"], ["department", "name"]],
+            include: inventoryInclude,
+            // the stock is worked out for this page only, not for the whole list
+            after: async (rows) => {
+                const stock = await getStockInHand(rows.map((item) => item.id));
+                return rows.map((item) => ({ ...item, stockInHand: stock.get(item.id) ?? 0 }));
+            },
+        });
+        return res.status(200).json(new ApiResponse(200, page, "Fetched successfully"));
+    }
     const inventories = await prisma.inventory.findMany({
         orderBy: { id: "asc" },
         include: inventoryInclude,
