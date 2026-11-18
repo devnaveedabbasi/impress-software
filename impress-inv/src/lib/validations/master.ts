@@ -260,6 +260,8 @@ export const purchaseOrderSchema = z.object({
         quantity: z.string().optional().or(z.literal("")),
         rate: z.string().optional().or(z.literal("")),
         amount: z.string().optional().or(z.literal("")),
+        // how many of this item one bike needs (from the inventory): Qty = Unit x this
+        unitPerBike: z.string().optional().or(z.literal("")),
       })
     )
     .superRefine((items, ctx) => {

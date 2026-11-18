@@ -74,6 +74,20 @@ const padRows = <T,>(rows: T[], makeRow: () => T): T[] => {
     return padded;
 };
 
+// Unit is typed (how many bikes the order is for). Qty is worked out: Unit x the units one bike needs (from the
+// inventory). Amount = Qty x Rate. Rate comes from the approved rate of the quotation and is not typed.
+const withWorkedOutQtyAndAmount = <T extends { unit?: string; unitPerBike?: string; quantity?: string; rate?: string; amount?: string }>(row: T): T => {
+    const unit = Number(row.unit) || 0;
+    const perBike = Number(row.unitPerBike) || 0;
+    const quantity = unit > 0 && perBike > 0 ? unit * perBike : 0;
+    const rate = Number(row.rate) || 0;
+    return {
+        ...row,
+        quantity: quantity > 0 ? String(quantity) : "",
+        amount: quantity > 0 && rate > 0 ? String(quantity * rate) : "",
+    };
+};
+
 const defaultRow = () => ({
     code: "",
     itemName: "",
@@ -81,6 +95,7 @@ const defaultRow = () => ({
     quantity: "",
     rate: "",
     amount: "",
+    unitPerBike: "",
 });
 
 const initialValues: PurchaseOrderFormValues = {
@@ -104,6 +119,8 @@ export default function PurchaseOrderPage() {
     const [isEditing, setIsEditing] = useState(true);
     const [vendors, setVendors] = useState<{ label: string; value: string }[]>([]);
     const [pickerRowIndex, setPickerRowIndex] = useState<number | null>(null);
+    // the approved rate of every item of the chosen quotation (by item name): the only rate a P.O row can have
+    const [quotationRates, setQuotationRates] = useState<Record<string, number>>({});
 
     // Quotation Selection Modal State
     const [isQtModalOpen, setIsQtModalOpen] = useState(false);
@@ -253,6 +270,14 @@ export default function PurchaseOrderPage() {
             return;
         }
 
+        const withoutPerBike = data.items.filter((r) => r.code && r.unit && !(Number(r.unitPerBike) > 0));
+        if (withoutPerBike.length > 0) {
+            toast.error(
+                `Set "Unit Per Bike" in Master Entries > Inventory for: ${withoutPerBike.map((r) => r.itemName).join(", ")}`
+            );
+            return;
+        }
+
         const validRows = data.items.filter(
             (r) => r.code && r.itemName && r.unit && r.quantity && r.rate && r.amount
         );
@@ -386,16 +411,16 @@ export default function PurchaseOrderPage() {
         setValue("quotationId", String(q.id), { shouldDirty: true, shouldValidate: true });
 
         // Quotation rows only know the item name, link each one to its inventory item (the code) by name
-        const inventoryIdByName = new Map<string, number>();
+        const inventoryByName = new Map<string, { id: number; unitPerBike: number }>();
         const names = [...new Set((q.itemName || []).map((name: string) => String(name || "").trim()).filter(Boolean))];
         await Promise.all(
             names.map(async (name) => {
                 try {
                     const { data } = await api.get(INVENTORY, { params: { limit: 10, q: name } });
                     // a server that does not page yet sends the whole list
-                    const list: { id: number; itemName: string }[] = Array.isArray(data.data) ? data.data : data.data?.items || [];
+                    const list: { id: number; itemName: string; unitPerBike?: number }[] = Array.isArray(data.data) ? data.data : data.data?.items || [];
                     const hit = list.find((item) => item.itemName.trim().toLowerCase() === name.toLowerCase());
-                    if (hit) inventoryIdByName.set(name.toLowerCase(), hit.id);
+                    if (hit) inventoryByName.set(name.toLowerCase(), { id: hit.id, unitPerBike: Number(hit.unitPerBike) || 0 });
                 } catch (error) {
                     console.error("Failed to look up the inventory item of a quotation row", error);
                 }
@@ -403,27 +428,39 @@ export default function PurchaseOrderPage() {
         );
 
         const unmatched: string[] = [];
+        const noPerBike: string[] = [];
+        const noRate: string[] = [];
+        const rates: Record<string, number> = {};
         const fetchedRows = (q.itemName || []).map((name: string, i: number) => {
-            const rate = q.approvedRate?.[i] ?? q.proposedRate?.[i] ?? q.oldRate?.[i] ?? 0;
-            const inventoryId = inventoryIdByName.get(String(name || "").trim().toLowerCase());
-            if (!inventoryId) unmatched.push(name);
+            const approved = q.approvedRate?.[i];
+            const key = String(name || "").trim().toLowerCase();
+            if (approved === undefined || approved === null) noRate.push(name);
+            else rates[key] = Number(approved);
+            const inventory = inventoryByName.get(key);
+            if (!inventory) unmatched.push(name);
+            else if (inventory.unitPerBike < 1) noPerBike.push(name);
             return {
-                code: inventoryId ? String(inventoryId) : "",
+                code: inventory ? String(inventory.id) : "",
                 itemName: name || "",
-                // Unit and quantity are entered by the user, they are not guessed
+                // Only Unit is typed: Qty = Unit x the units one bike needs, Rate = the approved rate of the quotation
                 unit: "",
                 quantity: "",
-                rate: String(rate),
+                rate: approved === undefined || approved === null ? "" : String(approved),
                 amount: "",
+                unitPerBike: inventory ? String(inventory.unitPerBike) : "",
             };
         });
+        setQuotationRates(rates);
 
         setValue("vendorId", String(q.vendorId ?? ""), { shouldDirty: true, shouldValidate: true });
         setValue("items", padRows(fetchedRows, defaultRow), { shouldDirty: true, shouldValidate: true });
-        if (unmatched.length > 0) {
-            toast.error(`Not found in inventory: ${unmatched.join(", ")}. Click Item Name to select it.`, {
-                duration: 6000,
-            });
+        const problems = [
+            unmatched.length > 0 ? `Not found in inventory: ${unmatched.join(", ")}. Click Item Name to select it.` : "",
+            noPerBike.length > 0 ? `Set "Unit Per Bike" in Master Entries > Inventory for: ${noPerBike.join(", ")}.` : "",
+            noRate.length > 0 ? `No approved rate in this quotation for: ${noRate.join(", ")}.` : "",
+        ].filter(Boolean);
+        if (problems.length > 0) {
+            toast.error(problems.join("\n"), { duration: 8000 });
         } else {
             toast.success(`Quotation QT-${q.id} loaded (${q.vendorName || "Vendor"})`);
         }
@@ -453,12 +490,7 @@ export default function PurchaseOrderPage() {
             currentItems[index] = defaultRow();
         } else {
             const newRow = { ...currentItems[index], [field]: value };
-            if (field === "quantity" || field === "rate") {
-                const q = Number(newRow.quantity) || 0;
-                const r = Number(newRow.rate) || 0;
-                newRow.amount = q > 0 && r > 0 ? String(q * r) : "";
-            }
-            currentItems[index] = newRow;
+            currentItems[index] = withWorkedOutQtyAndAmount(newRow);
         }
         setValue("items", currentItems, { shouldDirty: true, shouldValidate: true });
     };
@@ -485,12 +517,28 @@ export default function PurchaseOrderPage() {
             toast.error(`"${item.itemName}" is already added in row ${duplicateIndex + 1}`);
             return;
         }
+        if (!values.quotationId) {
+            toast.error("Select the quotation first: the rate comes from its approved rates.");
+            return;
+        }
+        const approvedRate = quotationRates[item.itemName.trim().toLowerCase()];
+        if (approvedRate === undefined) {
+            toast.error(`"${item.itemName}" is not in this quotation, so it has no approved rate.`);
+            return;
+        }
+        const perBike = Number(item.unitPerBike) || 0;
+        if (perBike < 1) {
+            toast.error(`Set "Unit Per Bike" for "${item.itemName}" in Master Entries > Inventory first.`);
+            return;
+        }
         const currentItems = [...values.items];
-        currentItems[pickerRowIndex] = {
+        currentItems[pickerRowIndex] = withWorkedOutQtyAndAmount({
             ...currentItems[pickerRowIndex],
             code: String(item.id),
             itemName: item.itemName,
-        };
+            rate: String(approvedRate),
+            unitPerBike: String(perBike),
+        });
         setValue("items", currentItems, { shouldDirty: true, shouldValidate: true });
         setPickerRowIndex(null);
     };
@@ -738,7 +786,7 @@ export default function PurchaseOrderPage() {
                                         <input
                                             type="number"
                                             value={row.unit}
-                                            onChange={(e) => updateItemRow(index, "unit", e.target.value)}
+                                            onChange={(e) => updateItemRow(index, "unit", e.target.value.replace(/\D/g, ""))}
                                             disabled={!isEditing}
                                             className="w-full bg-transparent px-2 py-1.5 text-center text-[13px] outline-none disabled:bg-[#f3f4f6]"
                                         />
@@ -747,18 +795,22 @@ export default function PurchaseOrderPage() {
                                         <input
                                             type="number"
                                             value={row.quantity}
-                                            onChange={(e) => updateItemRow(index, "quantity", e.target.value)}
+                                            readOnly
+                                            tabIndex={-1}
+                                            title="Qty = Unit x the units one bike needs (from the inventory). It cannot be typed."
                                             disabled={!isEditing}
-                                            className="w-full bg-transparent px-2 py-1.5 text-center text-[13px] outline-none disabled:bg-[#f3f4f6]"
+                                            className="w-full bg-transparent px-2 py-1.5 text-center text-[13px] font-medium text-zinc-600 outline-none disabled:bg-[#f3f4f6]"
                                         />
                                     </td>
                                     <td className="border-r border-zinc-300 p-0">
                                         <input
                                             type="number"
                                             value={row.rate}
-                                            onChange={(e) => updateItemRow(index, "rate", e.target.value)}
+                                            readOnly
+                                            tabIndex={-1}
+                                            title="The approved rate of the quotation. It cannot be typed."
                                             disabled={!isEditing}
-                                            className="w-full bg-transparent px-2 py-1.5 text-center text-[13px] outline-none disabled:bg-[#f3f4f6]"
+                                            className="w-full bg-transparent px-2 py-1.5 text-center text-[13px] font-medium text-zinc-600 outline-none disabled:bg-[#f3f4f6]"
                                         />
                                     </td>
                                     <td className="relative p-0">

@@ -11,6 +11,48 @@ import prisma, {
 // is not trusted, and a row whose Amount is not Qty x Rate is refused. Money is saved in whole numbers.
 import { isPagedRequest, findPage } from "../utils/listQuery.js";
 
+// The rules of the rows of a new Purchase Order (the form follows them, the server makes sure):
+//   - Unit is a whole number, 1 or more (how many bikes the order is for)
+//   - Qty = Unit x the "Unit Per Bike" of the item (from the inventory)
+//   - Rate = the APPROVED rate of that item in the quotation of the order
+const assertOrderRows = async ({ quotationId, code, itemName, unit, quantity, rate }) => {
+    const quotation = await prisma.quotation.findUnique({
+        where: { id: Number(quotationId) },
+        select: { itemName: true, approvedRate: true },
+    });
+    if (!quotation) throw new ApiError(400, "Quotation not found");
+
+    const approved = new Map();
+    quotation.itemName.forEach((name, index) => approved.set(String(name).trim().toLowerCase(), quotation.approvedRate[index]));
+
+    const inventories = await prisma.inventory.findMany({
+        where: { id: { in: code.map(Number) } },
+        select: { id: true, unitPerBike: true },
+    });
+    const perBikeOf = new Map(inventories.map((item) => [item.id, item.unitPerBike]));
+
+    code.forEach((itemCode, index) => {
+        const label = `Row ${index + 1} (${itemName[index]})`;
+        const perBike = perBikeOf.get(Number(itemCode));
+        if (perBike === undefined) throw new ApiError(400, `${label}: the item is not in the inventory`);
+        if (!(perBike >= 1)) throw new ApiError(400, `${label}: "Unit Per Bike" is not set for this item in the inventory`);
+
+        const units = Number(unit[index]);
+        if (!Number.isInteger(units) || units < 1) throw new ApiError(400, `${label}: Unit must be a whole number, 1 or more`);
+        if (Number(quantity[index]) !== units * perBike) {
+            throw new ApiError(400, `${label}: Qty must be Unit x Unit Per Bike (${units} x ${perBike} = ${units * perBike})`);
+        }
+
+        const approvedRate = approved.get(String(itemName[index]).trim().toLowerCase());
+        if (approvedRate === undefined || approvedRate === null) {
+            throw new ApiError(400, `${label}: this item has no approved rate in the quotation`);
+        }
+        if (Number(rate[index]) !== Number(approvedRate)) {
+            throw new ApiError(400, `${label}: Rate must be the approved rate of the quotation (${approvedRate})`);
+        }
+    });
+};
+
 const worthOf = ({ quantity, rate, amount, saleTaxPercent, withHoldingPercent }) => {
     quantity.forEach((qty, index) => {
         if (Number(amount[index]) !== Number(qty) * Number(rate[index])) {
@@ -67,6 +109,8 @@ const createPurchaseOrder = asyncHandler(async (req, res) => {
             EXISTS(SELECT 1 FROM "PurchaseOrder")
         )
     `;
+
+    await assertOrderRows({ quotationId, code, itemName, unit, quantity, rate });
 
     const worth = worthOf({ quantity, rate, amount, saleTaxPercent, withHoldingPercent });
 
