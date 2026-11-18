@@ -31,7 +31,7 @@ export const NAV_ITEMS: NavItem[] = [
       { label: "Rejection Return to Vendor", href: "/store/rejection-return-to-vendor", operation: "rejection_return_to_vendor" },
       // { label: "Rejection Received from Dealer", href: "/store/rejection-received-from-dealer", operation: "rejection_received_from_dealer" },
       { label: "Issue from Line", href: "/store/issue-from-line", operation: "issue_from_line" },
-      { label: "Item Return from Department", href: "/store/item-return-from-department", operation: "item_return_from_department" },
+      // { label: "Item Return from Department", href: "/store/item-return-from-department", operation: "item_return_from_department" },
       { label: "Transfer Form", href: "/store/transfer-form", operation: "transfer_form" },
       {
         label: "Report",
