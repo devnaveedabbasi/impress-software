@@ -7,6 +7,8 @@ import prisma, {
 } from "../config/prisma.js";
 
 // The id of the record is the Claim Note No. Every record is returned with its dealer and item rows.
+import { isPagedRequest, findPage } from "../utils/listQuery.js";
+
 const returnInclude = {
     dealer: { select: { id: true, dealarShipName: true } },
     items: {
@@ -48,6 +50,16 @@ const normalizeItems = (items) =>
     }));
 
 const getAllRejectionReceiveds = asyncHandler(async (req, res) => {
+    if (isPagedRequest(req)) {
+        const page = await findPage(prisma.rejectionReceivedFromDealer, req, {
+            searchFields: ["transport", "builtyNo"],
+            relationFields: [["dealer", "dealarShipName"]],
+            nestedFields: [["items", "some", "inventory", "itemName"]],
+            dateFields: ["date"],
+            include: returnInclude,
+        });
+        return res.status(200).json(new ApiResponse(200, page, "Fetched successfully"));
+    }
     const rejectionReceiveds = await prisma.rejectionReceivedFromDealer.findMany({
         include: returnInclude,
         orderBy: { id: "asc" },

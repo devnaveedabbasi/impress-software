@@ -9,6 +9,8 @@ import prisma, {
 
 // The totals of a PO are worked out here, from the rows and the two percents. What the page sent for the totals
 // is not trusted, and a row whose Amount is not Qty x Rate is refused. Money is saved in whole numbers.
+import { isPagedRequest, findPage } from "../utils/listQuery.js";
+
 const worthOf = ({ quantity, rate, amount, saleTaxPercent, withHoldingPercent }) => {
     quantity.forEach((qty, index) => {
         if (Number(amount[index]) !== Number(qty) * Number(rate[index])) {
@@ -22,6 +24,14 @@ const worthOf = ({ quantity, rate, amount, saleTaxPercent, withHoldingPercent })
 };
 
 const getAllPurchaseOrders = asyncHandler(async (req, res) => {
+    if (isPagedRequest(req)) {
+        const page = await findPage(prisma.purchaseOrder, req, {
+            relationFields: [["vendor", "vendorName"]],
+            dateFields: ["date"],
+            include: { vendor: true, quotation: true },
+        });
+        return res.status(200).json(new ApiResponse(200, page, "Fetched successfully"));
+    }
     const purchaseOrders = await prisma.purchaseOrder.findMany({
         include: { vendor: true, quotation: true },
         orderBy: { id: "asc" }
@@ -94,7 +104,10 @@ const updatePurchaseOrder = asyncHandler(async (req, res) => {
     if (!existingPurchaseOrder) {
         throw new ApiError(404, "Purchase Order not found");
     }
+    // A Purchase Order cannot be changed once it is saved
+    throw new ApiError(403, "A saved Purchase Order cannot be edited");
 
+    // eslint-disable-next-line no-unreachable
     const data = {
         updatedById: req.user?.id
     };

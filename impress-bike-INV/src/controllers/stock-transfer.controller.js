@@ -9,6 +9,8 @@ import { getStockInHand, replaceMovements, removeMovements, TX_OPTIONS } from ".
 
 // Transfer Form: the stock of old item(s) is moved to a new item (new code / new name).
 // The id of the record is the Trans ID. "qty" is the total moved and always equals the total of the old rows.
+import { isPagedRequest, findPage } from "../utils/listQuery.js";
+
 const transferInclude = {
     newInventory: { select: { id: true, itemName: true } },
     items: {
@@ -85,6 +87,15 @@ const writeMovements = (tx, transfer, userId) =>
     });
 
 const getAllStockTransfers = asyncHandler(async (req, res) => {
+    if (isPagedRequest(req)) {
+        const page = await findPage(prisma.stockTransfer, req, {
+            relationFields: [["newInventory", "itemName"]],
+            nestedFields: [["items", "some", "inventory", "itemName"]],
+            dateFields: ["date"],
+            include: transferInclude,
+        });
+        return res.status(200).json(new ApiResponse(200, page, "Fetched successfully"));
+    }
     const transfers = await prisma.stockTransfer.findMany({
         include: transferInclude,
         orderBy: { id: "asc" },

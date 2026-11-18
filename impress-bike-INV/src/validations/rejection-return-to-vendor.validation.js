@@ -37,8 +37,8 @@ const headerFields = {
     contactNo,
     saleTaxNo,
     transport,
-    builtyNo: codeText("Builty No").optional().default(""),
-    bookNo: codeText("Book No").optional().default(""),
+    builtyNo: codeText("Builty No").min(1, "Builty No is required"),
+    bookNo: codeText("Book No").min(1, "Book No is required"),
     receivedBy,
 };
 
@@ -60,8 +60,8 @@ export const updateRejectionReturnSchema = z.object({
         contactNo: contactNo.optional(),
         saleTaxNo: saleTaxNo.optional(),
         transport: transport.optional(),
-        builtyNo: codeText("Builty No").optional(),
-        bookNo: codeText("Book No").optional(),
+        builtyNo: codeText("Builty No").min(1, "Builty No is required").optional(),
+        bookNo: codeText("Book No").min(1, "Book No is required").optional(),
         receivedBy: receivedBy.optional(),
         items: uniqueItems(itemSchema).optional(),
     }),

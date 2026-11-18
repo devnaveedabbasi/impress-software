@@ -5,13 +5,16 @@ import { useForm } from "react-hook-form";
 import { LabeledField } from "@/components/ui/LabeledField";
 import { LabeledSelect } from "@/components/ui/LabeledSelect";
 import { Button } from "@/components/ui/Button";
+import { ExitButton } from "@/components/ui/ExitButton";
 import useDebounce from "@/hooks/useDebounce";
 import { quotationSchema, type QuotationFormValues } from "@/lib/validations/master";
 import { QUOTATIONS, VENDORS } from "@/utlis/apiRoutes";
 import api from "@/lib/axios";
 import toast from "react-hot-toast";
 import { usePermissions } from "@/hooks/usePermissions";
-import { ViewAllModal, type ViewAllColumn } from "@/components/ui/ViewAllModal";
+import type { ViewAllColumn } from "@/components/ui/ViewAllModal";
+import { InfiniteViewAllModal, useRefreshMasterList } from "@/components/ui/InfiniteViewAllModal";
+import { useMasterRecord } from "@/hooks/useMasterRecord";
 import { InventoryPickerModal, type InventoryPickItem } from "@/components/ui/InventoryPickerModal";
 import { RowDeleteButton, deletableRowClassName } from "@/components/ui/RowDeleteButton";
 import { AddRowButton } from "@/components/ui/AddRowButton";
@@ -69,10 +72,9 @@ export default function QuotationPage() {
     const [nextId, setNextId] = useState("");
     const [isOptionsLoading, setIsOptionsLoading] = useState(true);
     const [isViewAllOpen, setIsViewAllOpen] = useState(false);
+    const refreshList = useRefreshMasterList("quotations");
+    const { fetchOne, prefetchNear } = useMasterRecord("quotations", QUOTATIONS);
     const [quotations, setQuotations] = useState<QuotationRow[]>([]);
-    const [hasLoadedQuotations, setHasLoadedQuotations] = useState(false);
-    const [isQuotationsLoading, setIsQuotationsLoading] = useState(false);
-    const [quotationsError, setQuotationsError] = useState("");
     const skipNextIdLookup = useRef(false);
 
     const {
@@ -151,37 +153,6 @@ export default function QuotationPage() {
         };
     };
 
-    const fetchAllQuotations = async (openModal = true, force = false) => {
-        if (openModal) setIsViewAllOpen(true);
-        if (hasLoadedQuotations && !force) return;
-
-        setIsQuotationsLoading(true);
-        setQuotationsError("");
-        try {
-            const { data } = await api.get(QUOTATIONS);
-            const vendorMap = new Map(
-                vendors.map((vendor) => [vendor.value, vendor.label])
-            );
-            setQuotations(
-                (data.data || []).map((item: QuotationRow) => ({
-                    ...item,
-                    vendorName:
-                        vendorMap.get(String(item.vendorId)) ||
-                        item.vendor?.vendorName ||
-                        item.vendor?.name ||
-                        `Vendor #${item.vendorId}`,
-                    date: item.date ? new Date(item.date).toISOString().split("T")[0] : "",
-                }))
-            );
-            setHasLoadedQuotations(true);
-        } catch (error: unknown) {
-            const apiError = error as ApiError;
-            setQuotationsError(apiError.response?.data?.message || "Failed to fetch quotations");
-        } finally {
-            setIsQuotationsLoading(false);
-        }
-    };
-
     const addQuotationToCache = (item: QuotationRow) => {
         setQuotations((current) => {
             const vendorName =
@@ -202,13 +173,11 @@ export default function QuotationPage() {
                 index === existingIndex ? cachedItem : c
             );
         });
-        setHasLoadedQuotations(true);
     };
 
     useEffect(() => {
         void fetchNextId();
         void fetchOptions();
-        void fetchAllQuotations(false);
     }, []);
 
     const onSubmit = async (data: QuotationFormValues) => {
@@ -252,10 +221,8 @@ export default function QuotationPage() {
                 : await api.put(`${QUOTATIONS}/${data.id}`, payload);
 
             toast.success(response.data.message || "Quotation saved successfully");
-            if (hasLoadedQuotations) {
-                setHasLoadedQuotations(false);
-                await fetchAllQuotations(false, true);
-            }
+            setQuotations([]); // the looked-up copies are old now
+            void refreshList();
             // After Save the record stays on the screen (it does not jump to the next new one: the New button does that).
             // Only the next number is read again, quietly, so a new record still gets the right number.
             setIsNewMode(false);
@@ -314,7 +281,8 @@ export default function QuotationPage() {
             setIsIdLoading(true);
             try {
                 const cached = quotations.find((item) => String(item.id) === debouncedId);
-                const quotation = cached || (await api.get(`${QUOTATIONS}/${debouncedId}`)).data.data;
+                const quotation = cached || (await fetchOne(debouncedId));
+                prefetchNear(debouncedId, Number(nextId));
 
                 if (!quotation) {
                     toast.error("Quotation not found");
@@ -567,7 +535,7 @@ export default function QuotationPage() {
                         type="button"
                         variant="secondary"
                         shape="rounded"
-                        onClick={() => fetchAllQuotations()}
+                        onClick={() => setIsViewAllOpen(true)}
                         disabled={isSubmitting || !canView}
                         className="border border-zinc-400 bg-white px-6 hover:bg-zinc-50"
                     >
@@ -594,6 +562,7 @@ export default function QuotationPage() {
                     >
                         Save
                     </Button>
+                    <ExitButton />
                 </div>
             </form>
 
@@ -604,15 +573,13 @@ export default function QuotationPage() {
                 onSelect={handleItemSelect}
             />
 
-            <ViewAllModal
-                key={isViewAllOpen ? "open" : "closed"}
+            <InfiniteViewAllModal
                 isOpen={isViewAllOpen}
                 title="All Quotations"
-                rows={quotations}
+                endpoint={QUOTATIONS}
+                name="quotations"
+                mapRow={(row) => ({ ...row, vendorName: row.vendor?.vendorName || row.vendor?.name || `Vendor #${row.vendorId}`, date: row.date ? new Date(row.date).toISOString().split("T")[0] : "" })}
                 columns={quotationColumns}
-                searchKeys={["id", "vendorName", "date", "remarks"]}
-                isLoading={isQuotationsLoading}
-                error={quotationsError}
                 onClose={() => setIsViewAllOpen(false)}
                 onRowSelect={(item) => {
                     reset(mapQuotationToForm(item));
@@ -620,7 +587,6 @@ export default function QuotationPage() {
                     setIsEditing(false);
                     setIsViewAllOpen(false);
                 }}
-                onDelete={() => undefined}
             />
         </section>
     );

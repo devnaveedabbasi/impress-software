@@ -6,8 +6,11 @@ import toast from "react-hot-toast";
 import api from "@/lib/axios";
 import { LabeledField } from "@/components/ui/LabeledField";
 import { Button } from "@/components/ui/Button";
+import { ExitButton } from "@/components/ui/ExitButton";
 import { LabeledSelect } from "@/components/ui/LabeledSelect";
 import { ViewAllModal, type ViewAllColumn } from "@/components/ui/ViewAllModal";
+import { InfiniteViewAllModal, useRefreshMasterList } from "@/components/ui/InfiniteViewAllModal";
+import { useMasterRecord } from "@/hooks/useMasterRecord";
 import useDebounce from "@/hooks/useDebounce";
 import { usePermissions } from "@/hooks/usePermissions";
 import { vendorBillSchema, type VendorBillFormValues } from "@/lib/validations/master";
@@ -130,9 +133,8 @@ export default function VendorBillPostingPage() {
     const [isPreviewLoading, setIsPreviewLoading] = useState(false);
 
     const [isViewAllOpen, setIsViewAllOpen] = useState(false);
-    const [bills, setBills] = useState<BillRow[]>([]);
-    const [isBillsLoading, setIsBillsLoading] = useState(false);
-    const [billsError, setBillsError] = useState("");
+    const refreshList = useRefreshMasterList("vendor-bills");
+    const { fetchOne, prefetchNear } = useMasterRecord("vendor-bills", VENDOR_BILLS);
 
     const {
         handleSubmit,
@@ -214,21 +216,6 @@ export default function VendorBillPostingPage() {
         })),
     });
 
-    const fetchBills = async (openModal = true, force = false) => {
-        if (openModal) setIsViewAllOpen(true);
-        if (bills.length > 0 && !force) return;
-        setIsBillsLoading(true);
-        setBillsError("");
-        try {
-            const { data } = await api.get(VENDOR_BILLS, { params: { _ts: Date.now() } });
-            setBills(data.data || []);
-        } catch (error: unknown) {
-            setBillsError((error as ApiError).response?.data?.message || "Failed to fetch vendor bills");
-        } finally {
-            setIsBillsLoading(false);
-        }
-    };
-
     useEffect(() => {
         void fetchNextId();
         // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -301,7 +288,7 @@ export default function VendorBillPostingPage() {
                 ? await api.post(VENDOR_BILLS, payload)
                 : await api.put(`${VENDOR_BILLS}/${data.id}`, payload);
             toast.success(response.data.message || "Vendor bill saved successfully");
-            setBills([]);
+            void refreshList();
             // The saved bill stays on the screen, with the amounts the server calculated (the New button starts the
             // next one). Only the next number is read again, quietly.
             const bill = response.data.data;
@@ -333,7 +320,7 @@ export default function VendorBillPostingPage() {
             reset(mapBillToForm(bill));
             setDoc(mapBillToDoc(bill));
             setIsEditing(false);
-            setBills([]);
+            void refreshList();
         } catch (error: unknown) {
             toast.error((error as ApiError).response?.data?.message || "Failed to approve the vendor bill");
         } finally {
@@ -367,9 +354,10 @@ export default function VendorBillPostingPage() {
             }
             setIsIdLoading(true);
             try {
-                const { data } = await api.get(`${VENDOR_BILLS}/${debouncedId}`, { params: { _ts: Date.now() } });
-                reset(mapBillToForm(data.data));
-                setDoc(mapBillToDoc(data.data));
+                const bill = await fetchOne(debouncedId);
+                prefetchNear(debouncedId, Number(nextId));
+                reset(mapBillToForm(bill));
+                setDoc(mapBillToDoc(bill));
                 setIsNewMode(false);
                 setIsEditing(false);
             } catch (error: unknown) {
@@ -594,7 +582,7 @@ export default function VendorBillPostingPage() {
                         type="button"
                         variant="secondary"
                         shape="rounded"
-                        onClick={() => void fetchBills()}
+                        onClick={() => setIsViewAllOpen(true)}
                         disabled={isSubmitting || !canView}
                         className="border border-zinc-400 bg-white px-6 hover:bg-zinc-50"
                     >
@@ -632,6 +620,7 @@ export default function VendorBillPostingPage() {
                     >
                         Approve
                     </Button>
+                    <ExitButton />
                 </div>
             </form>
 
@@ -648,15 +637,12 @@ export default function VendorBillPostingPage() {
                 onRowSelect={(row) => void handleInwardSelect(row)}
             />
 
-            <ViewAllModal
-                key={isViewAllOpen ? "open" : "closed"}
+            <InfiniteViewAllModal
                 isOpen={isViewAllOpen}
                 title="All Vendor Bills"
-                rows={bills}
+                endpoint={VENDOR_BILLS}
+                name="vendor-bills"
                 columns={billColumns}
-                searchKeys={["id", "inwardId", "vendorName", "billNo", "stInvNo"]}
-                isLoading={isBillsLoading}
-                error={billsError}
                 onClose={() => setIsViewAllOpen(false)}
                 onRowSelect={(row) => {
                     reset(mapBillToForm(row));
@@ -665,7 +651,6 @@ export default function VendorBillPostingPage() {
                     setIsEditing(false);
                     setIsViewAllOpen(false);
                 }}
-                onDelete={() => undefined}
             />
         </section>
     );

@@ -6,7 +6,18 @@ import prisma, {
     getActiveDatabaseName,
 } from "../config/prisma.js";
 
+import { isPagedRequest, findPage } from "../utils/listQuery.js";
+
 const getAllQuotations = asyncHandler(async (req, res) => {
+    if (isPagedRequest(req)) {
+        const page = await findPage(prisma.quotation, req, {
+            searchFields: ["remarks"],
+            relationFields: [["vendor", "vendorName"]],
+            dateFields: ["date"],
+            include: { vendor: true },
+        });
+        return res.status(200).json(new ApiResponse(200, page, "Fetched successfully"));
+    }
     const quotations = await prisma.quotation.findMany({
         include: {
             vendor: true

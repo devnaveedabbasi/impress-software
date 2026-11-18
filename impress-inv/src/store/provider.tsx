@@ -8,6 +8,8 @@ import { AuthGuard } from "@/components/layout/AuthGuard";
 import { useAppDispatch } from "@/hooks/redux";
 import { setIsSoftware } from "./slices/app";
 import { AutoSyncManager } from "@/components/layout/AutoSyncManager";
+import { NumberInputGuard } from "@/components/layout/NumberInputGuard";
+import { FormErrorFocus } from "@/components/layout/FormErrorFocus";
 
 function AppInitializer({ children }: { children: React.ReactNode }) {
   const dispatch = useAppDispatch();
@@ -35,6 +37,8 @@ export function Providers({ children }: { children: React.ReactNode }) {
       <QueryClientProvider client={queryClient}>
         <AppInitializer>
           <AutoSyncManager />
+          <NumberInputGuard />
+          <FormErrorFocus />
           <AuthGuard>{children}</AuthGuard>
         </AppInitializer>
       </QueryClientProvider>

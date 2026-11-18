@@ -4,10 +4,12 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import toast from "react-hot-toast";
 import api from "@/lib/axios";
 import { Button } from "@/components/ui/Button";
+import { ExitButton } from "@/components/ui/ExitButton";
 import { LabeledField } from "@/components/ui/LabeledField";
 import { LabeledSelect } from "@/components/ui/LabeledSelect";
 import { GroupedReportTables } from "@/components/reports/GroupedReportTables";
-import { fetchAllReportRows } from "@/lib/reportFetch";
+import { fetchAllReportRows, fetchReportChunk, REPORT_CHUNK } from "@/lib/reportFetch";
+import { PRINT_KEEP_MS } from "@/lib/printCache";
 import { usePermissions } from "@/hooks/usePermissions";
 import { cn } from "@/lib/utils";
 import { CATEGORIES, COLORS, DEPARTMENTS, INVENTORY, VENDORS } from "@/utlis/apiRoutes";
@@ -95,7 +97,7 @@ export function StoreReport({ def }: { def: StoreReportDef }) {
     try {
       // A grouped report (stock position) shows everything at once, in tables per department and category
       if (def.grouped) {
-        const result = await fetchAllReportRows<StoreReportRow>(def.endpoint, params, PRINT_MAX_ROWS);
+        const result = await fetchAllReportRows<StoreReportRow>(def.endpoint, params, PRINT_MAX_ROWS, PRINT_KEEP_MS);
         if (requestId !== requestRef.current) return;
         setRows(result.rows);
         setMeta({
@@ -109,13 +111,19 @@ export function StoreReport({ def }: { def: StoreReportDef }) {
         return;
       }
 
-      const query = new URLSearchParams(params);
-      query.set("page", String(nextPage));
-      query.set("limit", String(PAGE_SIZE));
-      const { data } = await api.get(`${def.endpoint}?${query.toString()}`);
+      // The server gives the report in pieces of 500 rows (the same piece the Print uses, so Print does not read it
+      // again); this page shows PAGE_SIZE rows of the piece.
+      const piece = Math.floor(((nextPage - 1) * PAGE_SIZE) / REPORT_CHUNK) + 1;
+      const chunk = await fetchReportChunk<StoreReportRow>(def.endpoint, params, piece, PRINT_KEEP_MS);
       if (requestId !== requestRef.current) return;
-      setRows(data.data || []);
-      setMeta((data.meta as Meta) ?? null);
+      const start = ((nextPage - 1) * PAGE_SIZE) % REPORT_CHUNK;
+      setRows(chunk.rows.slice(start, start + PAGE_SIZE));
+      const chunkTotal = chunk.meta?.total ?? chunk.rows.length;
+      setMeta(
+        chunk.meta
+          ? ({ ...chunk.meta, page: nextPage, limit: PAGE_SIZE, totalPages: Math.max(1, Math.ceil(chunkTotal / PAGE_SIZE)) } as unknown as Meta)
+          : null
+      );
       setPage(nextPage);
     } catch (error: unknown) {
       if (requestId !== requestRef.current) return;
@@ -234,6 +242,7 @@ export function StoreReport({ def }: { def: StoreReportDef }) {
               >
                 Print
               </Button>
+              <ExitButton />
             </div>
           </form>
 

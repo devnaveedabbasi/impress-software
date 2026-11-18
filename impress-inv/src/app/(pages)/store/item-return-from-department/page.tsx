@@ -5,13 +5,16 @@ import { useForm } from "react-hook-form";
 import { LabeledField } from "@/components/ui/LabeledField";
 import { LabeledSelect } from "@/components/ui/LabeledSelect";
 import { Button } from "@/components/ui/Button";
+import { ExitButton } from "@/components/ui/ExitButton";
 import useDebounce from "@/hooks/useDebounce";
 import { itemReturnSchema, type ItemReturnFormValues } from "@/lib/validations/master";
 import { ITEM_RETURNS, DEPARTMENTS } from "@/utlis/apiRoutes";
 import api from "@/lib/axios";
 import toast from "react-hot-toast";
 import { usePermissions } from "@/hooks/usePermissions";
-import { ViewAllModal, type ViewAllColumn } from "@/components/ui/ViewAllModal";
+import type { ViewAllColumn } from "@/components/ui/ViewAllModal";
+import { InfiniteViewAllModal, useRefreshMasterList } from "@/components/ui/InfiniteViewAllModal";
+import { useMasterRecord } from "@/hooks/useMasterRecord";
 import { PrintOptionsModal } from "@/components/print/PrintOptionsModal";
 import { InventoryPickerModal, type InventoryPickItem } from "@/components/ui/InventoryPickerModal";
 import { RowDeleteButton, deletableRowClassName } from "@/components/ui/RowDeleteButton";
@@ -84,10 +87,9 @@ export default function ItemReturnFromDepartmentPage() {
     const [isIdLoading, setIsIdLoading] = useState(true);
     const [nextId, setNextId] = useState("");
     const [isViewAllOpen, setIsViewAllOpen] = useState(false);
+    const refreshList = useRefreshMasterList("item-returns");
+    const { fetchOne, prefetchNear } = useMasterRecord("item-returns", ITEM_RETURNS);
     const [returns, setReturns] = useState<ItemReturnRow[]>([]);
-    const [hasLoadedReturns, setHasLoadedReturns] = useState(false);
-    const [isReturnsLoading, setIsReturnsLoading] = useState(false);
-    const [returnsError, setReturnsError] = useState("");
     const skipNextIdLookup = useRef(false);
 
     const {
@@ -171,24 +173,6 @@ export default function ItemReturnFromDepartmentPage() {
         itemsSummary: (item.items || []).map((row) => row.inventory?.itemName).filter(Boolean).join(", "),
     });
 
-    const fetchAllReturns = async (openModal = true, force = false) => {
-        if (openModal) setIsViewAllOpen(true);
-        if (hasLoadedReturns && !force) return;
-
-        setIsReturnsLoading(true);
-        setReturnsError("");
-        try {
-            const { data } = await api.get(ITEM_RETURNS);
-            setReturns((data.data || []).map(withListFields));
-            setHasLoadedReturns(true);
-        } catch (error: unknown) {
-            const apiError = error as ApiError;
-            setReturnsError(apiError.response?.data?.message || "Failed to fetch return slips");
-        } finally {
-            setIsReturnsLoading(false);
-        }
-    };
-
     const addReturnToCache = (item: ItemReturnRow) => {
         setReturns((current) => {
             const cached = withListFields(item);
@@ -196,13 +180,11 @@ export default function ItemReturnFromDepartmentPage() {
             if (existingIndex === -1) return [...current, cached];
             return current.map((c, index) => (index === existingIndex ? cached : c));
         });
-        setHasLoadedReturns(true);
     };
 
     useEffect(() => {
         void fetchNextId();
         void fetchDepartments();
-        void fetchAllReturns(false);
     }, []);
 
     // Show every problem of the form: field messages under the fields, row problems on the row itself
@@ -255,10 +237,8 @@ export default function ItemReturnFromDepartmentPage() {
             for (const warning of (response.data.warnings as string[] | undefined) ?? []) {
                 toast(warning, { icon: "⚠️", duration: 7000 });
             }
-            if (hasLoadedReturns) {
-                setHasLoadedReturns(false);
-                await fetchAllReturns(false, true);
-            }
+            setReturns([]); // the looked-up copies are old now
+            void refreshList();
             // The saved document stays on the screen, so it can be printed right away (it does not jump to the next
             // new one: the New button does that). Only the next number is read again, quietly.
             const saved = response.data.data;
@@ -318,7 +298,8 @@ export default function ItemReturnFromDepartmentPage() {
             setIsIdLoading(true);
             try {
                 const cached = returns.find((item) => String(item.id) === debouncedId);
-                const record: ItemReturnRow | undefined = cached || (await api.get(`${ITEM_RETURNS}/${debouncedId}`)).data.data;
+                const record: ItemReturnRow | undefined = cached || (await fetchOne(debouncedId));
+                prefetchNear(debouncedId, Number(nextId));
 
                 if (!record) {
                     toast.error("Return slip not found");
@@ -582,7 +563,7 @@ export default function ItemReturnFromDepartmentPage() {
                         type="button"
                         variant="secondary"
                         shape="rounded"
-                        onClick={() => fetchAllReturns()}
+                        onClick={() => setIsViewAllOpen(true)}
                         disabled={isSubmitting || !canView}
                         className="border border-zinc-400 bg-white px-6 hover:bg-zinc-50"
                     >
@@ -618,6 +599,7 @@ export default function ItemReturnFromDepartmentPage() {
                     >
                         Print
                     </Button>
+                    <ExitButton />
                 </div>
             </form>
 
@@ -639,15 +621,13 @@ export default function ItemReturnFromDepartmentPage() {
                 codeWord="number"
             />
 
-            <ViewAllModal
-                key={isViewAllOpen ? "open" : "closed"}
+            <InfiniteViewAllModal
                 isOpen={isViewAllOpen}
                 title="All Rejection Received Slips"
-                rows={returns}
+                endpoint={ITEM_RETURNS}
+                name="item-returns"
+                mapRow={(row) => (withListFields(row))}
                 columns={returnColumns}
-                searchKeys={["id", "date", "departmentName", "itemsSummary"]}
-                isLoading={isReturnsLoading}
-                error={returnsError}
                 onClose={() => setIsViewAllOpen(false)}
                 onRowSelect={(item) => {
                     reset(mapReturnToForm(item));
@@ -656,7 +636,6 @@ export default function ItemReturnFromDepartmentPage() {
                     setIsEditing(false);
                     setIsViewAllOpen(false);
                 }}
-                onDelete={() => undefined}
             />
         </section>
     );

@@ -7,6 +7,8 @@ import prisma, {
 } from "../config/prisma.js";
 import { getStockInHand, replaceMovements, removeMovements, TX_OPTIONS } from "../services/stock.service.js";
 
+import { isPagedRequest, findPage } from "../utils/listQuery.js";
+
 const saleGatePassInclude = {
     items: {
         orderBy: { id: "asc" },
@@ -104,6 +106,15 @@ const writeMovements = (tx, gatePass, userId) =>
 const normalizeBill = (value) => (value === undefined || value === null || value === "" ? null : Number(value));
 
 const getAllSaleGatePasses = asyncHandler(async (req, res) => {
+    if (isPagedRequest(req)) {
+        const page = await findPage(prisma.saleGatePass, req, {
+            searchFields: ["accountName", "vehicleNo"],
+            nestedFields: [["items", "some", "inventory", "itemName"]],
+            dateFields: ["date"],
+            include: saleGatePassInclude,
+        });
+        return res.status(200).json(new ApiResponse(200, page, "Fetched successfully"));
+    }
     const saleGatePasses = await prisma.saleGatePass.findMany({
         include: saleGatePassInclude,
         orderBy: { id: "asc" }

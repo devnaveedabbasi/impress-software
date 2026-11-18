@@ -12,6 +12,8 @@ import { TX_OPTIONS } from "../services/stock.service.js";
 // line is the OK quantity x the rate of the purchase order. The id of the bill is the Bill Posting No.
 // A DRAFT (Pending) or REJECTED bill can be changed. An APPROVED (posted) bill is locked: only a Super Admin can change it.
 
+import { isPagedRequest, findPage } from "../utils/listQuery.js";
+
 const billInclude = {
     inward: {
         include: {
@@ -121,6 +123,20 @@ const toResponse = (bill) => {
 };
 
 const getAllVendorBills = asyncHandler(async (req, res) => {
+    if (isPagedRequest(req)) {
+        const page = await findPage(prisma.vendorBill, req, {
+            searchFields: ["billNo", "stInvNo"],
+            numberFields: ["inwardId"],
+            nestedFields: [
+                ["inward", "purchaseOrder", "vendor", "vendorName"],
+                ["items", "some", "inventory", "itemName"],
+            ],
+            dateFields: ["stInvDate"],
+            include: billInclude,
+            after: async (bills) => bills.map(toResponse),
+        });
+        return res.status(200).json(new ApiResponse(200, page, "Vendor bills fetched successfully"));
+    }
     const bills = await prisma.vendorBill.findMany({ include: billInclude, orderBy: { id: "asc" } });
     return res.status(200).json(new ApiResponse(200, bills.map(toResponse), "Vendor bills fetched successfully"));
 });

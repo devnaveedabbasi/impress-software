@@ -9,8 +9,11 @@ import toast from "react-hot-toast";
 import useDebounce from "@/hooks/useDebounce";
 import { usePermissions } from "@/hooks/usePermissions";
 import { ViewAllModal, type ViewAllColumn } from "@/components/ui/ViewAllModal";
+import { InfiniteViewAllModal, useRefreshMasterList } from "@/components/ui/InfiniteViewAllModal";
+import { useMasterRecord } from "@/hooks/useMasterRecord";
 import { PrintOptionsModal } from "@/components/print/PrintOptionsModal";
 import { Button } from "@/components/ui/Button";
+import { ExitButton } from "@/components/ui/ExitButton";
 import { AddRowButton } from "@/components/ui/AddRowButton";
 import { Icon } from "@iconify/react";
 import { TextDetailModal } from "@/components/ui/TextDetailModal";
@@ -115,10 +118,9 @@ export default function InwardQualityControlPage() {
     const [isIdLoading, setIsIdLoading] = useState(true);
     const [nextId, setNextId] = useState("");
     const [isViewAllOpen, setIsViewAllOpen] = useState(false);
+    const refreshList = useRefreshMasterList("inwards");
+    const { fetchOne, prefetchNear } = useMasterRecord("inwards", INWARDS);
     const [inwards, setInwards] = useState<InwardRow[]>([]);
-    const [hasLoadedInwards, setHasLoadedInwards] = useState(false);
-    const [isInwardsLoading, setIsInwardsLoading] = useState(false);
-    const [inwardsError, setInwardsError] = useState("");
     const skipNextIdLookup = useRef(false);
 
     const {
@@ -226,29 +228,6 @@ export default function InwardQualityControlPage() {
         };
     };
 
-    const fetchAllInwards = async (openModal = true, force = false) => {
-        if (openModal) setIsViewAllOpen(true);
-        if (hasLoadedInwards && !force) return;
-
-        setIsInwardsLoading(true);
-        setInwardsError("");
-        try {
-            const { data } = await api.get(INWARDS);
-            setInwards(
-                (data.data || []).map((item: InwardRow) => ({
-                    ...item,
-                    date: item.date ? new Date(item.date).toISOString().split("T")[0] : "",
-                }))
-            );
-            setHasLoadedInwards(true);
-        } catch (error: unknown) {
-            const apiError = error as ApiError;
-            setInwardsError(apiError.response?.data?.message || "Failed to fetch inwards");
-        } finally {
-            setIsInwardsLoading(false);
-        }
-    };
-
     const addInwardToCache = (item: InwardRow) => {
         setInwards((current) => {
             const cachedItem = {
@@ -261,13 +240,11 @@ export default function InwardQualityControlPage() {
             if (existingIndex === -1) return [...current, cachedItem];
             return current.map((c, index) => (index === existingIndex ? cachedItem : c));
         });
-        setHasLoadedInwards(true);
     };
 
     useEffect(() => {
         void fetchNextId();
         void fetchOptions();
-        void fetchAllInwards(false);
     }, []);
 
     const onSubmit = async (data: InwardFormValues) => {
@@ -318,10 +295,8 @@ export default function InwardQualityControlPage() {
                 : await api.put(`${INWARDS}/${data.id}`, payload);
 
             toast.success(response.data.message || "Inward saved successfully");
-            if (hasLoadedInwards) {
-                setHasLoadedInwards(false);
-                await fetchAllInwards(false, true);
-            }
+            setInwards([]); // the looked-up copies are old now
+            void refreshList();
             // The saved document stays on the screen, so it can be printed right away (it does not jump to the next
             // new one: the New button does that). Only the next number is read again, quietly.
             const saved = response.data.data;
@@ -384,7 +359,8 @@ export default function InwardQualityControlPage() {
             setIsIdLoading(true);
             try {
                 const cached = inwards.find((item) => String(item.id) === debouncedId);
-                const inv = cached || (await api.get(`${INWARDS}/${debouncedId}`)).data.data;
+                const inv = cached || (await fetchOne(debouncedId));
+                prefetchNear(debouncedId, Number(nextId));
 
                 if (!inv) {
                     toast.error("Inward record not found");
@@ -1069,7 +1045,7 @@ export default function InwardQualityControlPage() {
                         type="button"
                         variant="secondary"
                         shape="rounded"
-                        onClick={() => fetchAllInwards()}
+                        onClick={() => setIsViewAllOpen(true)}
                         disabled={isSubmitting || !canView}
                         className="border border-zinc-400 bg-white px-6 hover:bg-zinc-50"
                     >
@@ -1105,6 +1081,7 @@ export default function InwardQualityControlPage() {
                     >
                         Print
                     </Button>
+                    <ExitButton />
                 </div>
             </form>
 
@@ -1119,15 +1096,13 @@ export default function InwardQualityControlPage() {
                 codeWord="number"
             />
 
-            <ViewAllModal
-                key={isViewAllOpen ? "open" : "closed"}
+            <InfiniteViewAllModal
                 isOpen={isViewAllOpen}
                 title="All Inward Quality Records"
-                rows={inwards}
+                endpoint={INWARDS}
+                name="inwards"
+                mapRow={(row) => ({ ...row, date: row.date ? new Date(row.date).toISOString().split("T")[0] : "" })}
                 columns={inwardColumns}
-                searchKeys={["id", "date", "GRIRNo", "DCNo"]}
-                isLoading={isInwardsLoading}
-                error={inwardsError}
                 onClose={() => setIsViewAllOpen(false)}
                 onRowSelect={(item) => {
                     reset(mapInwardToForm(item));
@@ -1135,7 +1110,6 @@ export default function InwardQualityControlPage() {
                     setIsEditing(false);
                     setIsViewAllOpen(false);
                 }}
-                onDelete={() => undefined}
             />
 
             <ViewAllModal

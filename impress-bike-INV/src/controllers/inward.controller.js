@@ -9,6 +9,8 @@ import prisma, {
 import { replaceMovements, removeMovements, TX_OPTIONS } from "../services/stock.service.js";
 
 // Every inward is returned with its item rows and the linked Inventory item
+import { isPagedRequest, findPage } from "../utils/listQuery.js";
+
 const inwardInclude = {
     purchaseOrder: { include: { vendor: true } },
     quotation: { include: { vendor: true } },
@@ -62,6 +64,19 @@ const toNullableNumber = (value) =>
     value === undefined || value === null || value === "" || Number(value) === 0 ? null : Number(value);
 
 const getAllInwards = asyncHandler(async (req, res) => {
+    if (isPagedRequest(req)) {
+        const page = await findPage(prisma.inward, req, {
+            numberFields: ["GRIRNo", "DCNo", "billNO"],
+            nestedFields: [
+                ["purchaseOrder", "vendor", "vendorName"],
+                ["quotation", "vendor", "vendorName"],
+                ["items", "some", "inventory", "itemName"],
+            ],
+            dateFields: ["date"],
+            include: inwardInclude,
+        });
+        return res.status(200).json(new ApiResponse(200, page, "Fetched successfully"));
+    }
     const inwards = await prisma.inward.findMany({
         include: inwardInclude,
         orderBy: { id: "asc" },

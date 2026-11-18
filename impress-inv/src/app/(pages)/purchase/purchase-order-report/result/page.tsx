@@ -4,8 +4,10 @@ import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/Button";
+import { ExitButton } from "@/components/ui/ExitButton";
 import { DocumentSheet } from "@/components/ui/DocumentSheet";
-import api from "@/lib/axios";
+import { fetchReportChunk, REPORT_CHUNK } from "@/lib/reportFetch";
+import { PRINT_KEEP_MS } from "@/lib/printCache";
 import { usePermissions } from "@/hooks/usePermissions";
 import { cn } from "@/lib/utils";
 import type { ReportRow } from "@/lib/inwardReport";
@@ -79,13 +81,17 @@ function PurchaseOrderReportResult() {
             setIsFetching(true);
             setFetchError("");
             try {
-                const params = new URLSearchParams(filterParams);
-                params.set("page", String(page));
-                params.set("limit", String(limit));
-                const { data } = await api.get(`${tab.dataPath}?${params.toString()}`);
+                // The server gives the report in pieces of 500 rows (the same piece the Print uses, so Print does not
+                // read it again); this page shows `limit` rows of the piece.
+                const piece = Math.floor(((page - 1) * limit) / REPORT_CHUNK) + 1;
+                const chunk = await fetchReportChunk<ReportRow>(tab.dataPath, new URLSearchParams(filterParams), piece, PRINT_KEEP_MS);
                 if (requestId !== requestRef.current) return;
-                setRows(data.data || []);
-                setMeta((data.meta as PoReportMeta) ?? null);
+                const start = ((page - 1) * limit) % REPORT_CHUNK;
+                setRows(chunk.rows.slice(start, start + limit));
+                const total = chunk.meta?.total ?? chunk.rows.length;
+                setMeta(
+                    chunk.meta ? ({ ...chunk.meta, page, limit, totalPages: Math.max(1, Math.ceil(total / limit)) } as PoReportMeta) : null
+                );
             } catch (error: unknown) {
                 if (requestId !== requestRef.current) return;
                 const message = (error as { response?: { data?: { message?: string } } }).response?.data?.message;
@@ -189,6 +195,7 @@ function PurchaseOrderReportResult() {
                     >
                         Print
                     </Button>
+                    <ExitButton />
                 </div>
             </div>
 

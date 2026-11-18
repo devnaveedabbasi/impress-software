@@ -9,6 +9,8 @@ import { hashPassword, comparePassword } from "../utils/password.js";
 import { assertCanGrant, mapUserPermissions } from "../utils/accountPermissions.js";
 
 // A role's permissions count as permissions given to the user
+import { isPagedRequest, findPage } from "../utils/listQuery.js";
+
 const rolePermissionIds = async (roleId) => {
     const rows = await prisma.rolePermission.findMany({ where: { roleId: Number(roleId) }, select: { permissionId: true } });
     return rows.map((row) => row.permissionId);
@@ -103,6 +105,28 @@ const createUser = asyncHandler(async (req, res) => {
 });
 
 const getAllUsers = asyncHandler(async (req, res) => {
+    if (isPagedRequest(req)) {
+        const page = await findPage(prisma.user, req, {
+            searchFields: ["name", "email"],
+            relationFields: [["role", "name"]],
+            baseWhere: { role: { name: { not: "admin" } } },
+            include: {
+                role: { include: { permissions: { include: { permission: true } } } },
+                permissions: { include: { permission: true } },
+            },
+            after: async (users) =>
+                users.map((user) => ({
+                    id: user.id,
+                    name: user.name,
+                    email: user.email,
+                    role: user.role ? user.role.name : null,
+                    roleId: user.roleId,
+                    permissions: mapUserPermissions(user),
+                    createdAt: user.createdAt,
+                })),
+        });
+        return res.status(200).json(new ApiResponse(200, page, "Users fetched successfully"));
+    }
     const users = await prisma.user.findMany({
         where: {
             role: {

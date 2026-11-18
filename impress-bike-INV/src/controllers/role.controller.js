@@ -7,6 +7,8 @@ import { ApiResponse } from "../utils/apiResponse.js";
 import { assertCanGrant } from "../utils/accountPermissions.js";
 
 // Helper function to normalize strings (removes spaces, hyphens, and converts to lowercase)
+import { isPagedRequest, findPage } from "../utils/listQuery.js";
+
 const normalizeString = (str) => {
     return str.replace(/[^a-zA-Z0-9]/g, "").toLowerCase();
 };
@@ -70,6 +72,14 @@ const createRole = asyncHandler(async (req, res) => {
 
 // GET ALL ROLES
 const getRoles = asyncHandler(async (req, res) => {
+    if (isPagedRequest(req)) {
+        const page = await findPage(prisma.role, req, {
+            searchFields: ["name"],
+            baseWhere: { name: { not: "admin" } },
+            include: { permissions: { include: { permission: true } } },
+        });
+        return res.status(200).json({ success: true, data: page });
+    }
     const roles = await prisma.role.findMany({
         where: {
             name: {

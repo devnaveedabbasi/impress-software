@@ -16,22 +16,48 @@ export const parseListQuery = (req) => {
     return { limit, cursor, q };
 };
 
-// where-condition for the search text: the id (when it is a number), the text columns, and a column of a relation
-// (for example the province name of a city). relationFields: [["province", "name"], ...]
-export const buildSearchWhere = (q, textFields = [], relationFields = []) => {
+// A date typed in the search box: 2026-11-10, 10-11-2026 or 10/11/2026 -> that day (the whole day)
+const dayRange = (q) => {
+    const iso = q.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+    const dmy = q.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})$/);
+    const parts = iso ? [iso[1], iso[2], iso[3]] : dmy ? [dmy[3], dmy[2], dmy[1]] : null;
+    if (!parts) return null;
+    const start = new Date(Date.UTC(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2])));
+    if (Number.isNaN(start.getTime())) return null;
+    return { gte: start, lt: new Date(start.getTime() + 24 * 60 * 60 * 1000) };
+};
+
+// { items: { some: { inventory: { itemName: { contains } } } } } from the path ["items","some","inventory","itemName"]
+const nestedContains = (path, contains) => path.reduceRight((inner, key) => ({ [key]: inner }), contains);
+
+// where-condition for the search text: the id (when it is a number), the text columns, a column of a relation
+// (for example the province name of a city), a date, and a column inside the rows of a document.
+//   relationFields: [["province", "name"], ...]      dateFields: ["date"]
+//   nestedFields:   [["items", "some", "inventory", "itemName"], ...]
+export const buildSearchWhere = (q, textFields = [], relationFields = [], { dateFields = [], nestedFields = [], numberFields = [] } = {}) => {
     if (!q) return undefined;
     const contains = { contains: q, mode: "insensitive" };
     const or = textFields.map((field) => ({ [field]: contains }));
     for (const [relation, field] of relationFields) or.push({ [relation]: { [field]: contains } });
-    if (/^\d{1,9}$/.test(q)) or.push({ id: Number(q) });
+    for (const path of nestedFields) or.push(nestedContains(path, contains));
+    if (/^\d{1,9}$/.test(q)) {
+        or.push({ id: Number(q) });
+        for (const field of numberFields) or.push({ [field]: Number(q) }); // a number column: an exact match
+    }
+    const day = dateFields.length ? dayRange(q) : null;
+    if (day) for (const field of dateFields) or.push({ [field]: day });
     return or.length ? { OR: or } : undefined;
 };
 
 // Reads one page of a model. `after` runs on the page's rows only (inventory adds its stock there).
-export const findPage = async (delegate, req, { searchFields = [], relationFields = [], include, after } = {}) => {
+export const findPage = async (delegate, req, { searchFields = [], relationFields = [], dateFields = [], nestedFields = [], numberFields = [], baseWhere, include, after } = {}) => {
     const { limit, cursor, q } = parseListQuery(req);
     const rows = await delegate.findMany({
-        where: buildSearchWhere(q, searchFields, relationFields),
+        where: (() => {
+            const search = buildSearchWhere(q, searchFields, relationFields, { dateFields, nestedFields, numberFields });
+            if (baseWhere && search) return { AND: [baseWhere, search] };
+            return baseWhere ?? search;
+        })(),
         orderBy: { id: "asc" },
         take: limit + 1,
         ...(cursor !== null ? { cursor: { id: cursor }, skip: 1 } : {}),

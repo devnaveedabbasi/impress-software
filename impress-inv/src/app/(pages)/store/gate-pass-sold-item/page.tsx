@@ -4,13 +4,16 @@ import { useEffect, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { LabeledField } from "@/components/ui/LabeledField";
 import { Button } from "@/components/ui/Button";
+import { ExitButton } from "@/components/ui/ExitButton";
 import useDebounce from "@/hooks/useDebounce";
 import { saleGatePassSchema, type SaleGatePassFormValues } from "@/lib/validations/master";
 import { SALE_GATE_PASSES } from "@/utlis/apiRoutes";
 import api from "@/lib/axios";
 import toast from "react-hot-toast";
 import { usePermissions } from "@/hooks/usePermissions";
-import { ViewAllModal, type ViewAllColumn } from "@/components/ui/ViewAllModal";
+import type { ViewAllColumn } from "@/components/ui/ViewAllModal";
+import { InfiniteViewAllModal, useRefreshMasterList } from "@/components/ui/InfiniteViewAllModal";
+import { useMasterRecord } from "@/hooks/useMasterRecord";
 import { PrintOptionsModal } from "@/components/print/PrintOptionsModal";
 import { InventoryPickerModal, type InventoryPickItem } from "@/components/ui/InventoryPickerModal";
 import { VendorPickerModal, type VendorPickItem } from "@/components/ui/VendorPickerModal";
@@ -87,10 +90,9 @@ export default function GatePassSoldItemPage() {
     const [isIdLoading, setIsIdLoading] = useState(true);
     const [nextId, setNextId] = useState("");
     const [isViewAllOpen, setIsViewAllOpen] = useState(false);
+    const refreshList = useRefreshMasterList("gate-passes");
+    const { fetchOne, prefetchNear } = useMasterRecord("gate-passes", SALE_GATE_PASSES);
     const [gatePasses, setGatePasses] = useState<GatePassRow[]>([]);
-    const [hasLoadedGatePasses, setHasLoadedGatePasses] = useState(false);
-    const [isGatePassesLoading, setIsGatePassesLoading] = useState(false);
-    const [gatePassesError, setGatePassesError] = useState("");
     const skipNextIdLookup = useRef(false);
 
     const {
@@ -165,24 +167,6 @@ export default function GatePassSoldItemPage() {
         itemsSummary: (item.items || []).map((row) => row.inventory?.itemName).filter(Boolean).join(", "),
     });
 
-    const fetchAllGatePasses = async (openModal = true, force = false) => {
-        if (openModal) setIsViewAllOpen(true);
-        if (hasLoadedGatePasses && !force) return;
-
-        setIsGatePassesLoading(true);
-        setGatePassesError("");
-        try {
-            const { data } = await api.get(SALE_GATE_PASSES);
-            setGatePasses((data.data || []).map(withListFields));
-            setHasLoadedGatePasses(true);
-        } catch (error: unknown) {
-            const apiError = error as ApiError;
-            setGatePassesError(apiError.response?.data?.message || "Failed to fetch gate passes");
-        } finally {
-            setIsGatePassesLoading(false);
-        }
-    };
-
     const addGatePassToCache = (item: GatePassRow) => {
         setGatePasses((current) => {
             const cached = withListFields(item);
@@ -190,12 +174,10 @@ export default function GatePassSoldItemPage() {
             if (existingIndex === -1) return [...current, cached];
             return current.map((c, index) => (index === existingIndex ? cached : c));
         });
-        setHasLoadedGatePasses(true);
     };
 
     useEffect(() => {
         void fetchNextId();
-        void fetchAllGatePasses(false);
     }, []);
 
     // Show every problem of the form: field messages under the fields, row problems on the row itself
@@ -260,10 +242,8 @@ export default function GatePassSoldItemPage() {
                     duration: 6000,
                 });
             }
-            if (hasLoadedGatePasses) {
-                setHasLoadedGatePasses(false);
-                await fetchAllGatePasses(false, true);
-            }
+            setGatePasses([]); // the looked-up copies are old now
+            void refreshList();
             // The saved document stays on the screen, so it can be printed right away (it does not jump to the next
             // new one: the New button does that). Only the next number is read again, quietly.
             const saved = response.data.data;
@@ -323,7 +303,8 @@ export default function GatePassSoldItemPage() {
             try {
                 const cached = gatePasses.find((item) => String(item.id) === debouncedId);
                 const gatePass: GatePassRow | undefined =
-                    cached || (await api.get(`${SALE_GATE_PASSES}/${debouncedId}`)).data.data;
+                    cached || (await fetchOne(debouncedId));
+                prefetchNear(debouncedId, Number(nextId));
 
                 if (!gatePass) {
                     toast.error("Gate pass not found");
@@ -640,7 +621,7 @@ export default function GatePassSoldItemPage() {
                         type="button"
                         variant="secondary"
                         shape="rounded"
-                        onClick={() => fetchAllGatePasses()}
+                        onClick={() => setIsViewAllOpen(true)}
                         disabled={isSubmitting || !canView}
                         className="border border-zinc-400 bg-white px-6 hover:bg-zinc-50"
                     >
@@ -676,6 +657,7 @@ export default function GatePassSoldItemPage() {
                     >
                         Print
                     </Button>
+                    <ExitButton />
                 </div>
             </form>
 
@@ -707,15 +689,13 @@ export default function GatePassSoldItemPage() {
                 codeWord="number"
             />
 
-            <ViewAllModal
-                key={isViewAllOpen ? "open" : "closed"}
+            <InfiniteViewAllModal
                 isOpen={isViewAllOpen}
                 title="All Part Sale Gate Passes"
-                rows={gatePasses}
+                endpoint={SALE_GATE_PASSES}
+                name="gate-passes"
+                mapRow={(row) => (withListFields(row))}
                 columns={gatePassColumns}
-                searchKeys={["id", "date", "accountName", "vehicleNo", "itemsSummary"]}
-                isLoading={isGatePassesLoading}
-                error={gatePassesError}
                 onClose={() => setIsViewAllOpen(false)}
                 onRowSelect={(item) => {
                     reset(mapGatePassToForm(item));
@@ -723,7 +703,6 @@ export default function GatePassSoldItemPage() {
                     setIsEditing(false);
                     setIsViewAllOpen(false);
                 }}
-                onDelete={() => undefined}
             />
         </section>
     );

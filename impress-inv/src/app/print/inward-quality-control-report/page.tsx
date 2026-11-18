@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import React from "react";
 import api from "@/lib/axios";
+import { PRINT_KEEP_MS } from "@/lib/printCache";
 import { VENDORS, INWARDS } from "@/utlis/apiRoutes";
 import { usePermissions } from "@/hooks/usePermissions";
 import { useSearchParams } from "next/navigation";
@@ -29,7 +30,7 @@ export default function InwardQualityControlPrintPage() {
     useEffect(() => {
         const fetchVendors = async () => {
             try {
-                const { data } = await api.get(VENDORS);
+                const { data } = await api.get(VENDORS, { persistMs: PRINT_KEEP_MS });
                 if (data.data) {
                     setVendors([
                         { label: "All Vendors", value: "" },

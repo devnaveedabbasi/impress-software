@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import api from "@/lib/axios";
 import { USER_DETAILS, UPDATE_PROFILE } from "@/utlis/apiRoutes";
 import toast from "react-hot-toast";
+import { ExitButton } from "@/components/ui/ExitButton";
 
 interface UserProfile {
     id: number;
@@ -161,6 +162,9 @@ export default function ProfilePage() {
                         </table>
                     </div>
                 )}
+            </div>
+            <div className="mt-6 flex justify-center">
+                <ExitButton />
             </div>
         </section>
     );

@@ -208,6 +208,14 @@ export const quotationSchema = z.object({
       let hasCompleteRow = false;
       let hasPartialRow = false;
 
+      items.forEach((row, index) => {
+        for (const [field, label] of [["oldRate", "Old Rate"], ["proposedRate", "Proposed Rate"], ["approvedRate", "Approved Rate"]] as const) {
+          if (Number(row[field]) < 0) {
+            ctx.addIssue({ code: z.ZodIssueCode.custom, message: `Row ${index + 1}: ${label} cannot be negative` });
+          }
+        }
+      });
+
       for (const row of items) {
         const hasAny = !!(row.itemName || row.oldRate || row.proposedRate || row.approvedRate);
         const hasAll = !!(row.itemName && row.oldRate && row.proposedRate && row.approvedRate);
@@ -257,6 +265,14 @@ export const purchaseOrderSchema = z.object({
     .superRefine((items, ctx) => {
       let hasCompleteRow = false;
       let hasPartialRow = false;
+
+      items.forEach((row, index) => {
+        for (const [field, label] of [["unit", "Unit"], ["quantity", "Quantity"], ["rate", "Rate"]] as const) {
+          if (Number(row[field]) < 0) {
+            ctx.addIssue({ code: z.ZodIssueCode.custom, message: `Row ${index + 1}: ${label} cannot be negative` });
+          }
+        }
+      });
 
       for (const row of items) {
         const hasAny = !!(row.code || row.itemName || row.unit || row.quantity || row.rate || row.amount);
@@ -466,6 +482,14 @@ const checkRowQty = (value: string | undefined, label: string): string => {
   return "";
 };
 
+const requiredCode = (label: string) =>
+  z
+    .string()
+    .trim()
+    .min(1, { message: `${label} is required` })
+    .max(50, { message: `${label} must be at most 50 characters` })
+    .regex(/^[A-Za-z0-9\-\/ ]+$/, { message: `${label} can only have letters, numbers, spaces, - and /` });
+
 const optionalCode = (label: string) =>
   z
     .string()
@@ -590,8 +614,8 @@ export const rejectionReturnToVendorSchema = z.object({
     .trim()
     .min(2, { message: "Transport must be at least 2 characters" })
     .max(100, { message: "Transport must be at most 100 characters" }),
-  builtyNo: optionalCode("Builty No"),
-  bookNo: optionalCode("Book No"),
+  builtyNo: requiredCode("Builty No"),
+  bookNo: requiredCode("Book No"),
   receivedBy: z
     .string()
     .trim()
@@ -1049,13 +1073,6 @@ export const stockTransferSchema = z.object({
 export type StockTransferFormValues = z.infer<typeof stockTransferSchema>;
 
 // ---------------- Vendor Bill Posting ----------------
-const requiredCode = (label: string) =>
-  z
-    .string()
-    .trim()
-    .min(1, { message: `${label} is required` })
-    .max(50, { message: `${label} must be at most 50 characters` })
-    .regex(/^[A-Za-z0-9\-\/ ]+$/, { message: `${label} can only have letters, numbers, spaces, - and /` });
 
 export const vendorBillSchema = z.object({
   id: z.string().optional(), // the Bill Posting No (generated automatically)

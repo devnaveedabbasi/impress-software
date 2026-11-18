@@ -4,8 +4,8 @@ import config from "../config/index.js";
 import { requiredPermissionKeys } from "../utils/accountPermissions.js";
 
 // The signed-in user (with role and permissions) is read from the database on every request, which is slow when
-// the database is far away. A few seconds of memory removes most of those reads. Login / logout clear it.
-const USER_CACHE_MS = 10000;
+// the database is far away. A little memory removes most of those reads. Login / logout clear it.
+const USER_CACHE_MS = 30000;
 const userCache = new Map();
 // Admins and normal users are different tables, so their ids can be equal: the cache key includes the type.
 const cacheKey = (id, accountType) => `${accountType === "admin" ? "admin" : "user"}:${Number(id)}`;

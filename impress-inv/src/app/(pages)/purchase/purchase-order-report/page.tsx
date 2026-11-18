@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { LabeledField } from "@/components/ui/LabeledField";
 import { LabeledSelect } from "@/components/ui/LabeledSelect";
 import { Button } from "@/components/ui/Button";
+import { ExitButton } from "@/components/ui/ExitButton";
 import { VENDORS, INVENTORY } from "@/utlis/apiRoutes";
 import api from "@/lib/axios";
 import toast from "react-hot-toast";
@@ -267,6 +268,7 @@ function PurchaseOrderReportFilters() {
                     >
                         Clear Filters
                     </Button>
+                    <ExitButton />
                 </div>
 
                 {!canView && (

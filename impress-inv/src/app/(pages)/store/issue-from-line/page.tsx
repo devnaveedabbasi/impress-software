@@ -5,13 +5,16 @@ import { useForm } from "react-hook-form";
 import { LabeledField } from "@/components/ui/LabeledField";
 import { LabeledSelect } from "@/components/ui/LabeledSelect";
 import { Button } from "@/components/ui/Button";
+import { ExitButton } from "@/components/ui/ExitButton";
 import useDebounce from "@/hooks/useDebounce";
 import { storeIssueSchema, type StoreIssueFormValues } from "@/lib/validations/master";
 import { STORE_ISSUES, DEPARTMENTS, COLORS } from "@/utlis/apiRoutes";
 import api from "@/lib/axios";
 import toast from "react-hot-toast";
 import { usePermissions } from "@/hooks/usePermissions";
-import { ViewAllModal, type ViewAllColumn } from "@/components/ui/ViewAllModal";
+import type { ViewAllColumn } from "@/components/ui/ViewAllModal";
+import { InfiniteViewAllModal, useRefreshMasterList } from "@/components/ui/InfiniteViewAllModal";
+import { useMasterRecord } from "@/hooks/useMasterRecord";
 import { PrintOptionsModal } from "@/components/print/PrintOptionsModal";
 import { InventoryPickerModal, type InventoryPickItem } from "@/components/ui/InventoryPickerModal";
 import { RowDeleteButton, deletableRowClassName } from "@/components/ui/RowDeleteButton";
@@ -100,10 +103,9 @@ export default function IssueFromLinePage() {
     const [isIdLoading, setIsIdLoading] = useState(true);
     const [nextId, setNextId] = useState("");
     const [isViewAllOpen, setIsViewAllOpen] = useState(false);
+    const refreshList = useRefreshMasterList("store-issues");
+    const { fetchOne, prefetchNear } = useMasterRecord("store-issues", STORE_ISSUES);
     const [issues, setIssues] = useState<StoreIssueRow[]>([]);
-    const [hasLoadedIssues, setHasLoadedIssues] = useState(false);
-    const [isIssuesLoading, setIsIssuesLoading] = useState(false);
-    const [issuesError, setIssuesError] = useState("");
     const skipNextIdLookup = useRef(false);
 
     const {
@@ -205,24 +207,6 @@ export default function IssueFromLinePage() {
         itemsSummary: (item.items || []).map((row) => row.inventory?.itemName).filter(Boolean).join(", "),
     });
 
-    const fetchAllIssues = async (openModal = true, force = false) => {
-        if (openModal) setIsViewAllOpen(true);
-        if (hasLoadedIssues && !force) return;
-
-        setIsIssuesLoading(true);
-        setIssuesError("");
-        try {
-            const { data } = await api.get(STORE_ISSUES);
-            setIssues((data.data || []).map(withListFields));
-            setHasLoadedIssues(true);
-        } catch (error: unknown) {
-            const apiError = error as ApiError;
-            setIssuesError(apiError.response?.data?.message || "Failed to fetch issue slips");
-        } finally {
-            setIsIssuesLoading(false);
-        }
-    };
-
     const addIssueToCache = (item: StoreIssueRow) => {
         setIssues((current) => {
             const cached = withListFields(item);
@@ -230,13 +214,11 @@ export default function IssueFromLinePage() {
             if (existingIndex === -1) return [...current, cached];
             return current.map((c, index) => (index === existingIndex ? cached : c));
         });
-        setHasLoadedIssues(true);
     };
 
     useEffect(() => {
         void fetchNextId();
         void fetchOptions();
-        void fetchAllIssues(false);
     }, []);
 
     // Show every problem of the form: field messages under the fields, row problems on the row itself
@@ -310,10 +292,8 @@ export default function IssueFromLinePage() {
                 : await api.put(`${STORE_ISSUES}/${data.id}`, payload);
 
             toast.success(response.data.message || "Issue slip saved successfully");
-            if (hasLoadedIssues) {
-                setHasLoadedIssues(false);
-                await fetchAllIssues(false, true);
-            }
+            setIssues([]); // the looked-up copies are old now
+            void refreshList();
             // The saved document stays on the screen, so it can be printed right away (it does not jump to the next
             // new one: the New button does that). Only the next number is read again, quietly.
             const saved = response.data.data;
@@ -374,7 +354,8 @@ export default function IssueFromLinePage() {
             setIsIdLoading(true);
             try {
                 const cached = issues.find((item) => String(item.id) === debouncedId);
-                const issue: StoreIssueRow | undefined = cached || (await api.get(`${STORE_ISSUES}/${debouncedId}`)).data.data;
+                const issue: StoreIssueRow | undefined = cached || (await fetchOne(debouncedId));
+                prefetchNear(debouncedId, Number(nextId));
 
                 if (!issue) {
                     toast.error("Issue slip not found");
@@ -719,7 +700,7 @@ export default function IssueFromLinePage() {
                         type="button"
                         variant="secondary"
                         shape="rounded"
-                        onClick={() => fetchAllIssues()}
+                        onClick={() => setIsViewAllOpen(true)}
                         disabled={isSubmitting || !canView}
                         className="border border-zinc-400 bg-white px-6 hover:bg-zinc-50"
                     >
@@ -755,6 +736,7 @@ export default function IssueFromLinePage() {
                     >
                         Print
                     </Button>
+                    <ExitButton />
                 </div>
             </form>
 
@@ -776,15 +758,13 @@ export default function IssueFromLinePage() {
                 codeWord="number"
             />
 
-            <ViewAllModal
-                key={isViewAllOpen ? "open" : "closed"}
+            <InfiniteViewAllModal
                 isOpen={isViewAllOpen}
                 title="All Store Issuance Slips"
-                rows={issues}
+                endpoint={STORE_ISSUES}
+                name="store-issues"
+                mapRow={(row) => (withListFields(row))}
                 columns={issueColumns}
-                searchKeys={["id", "date", "departmentName", "colorName", "itemsSummary"]}
-                isLoading={isIssuesLoading}
-                error={issuesError}
                 onClose={() => setIsViewAllOpen(false)}
                 onRowSelect={(item) => {
                     reset(mapIssueToForm(item));
@@ -793,7 +773,6 @@ export default function IssueFromLinePage() {
                     setIsEditing(false);
                     setIsViewAllOpen(false);
                 }}
-                onDelete={() => undefined}
             />
         </section>
     );

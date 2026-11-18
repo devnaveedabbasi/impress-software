@@ -5,6 +5,7 @@ import { Icon } from "@iconify/react";
 import toast from "react-hot-toast";
 import api from "@/lib/axios";
 import { SYNC_STATUS, SYNC_EXECUTE, SYNC_RESOLVE } from "@/utlis/apiRoutes";
+import { ExitButton } from "@/components/ui/ExitButton";
 
 interface ConflictItem {
   id: number | string;
@@ -233,6 +234,7 @@ export default function DataSyncPage() {
 
           {/* Action Buttons & Status Badge */}
           <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+            <ExitButton />
             {loading && !syncData ? (
               <div className="flex items-center gap-1.5 rounded-full bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-700 border border-blue-200">
                 <Icon icon="mdi:loading" className="h-3.5 w-3.5 animate-spin" />

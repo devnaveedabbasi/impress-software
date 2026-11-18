@@ -15,7 +15,8 @@ export const userSchema = z.object({
   email: z.string().trim().email("Enter a valid email address"),
   password: z.string().optional(),
   role: z.string().min(1, "Select a role"),
-  permissionIds: z.array(z.string()).min(1, "Select at least one permission"),
+  // Extra permissions are optional: the role already gives the user its permissions
+  permissionIds: z.array(z.string()),
 }).superRefine((data, ctx) => {
   // If new user, password is required and must be >= 6 chars
   if (!data.id && (!data.password || data.password.length < 6)) {

@@ -11,8 +11,11 @@ import useDebounce from "@/hooks/useDebounce";
 
 import { LabeledField } from "@/components/ui/LabeledField";
 import { LabeledSelect } from "@/components/ui/LabeledSelect";
-import { ViewAllModal, type ViewAllColumn } from "@/components/ui/ViewAllModal";
+import type { ViewAllColumn } from "@/components/ui/ViewAllModal";
+import { InfiniteViewAllModal, useRefreshMasterList } from "@/components/ui/InfiniteViewAllModal";
+import { useMasterRecord } from "@/hooks/useMasterRecord";
 import { Button } from "@/components/ui/Button";
+import { ExitButton } from "@/components/ui/ExitButton";
 
 type UserRow = {
     id: number;
@@ -55,10 +58,9 @@ export default function AddUserPage() {
     const [isIdLoading, setIsIdLoading] = useState(true);
     const [nextId, setNextId] = useState("");
     const [isViewAllOpen, setIsViewAllOpen] = useState(false);
+    const refreshList = useRefreshMasterList("users");
+    const { fetchOne, prefetchNear } = useMasterRecord("users", USERS);
     const [users, setUsers] = useState<UserRow[]>([]);
-    const [hasLoadedUsers, setHasLoadedUsers] = useState(false);
-    const [isUsersLoading, setIsUsersLoading] = useState(false);
-    const [usersError, setUsersError] = useState("");
     const skipNextIdLookup = useRef(false);
 
     const [searchQuery, setSearchQuery] = useState("");
@@ -130,24 +132,6 @@ export default function AddUserPage() {
         };
     };
 
-    const fetchAllUsers = async (openModal = true, force = false) => {
-        if (openModal) setIsViewAllOpen(true);
-        if (hasLoadedUsers && !force) return;
-
-        setIsUsersLoading(true);
-        setUsersError("");
-        try {
-            const { data } = await api.get(USERS);
-            setUsers(data.data || []);
-            setHasLoadedUsers(true);
-        } catch (error: unknown) {
-            const apiError = error as ApiError;
-            setUsersError(apiError.response?.data?.message || "Failed to fetch users");
-        } finally {
-            setIsUsersLoading(false);
-        }
-    };
-
     const addUserToCache = (item: UserRow) => {
         setUsers((current) => {
             const existingIndex = current.findIndex(
@@ -156,13 +140,11 @@ export default function AddUserPage() {
             if (existingIndex === -1) return [...current, item];
             return current.map((c, index) => (index === existingIndex ? item : c));
         });
-        setHasLoadedUsers(true);
     };
 
     useEffect(() => {
         void fetchNextId();
         void fetchData();
-        void fetchAllUsers(false);
     }, []);
 
     const roleOptions = [
@@ -211,10 +193,8 @@ export default function AddUserPage() {
                 : await api.put(`${USERS}/${data.id}`, payload);
 
             toast.success(response.data.message || "User saved successfully");
-            if (hasLoadedUsers) {
-                setHasLoadedUsers(false);
-                await fetchAllUsers(false, true);
-            }
+            setUsers([]); // the looked-up copies are old now
+            void refreshList();
             // After Save the record stays on the screen (it does not jump to the next new one: the New button does that).
             // Only the next number is read again, quietly, so a new record still gets the right number.
             setValue("password", ""); // the password is never kept on the screen
@@ -270,7 +250,8 @@ export default function AddUserPage() {
             setIsIdLoading(true);
             try {
                 const cached = users.find((item) => String(item.id) === debouncedId);
-                const u = cached || (await api.get(`${USERS}/${debouncedId}`)).data.data;
+                const u = cached || (await fetchOne(debouncedId));
+                prefetchNear(debouncedId, Number(nextId));
 
                 if (!u) {
                     toast.error("User not found");
@@ -482,7 +463,7 @@ export default function AddUserPage() {
                             type="button"
                             variant="secondary"
                             shape="rounded"
-                            onClick={() => fetchAllUsers()}
+                            onClick={() => setIsViewAllOpen(true)}
                             disabled={isSubmitting || !canView}
                             className="border border-zinc-400 bg-white px-6 hover:bg-zinc-50"
                         >
@@ -508,6 +489,7 @@ export default function AddUserPage() {
                         >
                             Save
                         </Button>
+                        <ExitButton />
                     </div>
                 </div>
 
@@ -700,15 +682,13 @@ export default function AddUserPage() {
                 </div>
             </form>
 
-            <ViewAllModal
-                key={isViewAllOpen ? "open" : "closed"}
+            <InfiniteViewAllModal
                 isOpen={isViewAllOpen}
                 title="All Users"
-                rows={users}
+                endpoint={USERS}
+                name="users"
+                mapRow={(row) => (row)}
                 columns={userColumns}
-                searchKeys={["id", "name", "email", "role"]}
-                isLoading={isUsersLoading}
-                error={usersError}
                 onClose={() => setIsViewAllOpen(false)}
                 onRowSelect={(item) => {
                     reset(mapUserToForm(item));
@@ -716,7 +696,6 @@ export default function AddUserPage() {
                     setIsEditing(false);
                     setIsViewAllOpen(false);
                 }}
-                onDelete={() => undefined}
             />
         </section>
     );

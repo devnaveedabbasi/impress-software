@@ -3,6 +3,7 @@
 import { Suspense, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import api from "@/lib/axios";
+import { PRINT_KEEP_MS } from "@/lib/printCache";
 import { VENDORS, PURCHASE_ORDERS } from "@/utlis/apiRoutes";
 import { usePermissions } from "@/hooks/usePermissions";
 import { usePrintReport } from "@/hooks/usePrintReport";
@@ -37,7 +38,7 @@ function PurchaseOrderReportPrint() {
     const [vendorName, setVendorName] = useState("");
     useEffect(() => {
         if (!vendorId) return;
-        api.get(VENDORS)
+        api.get(VENDORS, { persistMs: PRINT_KEEP_MS })
             .then(({ data }) => {
                 const found = (data.data || []).find((v: { id: number }) => String(v.id) === vendorId);
                 setVendorName(found?.vendorName || "");

@@ -7,6 +7,8 @@ import prisma, {
 } from "../config/prisma.js";
 
 // Vendor Claim Note: the claim of the rejected parts of a vendor. The id of the record is the Claim Note No. Every record is returned with its vendor and item rows.
+import { isPagedRequest, findPage } from "../utils/listQuery.js";
+
 const returnInclude = {
     vendor: { select: { id: true, vendorName: true } },
     items: {
@@ -143,6 +145,16 @@ const normalizeItems = (items) =>
     }));
 
 const getAllVendorClaimNotes = asyncHandler(async (req, res) => {
+    if (isPagedRequest(req)) {
+        const page = await findPage(prisma.vendorClaimNote, req, {
+            searchFields: ["transport", "builtyNo"],
+            relationFields: [["vendor", "vendorName"]],
+            nestedFields: [["items", "some", "inventory", "itemName"]],
+            dateFields: ["date"],
+            include: returnInclude,
+        });
+        return res.status(200).json(new ApiResponse(200, page, "Fetched successfully"));
+    }
     const vendorClaimNotes = await prisma.vendorClaimNote.findMany({
         include: returnInclude,
         orderBy: { id: "asc" },

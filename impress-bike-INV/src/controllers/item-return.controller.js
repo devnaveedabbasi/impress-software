@@ -8,6 +8,8 @@ import prisma, {
 import { replaceMovements, removeMovements, TX_OPTIONS } from "../services/stock.service.js";
 
 // The id of the record is the Requisition Slip No. Every slip is returned with its department and item rows.
+import { isPagedRequest, findPage } from "../utils/listQuery.js";
+
 const returnInclude = {
     department: { select: { id: true, name: true } },
     items: {
@@ -98,6 +100,15 @@ const computeReturnWarnings = async ({ departmentId, items, excludeReturnId }) =
 };
 
 const getAllItemReturns = asyncHandler(async (req, res) => {
+    if (isPagedRequest(req)) {
+        const page = await findPage(prisma.itemReturn, req, {
+            relationFields: [["department", "name"]],
+            nestedFields: [["items", "some", "inventory", "itemName"]],
+            dateFields: ["date"],
+            include: returnInclude,
+        });
+        return res.status(200).json(new ApiResponse(200, page, "Fetched successfully"));
+    }
     const returns = await prisma.itemReturn.findMany({
         include: returnInclude,
         orderBy: { id: "asc" },

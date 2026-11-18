@@ -10,8 +10,11 @@ import { ADMINS, PERMISSIONS } from "@/utlis/apiRoutes";
 import useDebounce from "@/hooks/useDebounce";
 
 import { LabeledField } from "@/components/ui/LabeledField";
-import { ViewAllModal, type ViewAllColumn } from "@/components/ui/ViewAllModal";
+import type { ViewAllColumn } from "@/components/ui/ViewAllModal";
+import { InfiniteViewAllModal, useRefreshMasterList } from "@/components/ui/InfiniteViewAllModal";
+import { useMasterRecord } from "@/hooks/useMasterRecord";
 import { Button } from "@/components/ui/Button";
+import { ExitButton } from "@/components/ui/ExitButton";
 
 type AdminRow = {
     id: number;
@@ -56,10 +59,8 @@ export default function AdminsPage() {
     const [isIdLoading, setIsIdLoading] = useState(true);
     const [nextId, setNextId] = useState("");
     const [isViewAllOpen, setIsViewAllOpen] = useState(false);
-    const [admins, setAdmins] = useState<AdminRow[]>([]);
-    const [hasLoadedAdmins, setHasLoadedAdmins] = useState(false);
-    const [isAdminsLoading, setIsAdminsLoading] = useState(false);
-    const [adminsError, setAdminsError] = useState("");
+    const refreshList = useRefreshMasterList("admins");
+    const { fetchOne, prefetchNear } = useMasterRecord("admins", ADMINS);
     const skipNextIdLookup = useRef(false);
 
     const [searchQuery, setSearchQuery] = useState("");
@@ -209,29 +210,10 @@ export default function AdminsPage() {
         permissionIds: (a.permissions || []).map((p) => String(p.id)),
     });
 
-    const fetchAllAdmins = async (openModal = true, force = false) => {
-        if (openModal) setIsViewAllOpen(true);
-        if (hasLoadedAdmins && !force) return;
-
-        setIsAdminsLoading(true);
-        setAdminsError("");
-        try {
-            const { data } = await api.get(ADMINS);
-            setAdmins(data.data || []);
-            setHasLoadedAdmins(true);
-        } catch (error: unknown) {
-            const apiError = error as ApiError;
-            setAdminsError(apiError.response?.data?.message || "Failed to fetch admins");
-        } finally {
-            setIsAdminsLoading(false);
-        }
-    };
-
     useEffect(() => {
         if (!isSuperAdmin) return;
         void fetchNextId();
         void fetchPermissions();
-        void fetchAllAdmins(false);
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [isSuperAdmin]);
 
@@ -262,8 +244,7 @@ export default function AdminsPage() {
                 : await api.put(`${ADMINS}/${data.id}`, payload);
 
             toast.success(response.data.message || "Admin saved successfully");
-            setHasLoadedAdmins(false);
-            await fetchAllAdmins(false, true);
+            void refreshList();
             // After Save the record stays on the screen (it does not jump to the next new one: the New button does that).
             // Only the next number is read again, quietly, so a new record still gets the right number.
             setValue("password", ""); // the password is never kept on the screen
@@ -311,8 +292,8 @@ export default function AdminsPage() {
 
             setIsIdLoading(true);
             try {
-                const cached = admins.find((item) => String(item.id) === debouncedId);
-                const found: AdminRow | undefined = cached || (await api.get(`${ADMINS}/${debouncedId}`)).data.data;
+                const found: AdminRow | undefined = await fetchOne(debouncedId);
+                prefetchNear(debouncedId, Number(nextId));
                 if (!found) {
                     toast.error("Admin not found");
                     resetToNextId();
@@ -332,7 +313,7 @@ export default function AdminsPage() {
 
         void lookup();
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [debouncedId, nextId, admins, isSuperAdmin]);
+    }, [debouncedId, nextId, isSuperAdmin]);
 
     const filteredPermissions = permissionsData
         ? Object.entries(permissionsData).reduce((acc: any, [key, module]: [string, any]) => {
@@ -455,7 +436,7 @@ export default function AdminsPage() {
                             type="button"
                             variant="secondary"
                             shape="rounded"
-                            onClick={() => fetchAllAdmins()}
+                            onClick={() => setIsViewAllOpen(true)}
                             disabled={isSubmitting}
                             className="border border-zinc-400 bg-white px-6 hover:bg-zinc-50"
                         >
@@ -481,6 +462,7 @@ export default function AdminsPage() {
                         >
                             Save
                         </Button>
+                        <ExitButton />
                     </div>
                 </div>
 
@@ -616,15 +598,12 @@ export default function AdminsPage() {
                 </div>
             </form>
 
-            <ViewAllModal
-                key={isViewAllOpen ? "open" : "closed"}
+            <InfiniteViewAllModal
                 isOpen={isViewAllOpen}
                 title="All Admins"
-                rows={admins}
+                endpoint={ADMINS}
+                name="admins"
                 columns={adminColumns}
-                searchKeys={["id", "name", "email", "roleLabel"]}
-                isLoading={isAdminsLoading}
-                error={adminsError}
                 onClose={() => setIsViewAllOpen(false)}
                 onRowSelect={(item) => {
                     reset(mapAdminToForm(item));
@@ -632,7 +611,6 @@ export default function AdminsPage() {
                     setIsEditing(false);
                     setIsViewAllOpen(false);
                 }}
-                onDelete={() => undefined}
             />
         </section>
     );

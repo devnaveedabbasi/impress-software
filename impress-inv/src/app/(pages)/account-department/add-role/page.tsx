@@ -9,8 +9,11 @@ import toast from "react-hot-toast";
 import { PERMISSIONS, ROLES } from "@/utlis/apiRoutes";
 import useDebounce from "@/hooks/useDebounce";
 import { LabeledField } from "@/components/ui/LabeledField";
-import { ViewAllModal, type ViewAllColumn } from "@/components/ui/ViewAllModal";
+import type { ViewAllColumn } from "@/components/ui/ViewAllModal";
+import { InfiniteViewAllModal, useRefreshMasterList } from "@/components/ui/InfiniteViewAllModal";
+import { useMasterRecord } from "@/hooks/useMasterRecord";
 import { Button } from "@/components/ui/Button";
+import { ExitButton } from "@/components/ui/ExitButton";
 
 type RoleRow = {
     id: number;
@@ -45,10 +48,9 @@ export default function AddRolePage() {
     const [isIdLoading, setIsIdLoading] = useState(true);
     const [nextId, setNextId] = useState("");
     const [isViewAllOpen, setIsViewAllOpen] = useState(false);
+    const refreshList = useRefreshMasterList("roles");
+    const { fetchOne, prefetchNear } = useMasterRecord("roles", ROLES);
     const [roles, setRoles] = useState<RoleRow[]>([]);
-    const [hasLoadedRoles, setHasLoadedRoles] = useState(false);
-    const [isRolesLoading, setIsRolesLoading] = useState(false);
-    const [rolesError, setRolesError] = useState("");
     const skipNextIdLookup = useRef(false);
 
     const [searchQuery, setSearchQuery] = useState("");
@@ -108,24 +110,6 @@ export default function AddRolePage() {
         permissionIds: (r.permissions || []).map((p: any) => String(p.permission?.id || p.permissionId || p.id)),
     });
 
-    const fetchAllRoles = async (openModal = true, force = false) => {
-        if (openModal) setIsViewAllOpen(true);
-        if (hasLoadedRoles && !force) return;
-
-        setIsRolesLoading(true);
-        setRolesError("");
-        try {
-            const { data } = await api.get(ROLES);
-            setRoles(data.data || []);
-            setHasLoadedRoles(true);
-        } catch (error: unknown) {
-            const apiError = error as ApiError;
-            setRolesError(apiError.response?.data?.message || "Failed to fetch roles");
-        } finally {
-            setIsRolesLoading(false);
-        }
-    };
-
     const addRoleToCache = (item: RoleRow) => {
         setRoles((current) => {
             const existingIndex = current.findIndex(
@@ -134,13 +118,11 @@ export default function AddRolePage() {
             if (existingIndex === -1) return [...current, item];
             return current.map((c, index) => (index === existingIndex ? item : c));
         });
-        setHasLoadedRoles(true);
     };
 
     useEffect(() => {
         void fetchNextId();
         void fetchPermissions();
-        void fetchAllRoles(false);
     }, []);
 
     const formatLabel = (str: string) => {
@@ -178,10 +160,8 @@ export default function AddRolePage() {
                 : await api.put(`${ROLES}/${data.id}`, payload);
 
             toast.success(response.data.message || "Role saved successfully");
-            if (hasLoadedRoles) {
-                setHasLoadedRoles(false);
-                await fetchAllRoles(false, true);
-            }
+            setRoles([]); // the looked-up copies are old now
+            void refreshList();
             // After Save the record stays on the screen (it does not jump to the next new one: the New button does that).
             // Only the next number is read again, quietly, so a new record still gets the right number.
             setIsNewMode(false);
@@ -234,7 +214,8 @@ export default function AddRolePage() {
             setIsIdLoading(true);
             try {
                 const cached = roles.find((item) => String(item.id) === debouncedId);
-                const r = cached || (await api.get(`${ROLES}/${debouncedId}`)).data.data;
+                const r = cached || (await fetchOne(debouncedId));
+                prefetchNear(debouncedId, Number(nextId));
 
                 if (!r) {
                     toast.error("Role not found");
@@ -354,7 +335,7 @@ export default function AddRolePage() {
                             type="button"
                             variant="secondary"
                             shape="rounded"
-                            onClick={() => fetchAllRoles()}
+                            onClick={() => setIsViewAllOpen(true)}
                             disabled={isSubmitting || !canView}
                             className="border border-zinc-400 bg-white px-6 hover:bg-zinc-50"
                         >
@@ -380,6 +361,7 @@ export default function AddRolePage() {
                         >
                             Save
                         </Button>
+                        <ExitButton />
                     </div>
                 </div>
 
@@ -526,15 +508,13 @@ export default function AddRolePage() {
                 </div>
             </form>
 
-            <ViewAllModal
-                key={isViewAllOpen ? "open" : "closed"}
+            <InfiniteViewAllModal
                 isOpen={isViewAllOpen}
                 title="All Roles"
-                rows={roles}
+                endpoint={ROLES}
+                name="roles"
+                mapRow={(row) => (row)}
                 columns={roleColumns}
-                searchKeys={["id", "name"]}
-                isLoading={isRolesLoading}
-                error={rolesError}
                 onClose={() => setIsViewAllOpen(false)}
                 onRowSelect={(item) => {
                     reset(mapRoleToForm(item));
@@ -542,7 +522,6 @@ export default function AddRolePage() {
                     setIsEditing(false);
                     setIsViewAllOpen(false);
                 }}
-                onDelete={() => undefined}
             />
         </section>
     );

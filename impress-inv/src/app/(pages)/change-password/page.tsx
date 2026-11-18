@@ -5,6 +5,7 @@ import api from "@/lib/axios";
 import { CHANGE_PASSWORD } from "@/utlis/apiRoutes";
 import toast from "react-hot-toast";
 import { Icon } from "@iconify/react";
+import { ExitButton } from "@/components/ui/ExitButton";
 
 export default function ChangePasswordPage() {
     const [oldPassword, setOldPassword] = useState("");
@@ -116,7 +117,7 @@ export default function ChangePasswordPage() {
                     </div>
                 </div>
 
-                <div className="flex justify-center">
+                <div className="flex justify-center gap-3">
                     <button
                         type="submit"
                         disabled={isLoading || !oldPassword || !newPassword || !confirmPassword}
@@ -124,6 +125,7 @@ export default function ChangePasswordPage() {
                     >
                         Change Password
                     </button>
+                    <ExitButton plain className={btnClass} />
                 </div>
             </form>
         </section>

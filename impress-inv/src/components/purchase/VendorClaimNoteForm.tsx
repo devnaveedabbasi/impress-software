@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { LabeledField } from "@/components/ui/LabeledField";
 import { Button } from "@/components/ui/Button";
+import { ExitButton } from "@/components/ui/ExitButton";
 import useDebounce from "@/hooks/useDebounce";
 import {
     vendorClaimNoteSchema,
@@ -14,6 +15,8 @@ import api from "@/lib/axios";
 import toast from "react-hot-toast";
 import { usePermissions } from "@/hooks/usePermissions";
 import { ViewAllModal, type ViewAllColumn } from "@/components/ui/ViewAllModal";
+import { InfiniteViewAllModal, useRefreshMasterList } from "@/components/ui/InfiniteViewAllModal";
+import { useMasterRecord } from "@/hooks/useMasterRecord";
 import { PrintOptionsModal } from "@/components/print/PrintOptionsModal";
 import { VendorPickerModal, type VendorPickItem } from "@/components/ui/VendorPickerModal";
 import { RowDeleteButton, deletableRowClassName } from "@/components/ui/RowDeleteButton";
@@ -122,10 +125,9 @@ export function VendorClaimNoteForm() {
     const [isIdLoading, setIsIdLoading] = useState(true);
     const [nextId, setNextId] = useState("");
     const [isViewAllOpen, setIsViewAllOpen] = useState(false);
+    const refreshList = useRefreshMasterList("vendor-claim-notes");
+    const { fetchOne, prefetchNear } = useMasterRecord("vendor-claim-notes", VENDOR_CLAIM_NOTES);
     const [rejectionReturns, setRejectionReturns] = useState<VendorClaimNoteRow[]>([]);
-    const [hasLoadedRejectionReturns, setHasLoadedRejectionReturns] = useState(false);
-    const [isRejectionReturnsLoading, setIsRejectionReturnsLoading] = useState(false);
-    const [rejectionReturnsError, setRejectionReturnsError] = useState("");
     const skipNextIdLookup = useRef(false);
 
     const {
@@ -207,24 +209,6 @@ export function VendorClaimNoteForm() {
         itemsSummary: (item.items || []).map((row) => row.inventory?.itemName).filter(Boolean).join(", "),
     });
 
-    const fetchAllRejectionReturns = async (openModal = true, force = false) => {
-        if (openModal) setIsViewAllOpen(true);
-        if (hasLoadedRejectionReturns && !force) return;
-
-        setIsRejectionReturnsLoading(true);
-        setRejectionReturnsError("");
-        try {
-            const { data } = await api.get(VENDOR_CLAIM_NOTES);
-            setRejectionReturns((data.data || []).map(withListFields));
-            setHasLoadedRejectionReturns(true);
-        } catch (error: unknown) {
-            const apiError = error as ApiError;
-            setRejectionReturnsError(apiError.response?.data?.message || "Failed to fetch Vendor Claim Notes");
-        } finally {
-            setIsRejectionReturnsLoading(false);
-        }
-    };
-
     const addReturnToCache = (item: VendorClaimNoteRow) => {
         setRejectionReturns((current) => {
             const cached = withListFields(item);
@@ -232,12 +216,10 @@ export function VendorClaimNoteForm() {
             if (existingIndex === -1) return [...current, cached];
             return current.map((c, index) => (index === existingIndex ? cached : c));
         });
-        setHasLoadedRejectionReturns(true);
     };
 
     useEffect(() => {
         void fetchNextId();
-        void fetchAllRejectionReturns(false);
     }, []);
 
     // Show every problem of the form: field messages under the fields, row problems on the row itself
@@ -321,10 +303,8 @@ export function VendorClaimNoteForm() {
                 : await api.put(`${VENDOR_CLAIM_NOTES}/${data.id}`, payload);
 
             toast.success(response.data.message || "Claim note saved successfully");
-            if (hasLoadedRejectionReturns) {
-                setHasLoadedRejectionReturns(false);
-                await fetchAllRejectionReturns(false, true);
-            }
+            setRejectionReturns([]); // the looked-up copies are old now
+            void refreshList();
             // The saved document stays on the screen, so it can be printed right away (it does not jump to the next
             // new one: the New button does that). Only the next number is read again, quietly.
             const saved = response.data.data;
@@ -384,7 +364,8 @@ export function VendorClaimNoteForm() {
             try {
                 const cached = rejectionReturns.find((item) => String(item.id) === debouncedId);
                 const record: VendorClaimNoteRow | undefined =
-                    cached || (await api.get(`${VENDOR_CLAIM_NOTES}/${debouncedId}`)).data.data;
+                    cached || (await fetchOne(debouncedId));
+                prefetchNear(debouncedId, Number(nextId));
 
                 if (!record) {
                     toast.error("Claim note not found");
@@ -912,7 +893,7 @@ export function VendorClaimNoteForm() {
                         type="button"
                         variant="secondary"
                         shape="rounded"
-                        onClick={() => fetchAllRejectionReturns()}
+                        onClick={() => setIsViewAllOpen(true)}
                         disabled={isSubmitting || !canView}
                         className="border border-zinc-400 bg-white px-6 hover:bg-zinc-50"
                     >
@@ -949,6 +930,7 @@ export function VendorClaimNoteForm() {
                     >
                         Print
                     </Button>
+                    <ExitButton />
                 </div>
             </form>
 
@@ -988,15 +970,13 @@ export function VendorClaimNoteForm() {
                 onRowSelect={handleItemSelect}
             />
 
-            <ViewAllModal
-                key={isViewAllOpen ? "open" : "closed"}
+            <InfiniteViewAllModal
                 isOpen={isViewAllOpen}
-                title="All Vendor Claim Note Claim Notees"
-                rows={rejectionReturns}
+                title="All Vendor Claim Notes"
+                endpoint={VENDOR_CLAIM_NOTES}
+                name="vendor-claim-notes"
+                mapRow={(row) => (withListFields(row))}
                 columns={returnColumns}
-                searchKeys={["id", "date", "vendorName", "transport", "builtyNo", "itemsSummary"]}
-                isLoading={isRejectionReturnsLoading}
-                error={rejectionReturnsError}
                 onClose={() => setIsViewAllOpen(false)}
                 onRowSelect={(item) => {
                     reset(mapReturnToForm(item));
@@ -1004,7 +984,6 @@ export function VendorClaimNoteForm() {
                     setIsEditing(false);
                     setIsViewAllOpen(false);
                 }}
-                onDelete={() => undefined}
             />
         </section>
     );

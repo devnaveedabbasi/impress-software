@@ -8,6 +8,8 @@ import { assertCanGrant } from "../utils/accountPermissions.js";
 
 // Admin management. Every route is for a Super Admin only (see admin.routes.js).
 
+import { isPagedRequest, findPage } from "../utils/listQuery.js";
+
 const adminInclude = { permissions: { include: { permission: true } } };
 
 const toResponse = (admin) => ({
@@ -45,6 +47,14 @@ const assertPermissionsExist = async (permissionIds) => {
 };
 
 const getAllAdmins = asyncHandler(async (req, res) => {
+    if (isPagedRequest(req)) {
+        const page = await findPage(prisma.admin, req, {
+            searchFields: ["name", "email"],
+            include: adminInclude,
+            after: async (admins) => admins.map(toResponse),
+        });
+        return res.status(200).json(new ApiResponse(200, page, "Admins fetched successfully"));
+    }
     const admins = await prisma.admin.findMany({ orderBy: { id: "asc" }, include: adminInclude });
     return res.status(200).json(new ApiResponse(200, admins.map(toResponse), "Admins fetched successfully"));
 });

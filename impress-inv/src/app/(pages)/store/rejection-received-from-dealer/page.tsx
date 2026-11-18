@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { LabeledField } from "@/components/ui/LabeledField";
 import { Button } from "@/components/ui/Button";
+import { ExitButton } from "@/components/ui/ExitButton";
 import useDebounce from "@/hooks/useDebounce";
 import {
     rejectionReceivedFromDealerSchema,
@@ -13,7 +14,9 @@ import { REJECTION_RECEIVED_FROM_DEALER } from "@/utlis/apiRoutes";
 import api from "@/lib/axios";
 import toast from "react-hot-toast";
 import { usePermissions } from "@/hooks/usePermissions";
-import { ViewAllModal, type ViewAllColumn } from "@/components/ui/ViewAllModal";
+import type { ViewAllColumn } from "@/components/ui/ViewAllModal";
+import { InfiniteViewAllModal, useRefreshMasterList } from "@/components/ui/InfiniteViewAllModal";
+import { useMasterRecord } from "@/hooks/useMasterRecord";
 import { PrintOptionsModal } from "@/components/print/PrintOptionsModal";
 import { InventoryPickerModal, type InventoryPickItem } from "@/components/ui/InventoryPickerModal";
 import { DealerPickerModal, type DealerPickItem } from "@/components/ui/DealerPickerModal";
@@ -98,10 +101,9 @@ export default function RejectionReceivedFromDealerPage() {
     const [isIdLoading, setIsIdLoading] = useState(true);
     const [nextId, setNextId] = useState("");
     const [isViewAllOpen, setIsViewAllOpen] = useState(false);
+    const refreshList = useRefreshMasterList("rejection-receiveds");
+    const { fetchOne, prefetchNear } = useMasterRecord("rejection-receiveds", REJECTION_RECEIVED_FROM_DEALER);
     const [rejectionReceiveds, setRejectionReceiveds] = useState<RejectionReceivedRow[]>([]);
-    const [hasLoadedRejectionReceiveds, setHasLoadedRejectionReceiveds] = useState(false);
-    const [isRejectionReceivedsLoading, setIsRejectionReceivedsLoading] = useState(false);
-    const [rejectionReceivedsError, setRejectionReceivedsError] = useState("");
     const skipNextIdLookup = useRef(false);
 
     const {
@@ -180,24 +182,6 @@ export default function RejectionReceivedFromDealerPage() {
         itemsSummary: (item.items || []).map((row) => row.inventory?.itemName).filter(Boolean).join(", "),
     });
 
-    const fetchAllRejectionReceiveds = async (openModal = true, force = false) => {
-        if (openModal) setIsViewAllOpen(true);
-        if (hasLoadedRejectionReceiveds && !force) return;
-
-        setIsRejectionReceivedsLoading(true);
-        setRejectionReceivedsError("");
-        try {
-            const { data } = await api.get(REJECTION_RECEIVED_FROM_DEALER);
-            setRejectionReceiveds((data.data || []).map(withListFields));
-            setHasLoadedRejectionReceiveds(true);
-        } catch (error: unknown) {
-            const apiError = error as ApiError;
-            setRejectionReceivedsError(apiError.response?.data?.message || "Failed to fetch Rejection Receipts");
-        } finally {
-            setIsRejectionReceivedsLoading(false);
-        }
-    };
-
     const addReturnToCache = (item: RejectionReceivedRow) => {
         setRejectionReceiveds((current) => {
             const cached = withListFields(item);
@@ -205,12 +189,10 @@ export default function RejectionReceivedFromDealerPage() {
             if (existingIndex === -1) return [...current, cached];
             return current.map((c, index) => (index === existingIndex ? cached : c));
         });
-        setHasLoadedRejectionReceiveds(true);
     };
 
     useEffect(() => {
         void fetchNextId();
-        void fetchAllRejectionReceiveds(false);
     }, []);
 
     // Show every problem of the form: field messages under the fields, row problems on the row itself
@@ -267,10 +249,8 @@ export default function RejectionReceivedFromDealerPage() {
                 : await api.put(`${REJECTION_RECEIVED_FROM_DEALER}/${data.id}`, payload);
 
             toast.success(response.data.message || "Gate pass saved successfully");
-            if (hasLoadedRejectionReceiveds) {
-                setHasLoadedRejectionReceiveds(false);
-                await fetchAllRejectionReceiveds(false, true);
-            }
+            setRejectionReceiveds([]); // the looked-up copies are old now
+            void refreshList();
             // The saved document stays on the screen, so it can be printed right away (it does not jump to the next
             // new one: the New button does that). Only the next number is read again, quietly.
             const saved = response.data.data;
@@ -330,7 +310,8 @@ export default function RejectionReceivedFromDealerPage() {
             try {
                 const cached = rejectionReceiveds.find((item) => String(item.id) === debouncedId);
                 const record: RejectionReceivedRow | undefined =
-                    cached || (await api.get(`${REJECTION_RECEIVED_FROM_DEALER}/${debouncedId}`)).data.data;
+                    cached || (await fetchOne(debouncedId));
+                prefetchNear(debouncedId, Number(nextId));
 
                 if (!record) {
                     toast.error("Gate pass not found");
@@ -680,7 +661,7 @@ export default function RejectionReceivedFromDealerPage() {
                         type="button"
                         variant="secondary"
                         shape="rounded"
-                        onClick={() => fetchAllRejectionReceiveds()}
+                        onClick={() => setIsViewAllOpen(true)}
                         disabled={isSubmitting || !canView}
                         className="border border-zinc-400 bg-white px-6 hover:bg-zinc-50"
                     >
@@ -716,6 +697,7 @@ export default function RejectionReceivedFromDealerPage() {
                     >
                         Print
                     </Button>
+                    <ExitButton />
                 </div>
             </form>
 
@@ -743,15 +725,13 @@ export default function RejectionReceivedFromDealerPage() {
                 codeWord="number"
             />
 
-            <ViewAllModal
-                key={isViewAllOpen ? "open" : "closed"}
+            <InfiniteViewAllModal
                 isOpen={isViewAllOpen}
                 title="All Rejection Received Gate Passes"
-                rows={rejectionReceiveds}
+                endpoint={REJECTION_RECEIVED_FROM_DEALER}
+                name="rejection-receiveds"
+                mapRow={(row) => (withListFields(row))}
                 columns={returnColumns}
-                searchKeys={["id", "date", "dealerName", "transport", "builtyNo", "itemsSummary"]}
-                isLoading={isRejectionReceivedsLoading}
-                error={rejectionReceivedsError}
                 onClose={() => setIsViewAllOpen(false)}
                 onRowSelect={(item) => {
                     reset(mapReturnToForm(item));
@@ -759,7 +739,6 @@ export default function RejectionReceivedFromDealerPage() {
                     setIsEditing(false);
                     setIsViewAllOpen(false);
                 }}
-                onDelete={() => undefined}
             />
         </section>
     );

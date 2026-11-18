@@ -4,13 +4,16 @@ import { useEffect, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { LabeledField } from "@/components/ui/LabeledField";
 import { Button } from "@/components/ui/Button";
+import { ExitButton } from "@/components/ui/ExitButton";
 import useDebounce from "@/hooks/useDebounce";
 import { stockTransferSchema, type StockTransferFormValues } from "@/lib/validations/master";
 import { STOCK_TRANSFERS } from "@/utlis/apiRoutes";
 import api from "@/lib/axios";
 import toast from "react-hot-toast";
 import { usePermissions } from "@/hooks/usePermissions";
-import { ViewAllModal, type ViewAllColumn } from "@/components/ui/ViewAllModal";
+import type { ViewAllColumn } from "@/components/ui/ViewAllModal";
+import { InfiniteViewAllModal, useRefreshMasterList } from "@/components/ui/InfiniteViewAllModal";
+import { useMasterRecord } from "@/hooks/useMasterRecord";
 import { InventoryPickerModal, type InventoryPickItem } from "@/components/ui/InventoryPickerModal";
 import { RowDeleteButton, deletableRowClassName } from "@/components/ui/RowDeleteButton";
 import { AddRowButton } from "@/components/ui/AddRowButton";
@@ -80,10 +83,9 @@ export default function TransferFormPage() {
     const [isIdLoading, setIsIdLoading] = useState(true);
     const [nextId, setNextId] = useState("");
     const [isViewAllOpen, setIsViewAllOpen] = useState(false);
+    const refreshList = useRefreshMasterList("stock-transfers");
+    const { fetchOne, prefetchNear } = useMasterRecord("stock-transfers", STOCK_TRANSFERS);
     const [transfers, setTransfers] = useState<TransferRow[]>([]);
-    const [hasLoadedTransfers, setHasLoadedTransfers] = useState(false);
-    const [isTransfersLoading, setIsTransfersLoading] = useState(false);
-    const [transfersError, setTransfersError] = useState("");
     const skipNextIdLookup = useRef(false);
 
     const {
@@ -154,24 +156,6 @@ export default function TransferFormPage() {
         itemsSummary: (item.items || []).map((row) => row.inventory?.itemName).filter(Boolean).join(", "),
     });
 
-    const fetchAllTransfers = async (openModal = true, force = false) => {
-        if (openModal) setIsViewAllOpen(true);
-        if (hasLoadedTransfers && !force) return;
-
-        setIsTransfersLoading(true);
-        setTransfersError("");
-        try {
-            const { data } = await api.get(STOCK_TRANSFERS);
-            setTransfers((data.data || []).map(withListFields));
-            setHasLoadedTransfers(true);
-        } catch (error: unknown) {
-            const apiError = error as ApiError;
-            setTransfersError(apiError.response?.data?.message || "Failed to fetch transfers");
-        } finally {
-            setIsTransfersLoading(false);
-        }
-    };
-
     const addTransferToCache = (item: TransferRow) => {
         setTransfers((current) => {
             const cached = withListFields(item);
@@ -179,12 +163,10 @@ export default function TransferFormPage() {
             if (existingIndex === -1) return [...current, cached];
             return current.map((c, index) => (index === existingIndex ? cached : c));
         });
-        setHasLoadedTransfers(true);
     };
 
     useEffect(() => {
         void fetchNextId();
-        void fetchAllTransfers(false);
     }, []);
 
     // Show every problem of the form: field messages under the fields, row problems on the row itself
@@ -258,10 +240,8 @@ export default function TransferFormPage() {
                 : await api.put(`${STOCK_TRANSFERS}/${data.id}`, payload);
 
             toast.success(response.data.message || "Transfer saved successfully");
-            if (hasLoadedTransfers) {
-                setHasLoadedTransfers(false);
-                await fetchAllTransfers(false, true);
-            }
+            setTransfers([]); // the looked-up copies are old now
+            void refreshList();
             // After Save the record stays on the screen (it does not jump to the next new one: the New button does that).
             // Only the next number is read again, quietly, so a new record still gets the right number.
             setIsNewMode(false);
@@ -318,7 +298,8 @@ export default function TransferFormPage() {
             setIsIdLoading(true);
             try {
                 const cached = transfers.find((item) => String(item.id) === debouncedId);
-                const record: TransferRow | undefined = cached || (await api.get(`${STOCK_TRANSFERS}/${debouncedId}`)).data.data;
+                const record: TransferRow | undefined = cached || (await fetchOne(debouncedId));
+                prefetchNear(debouncedId, Number(nextId));
 
                 if (!record) {
                     toast.error("Transfer not found");
@@ -610,7 +591,7 @@ export default function TransferFormPage() {
                         type="button"
                         variant="secondary"
                         shape="rounded"
-                        onClick={() => fetchAllTransfers()}
+                        onClick={() => setIsViewAllOpen(true)}
                         disabled={isSubmitting || !canView}
                         className="border border-zinc-400 bg-white px-6 hover:bg-zinc-50"
                     >
@@ -636,6 +617,7 @@ export default function TransferFormPage() {
                     >
                         Save
                     </Button>
+                    <ExitButton />
                 </div>
             </form>
 
@@ -650,15 +632,13 @@ export default function TransferFormPage() {
                 onSelect={handleItemSelect}
             />
 
-            <ViewAllModal
-                key={isViewAllOpen ? "open" : "closed"}
+            <InfiniteViewAllModal
                 isOpen={isViewAllOpen}
                 title="All Transfers"
-                rows={transfers}
+                endpoint={STOCK_TRANSFERS}
+                name="stock-transfers"
+                mapRow={(row) => (withListFields(row))}
                 columns={transferColumns}
-                searchKeys={["id", "date", "newItemName", "itemsSummary"]}
-                isLoading={isTransfersLoading}
-                error={transfersError}
                 onClose={() => setIsViewAllOpen(false)}
                 onRowSelect={(item) => {
                     reset(mapTransferToForm(item));
@@ -667,7 +647,6 @@ export default function TransferFormPage() {
                     setIsEditing(false);
                     setIsViewAllOpen(false);
                 }}
-                onDelete={() => undefined}
             />
         </section>
     );

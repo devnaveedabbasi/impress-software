@@ -5,13 +5,16 @@ import { useForm } from "react-hook-form";
 import { LabeledField } from "@/components/ui/LabeledField";
 import { LabeledSelect } from "@/components/ui/LabeledSelect";
 import { Button } from "@/components/ui/Button";
+import { ExitButton } from "@/components/ui/ExitButton";
 import useDebounce from "@/hooks/useDebounce";
 import { purchaseOrderSchema, type PurchaseOrderFormValues } from "@/lib/validations/master";
 import { PURCHASE_ORDERS, VENDORS, QUOTATIONS, INVENTORY } from "@/utlis/apiRoutes";
 import api from "@/lib/axios";
 import toast from "react-hot-toast";
 import { usePermissions } from "@/hooks/usePermissions";
-import { ViewAllModal, type ViewAllColumn } from "@/components/ui/ViewAllModal";
+import type { ViewAllColumn } from "@/components/ui/ViewAllModal";
+import { InfiniteViewAllModal, useRefreshMasterList } from "@/components/ui/InfiniteViewAllModal";
+import { useMasterRecord } from "@/hooks/useMasterRecord";
 import { InventoryPickerModal, type InventoryPickItem } from "@/components/ui/InventoryPickerModal";
 import { RowDeleteButton, deletableRowClassName } from "@/components/ui/RowDeleteButton";
 import { AddRowButton } from "@/components/ui/AddRowButton";
@@ -116,10 +119,9 @@ export default function PurchaseOrderPage() {
     const [nextId, setNextId] = useState("");
     const [isOptionsLoading, setIsOptionsLoading] = useState(true);
     const [isViewAllOpen, setIsViewAllOpen] = useState(false);
+    const refreshList = useRefreshMasterList("purchase-orders");
+    const { fetchOne, prefetchNear } = useMasterRecord("purchase-orders", PURCHASE_ORDERS);
     const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrderRow[]>([]);
-    const [hasLoadedPurchaseOrders, setHasLoadedPurchaseOrders] = useState(false);
-    const [isPurchaseOrdersLoading, setIsPurchaseOrdersLoading] = useState(false);
-    const [purchaseOrdersError, setPurchaseOrdersError] = useState("");
     const skipNextIdLookup = useRef(false);
 
     const {
@@ -224,37 +226,6 @@ export default function PurchaseOrderPage() {
         };
     };
 
-    const fetchAllPurchaseOrders = async (openModal = true, force = false) => {
-        if (openModal) setIsViewAllOpen(true);
-        if (hasLoadedPurchaseOrders && !force) return;
-
-        setIsPurchaseOrdersLoading(true);
-        setPurchaseOrdersError("");
-        try {
-            const { data } = await api.get(PURCHASE_ORDERS);
-            const vendorMap = new Map(
-                vendors.map((vendor) => [vendor.value, vendor.label])
-            );
-            setPurchaseOrders(
-                (data.data || []).map((item: PurchaseOrderRow) => ({
-                    ...item,
-                    vendorName:
-                        vendorMap.get(String(item.vendorId)) ||
-                        item.vendor?.vendorName ||
-                        item.vendor?.name ||
-                        `Vendor #${item.vendorId}`,
-                    date: item.date ? new Date(item.date).toISOString().split("T")[0] : "",
-                }))
-            );
-            setHasLoadedPurchaseOrders(true);
-        } catch (error: unknown) {
-            const apiError = error as ApiError;
-            setPurchaseOrdersError(apiError.response?.data?.message || "Failed to fetch purchase orders");
-        } finally {
-            setIsPurchaseOrdersLoading(false);
-        }
-    };
-
     const addPurchaseOrderToCache = (item: PurchaseOrderRow) => {
         setPurchaseOrders((current) => {
             const vendorName =
@@ -275,13 +246,11 @@ export default function PurchaseOrderPage() {
                 index === existingIndex ? cachedItem : c
             );
         });
-        setHasLoadedPurchaseOrders(true);
     };
 
     useEffect(() => {
         void fetchNextId();
         void fetchOptions();
-        void fetchAllPurchaseOrders(false);
     }, []);
 
     const onSubmit = async (data: PurchaseOrderFormValues) => {
@@ -337,10 +306,8 @@ export default function PurchaseOrderPage() {
                 : await api.put(`${PURCHASE_ORDERS}/${data.id}`, payload);
 
             toast.success(response.data.message || "Purchase Order saved successfully");
-            if (hasLoadedPurchaseOrders) {
-                setHasLoadedPurchaseOrders(false);
-                await fetchAllPurchaseOrders(false, true);
-            }
+            setPurchaseOrders([]); // the looked-up copies are old now
+            void refreshList();
             // After Save the record stays on the screen (it does not jump to the next new one: the New button does that).
             // Only the next number is read again, quietly, so a new record still gets the right number.
             setIsNewMode(false);
@@ -399,7 +366,8 @@ export default function PurchaseOrderPage() {
             setIsIdLoading(true);
             try {
                 const cached = purchaseOrders.find((item) => String(item.id) === debouncedId);
-                const po = cached || (await api.get(`${PURCHASE_ORDERS}/${debouncedId}`)).data.data;
+                const po = cached || (await fetchOne(debouncedId));
+                prefetchNear(debouncedId, Number(nextId));
 
                 if (!po) {
                     toast.error("Purchase Order not found");
@@ -849,7 +817,7 @@ export default function PurchaseOrderPage() {
                             type="button"
                             variant="secondary"
                             shape="rounded"
-                            onClick={() => fetchAllPurchaseOrders()}
+                            onClick={() => setIsViewAllOpen(true)}
                             disabled={isSubmitting || !canView}
                             className="border border-zinc-400 bg-white px-6 hover:bg-zinc-50"
                         >
@@ -860,7 +828,9 @@ export default function PurchaseOrderPage() {
                             variant="secondary"
                             shape="rounded"
                             onClick={() => setIsEditing(true)}
-                            disabled={isSubmitting || isNewMode || isEditing || !canUpdate}
+                            // A saved Purchase Order cannot be edited any more
+                            disabled
+                            title="A saved Purchase Order cannot be edited"
                             className="border border-zinc-400 bg-white px-6 hover:bg-zinc-50"
                         >
                             Edit
@@ -875,6 +845,7 @@ export default function PurchaseOrderPage() {
                         >
                             Save
                         </Button>
+                        <ExitButton />
                     </div>
 
                     {/* Totals Box */}
@@ -1095,15 +1066,13 @@ export default function PurchaseOrderPage() {
                 onSelect={handleItemSelect}
             />
 
-            <ViewAllModal
-                key={isViewAllOpen ? "open" : "closed"}
+            <InfiniteViewAllModal
                 isOpen={isViewAllOpen}
                 title="All Purchase Orders"
-                rows={purchaseOrders}
+                endpoint={PURCHASE_ORDERS}
+                name="purchase-orders"
+                mapRow={(row) => ({ ...row, vendorName: row.vendor?.vendorName || row.vendor?.name || `Vendor #${row.vendorId}`, date: row.date ? new Date(row.date).toISOString().split("T")[0] : "" })}
                 columns={purchaseOrderColumns}
-                searchKeys={["id", "vendorName", "date", "grandTotal"]}
-                isLoading={isPurchaseOrdersLoading}
-                error={purchaseOrdersError}
                 onClose={() => setIsViewAllOpen(false)}
                 onRowSelect={(item) => {
                     reset(mapPurchaseOrderToForm(item));
@@ -1111,7 +1080,6 @@ export default function PurchaseOrderPage() {
                     setIsEditing(false);
                     setIsViewAllOpen(false);
                 }}
-                onDelete={() => undefined}
             />
         </section>
     );

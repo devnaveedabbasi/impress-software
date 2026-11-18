@@ -2,6 +2,7 @@
 
 import { useRef, useState } from "react";
 import { Button } from "@/components/ui/Button";
+import { ExitButton } from "@/components/ui/ExitButton";
 import { InventoryPickerModal, type InventoryPickItem } from "@/components/ui/InventoryPickerModal";
 import api from "@/lib/axios";
 import { usePermissions } from "@/hooks/usePermissions";
@@ -124,10 +125,11 @@ export default function ItemLedgerPage() {
                             <label className="mb-1 block text-xs font-medium text-zinc-600">To date</label>
                             <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} className={inputClass} />
                         </div>
-                        <div className="flex items-end">
+                        <div className="flex items-end gap-2">
                             <Button type="submit" shape="rounded" isLoading={isFetching} className="w-full px-8">
                                 Show
                             </Button>
+                            <ExitButton />
                         </div>
                     </form>
 

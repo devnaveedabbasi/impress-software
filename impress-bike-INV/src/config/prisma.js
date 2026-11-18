@@ -4,6 +4,37 @@ import pg from "pg";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "../../generated/prisma/client.js";
 
+// One query instead of several: a read that asks for related rows (include / select of a relation) is sent to the
+// database as ONE query with a JOIN, not one query for the rows and one more for each relation. The database is far
+// away (every query costs a full round trip), so a page that took 3 round trips now takes 1.
+const READS_WITH_RELATIONS = new Set(['findMany', 'findFirst', 'findFirstOrThrow', 'findUnique', 'findUniqueOrThrow']);
+// If the generated client is older than this code (prisma generate was not run after the update), the database
+// refuses the option: the query is then sent the normal way, and the option is not tried again.
+let joinsSupported = true;
+function withJoins(client) {
+  return client.$extends({
+    query: {
+      $allModels: {
+        async $allOperations({ operation, args, query }) {
+          const wantsJoin =
+            joinsSupported && READS_WITH_RELATIONS.has(operation) && args && (args.include || args.select) && !args.relationLoadStrategy;
+          if (!wantsJoin) return query(args);
+          try {
+            return await query({ ...args, relationLoadStrategy: 'join' });
+          } catch (error) {
+            if (/relationLoadStrategy/.test(String(error?.message))) {
+              joinsSupported = false;
+              console.warn('[Database] relationLoadStrategy is not available: run "npx prisma generate". Using separate queries.');
+              return query(args);
+            }
+            throw error;
+          }
+        },
+      },
+    },
+  });
+}
+
 function createPool(connectionString, name) {
   if (!connectionString) {
     throw new Error(`${name} database URL is not configured`);
@@ -17,7 +48,9 @@ function createPool(connectionString, name) {
     connectionString,
     ssl: isLocal ? undefined : { rejectUnauthorized: false },
     connectionTimeoutMillis: isLocal ? 10000 : 30000,
-    idleTimeoutMillis: 30000,
+    // A far-away database costs 1-2 seconds to open a new connection (TLS), so an idle connection is kept for 10
+    // minutes (a local one is cheap and may close sooner).
+    idleTimeoutMillis: isLocal ? 30000 : 600000,
     keepAlive: true,
     max: 10,
   });
@@ -32,7 +65,7 @@ const primaryDatabaseUrl = configuredLocalDatabaseUrl || cloudDatabaseUrl;
 const isCloudPrimary = !configuredLocalDatabaseUrl && Boolean(cloudDatabaseUrl);
 const localPool = createPool(primaryDatabaseUrl, "Primary");
 const localAdapter = new PrismaPg(localPool);
-export const prismaLocal = new PrismaClient({ adapter: localAdapter });
+export const prismaLocal = withJoins(new PrismaClient({ adapter: localAdapter }));
 
 // Cloud client is optional and must be separate from the local database.
 let prismaCloud = null;
@@ -41,10 +74,19 @@ if (isCloudPrimary) {
 } else if (cloudDatabaseUrl && cloudDatabaseUrl !== primaryDatabaseUrl) {
   const cloudPool = createPool(cloudDatabaseUrl, "Cloud");
   const cloudAdapter = new PrismaPg(cloudPool);
-  prismaCloud = new PrismaClient({ adapter: cloudAdapter });
+  prismaCloud = withJoins(new PrismaClient({ adapter: cloudAdapter }));
 }
 
 export { prismaCloud };
+
+// Keep one live connection warm: without it, the first click after a quiet minute waits 1-2 seconds for a new
+// connection to the far-away database.
+if (prismaCloud && prismaCloud !== prismaLocal) {
+  const keepWarm = setInterval(() => {
+    prismaCloud.$queryRaw`SELECT 1`.catch(() => undefined);
+  }, 4 * 60 * 1000);
+  keepWarm.unref?.();
+}
 
 let activeClient = prismaLocal;
 let activeDatabase = isCloudPrimary ? "live" : "local";

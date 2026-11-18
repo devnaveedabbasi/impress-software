@@ -8,6 +8,8 @@ import prisma, {
 import { getStockInHand, replaceMovements, removeMovements, TX_OPTIONS } from "../services/stock.service.js";
 
 // The id of the record is the Requisition Slip No. Every slip is returned with its department, color and item rows.
+import { isPagedRequest, findPage } from "../utils/listQuery.js";
+
 const issueInclude = {
     department: { select: { id: true, name: true } },
     color: { select: { id: true, name: true } },
@@ -96,6 +98,15 @@ const writeMovements = (tx, issue, userId) =>
     });
 
 const getAllStoreIssues = asyncHandler(async (req, res) => {
+    if (isPagedRequest(req)) {
+        const page = await findPage(prisma.storeIssue, req, {
+            relationFields: [["department", "name"], ["color", "name"]],
+            nestedFields: [["items", "some", "inventory", "itemName"]],
+            dateFields: ["date"],
+            include: issueInclude,
+        });
+        return res.status(200).json(new ApiResponse(200, page, "Fetched successfully"));
+    }
     const issues = await prisma.storeIssue.findMany({
         include: issueInclude,
         orderBy: { id: "asc" },
