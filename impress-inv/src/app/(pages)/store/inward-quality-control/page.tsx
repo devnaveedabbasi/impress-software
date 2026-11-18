@@ -8,7 +8,8 @@ import api from "@/lib/axios";
 import toast from "react-hot-toast";
 import useDebounce from "@/hooks/useDebounce";
 import { usePermissions } from "@/hooks/usePermissions";
-import { ViewAllModal, type ViewAllColumn } from "@/components/ui/ViewAllModal";
+import type { ViewAllColumn } from "@/components/ui/ViewAllModal";
+import { InventoryPickerModal } from "@/components/ui/InventoryPickerModal";
 import { InfiniteViewAllModal, useRefreshMasterList } from "@/components/ui/InfiniteViewAllModal";
 import { useMasterRecord } from "@/hooks/useMasterRecord";
 import { PrintOptionsModal } from "@/components/print/PrintOptionsModal";
@@ -637,13 +638,6 @@ export default function InwardQualityControlPage() {
         setPickerRowIndex(null);
     };
 
-    const inventoryColumns: ViewAllColumn<InventoryPickRow>[] = [
-        { key: "id", header: "Code" },
-        { key: "itemName", header: "Item Name" },
-        { key: "categoryName", header: "Category" },
-        { key: "stock", header: "Stock Qty" },
-    ];
-
     // Print the currently opened (saved) entry as a slip. Filters/reports live on the Report page.
     return (
         <section className="mx-auto mt-10 w-full max-w-6xl bg-[#f0f0f0] p-8 shadow-sm text-black">
@@ -1112,17 +1106,11 @@ export default function InwardQualityControlPage() {
                 }}
             />
 
-            <ViewAllModal
-                key={pickerRowIndex !== null ? "picker-open" : "picker-closed"}
+            <InventoryPickerModal
                 isOpen={pickerRowIndex !== null}
                 title={`Select Inventory Item${pickerRowIndex !== null ? ` (Row ${pickerRowIndex + 1})` : ""}`}
-                rows={inventoryRows}
-                columns={inventoryColumns}
-                searchKeys={["id", "itemName", "categoryName"]}
-                isLoading={isInventoryLoading}
-                error={!isInventoryLoading && inventoryRows.length === 0 ? "No inventory items found. Add items in Master Entries > Inventory." : ""}
                 onClose={() => setPickerRowIndex(null)}
-                onRowSelect={handleInventorySelect}
+                onSelect={handleInventorySelect}
             />
 
             {/* Packing Detail modal (optional text, max 255 characters) */}

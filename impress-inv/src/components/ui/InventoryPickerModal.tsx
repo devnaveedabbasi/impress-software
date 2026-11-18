@@ -1,9 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import api from "@/lib/axios";
+import { InfiniteViewAllModal } from "@/components/ui/InfiniteViewAllModal";
+import type { ViewAllColumn } from "@/components/ui/ViewAllModal";
 import { INVENTORY } from "@/utlis/apiRoutes";
-import { ViewAllModal, type ViewAllColumn } from "@/components/ui/ViewAllModal";
 
 export type InventoryPickItem = {
   id: number;
@@ -29,92 +28,45 @@ const columns: ViewAllColumn<InventoryPickItem>[] = [
   { key: "stock", header: "Stock Qty" },
 ];
 
-// Click an item cell -> this modal lists the inventory (with search) -> the chosen item comes back via onSelect
+// The row of the server (an item with its category and stock rows) as the row of the picker
+const toPickItem = (row: InventoryPickItem): InventoryPickItem => {
+  const item = row as unknown as {
+    category?: { name?: string };
+    stocks?: { qty: number }[];
+    stockInHand?: number;
+  } & InventoryPickItem;
+  return {
+    ...row,
+    categoryName: item.category?.name || "-",
+    unitPerBike: item.unitPerBike ?? 0,
+    // stockInHand already includes the stock movements (inward, gate pass, issue, return)
+    stock:
+      typeof item.stockInHand === "number"
+        ? item.stockInHand
+        : Array.isArray(item.stocks)
+          ? item.stocks.reduce((sum, stock) => sum + (Number(stock.qty) || 0), 0)
+          : 0,
+  };
+};
+
+// Click an item cell -> this modal lists the inventory (infinite scroll, the search is done by the server on the whole
+// table) -> the chosen item comes back via onSelect
 export function InventoryPickerModal({
   isOpen,
   title = "Select Inventory Item",
   onClose,
   onSelect,
 }: InventoryPickerModalProps) {
-  const [rows, setRows] = useState<InventoryPickItem[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState("");
-
-  useEffect(() => {
-    if (!isOpen) return;
-
-    let cancelled = false;
-    const load = async () => {
-      setIsLoading(true);
-      setError("");
-      try {
-        const { data } = await api.get(INVENTORY);
-        if (cancelled) return;
-        setRows(
-          (data.data || []).map(
-            (item: {
-              id: number;
-              itemName: string;
-              category?: { name?: string };
-              departmentId?: number;
-              unitPerBike?: number;
-              stocks?: { qty: number }[];
-              stockInHand?: number;
-            }) => ({
-              id: item.id,
-              itemName: item.itemName,
-              categoryName: item.category?.name || "-",
-              departmentId: item.departmentId,
-              unitPerBike: item.unitPerBike ?? 0,
-              // stockInHand already includes the stock movements (inward, gate pass, issue, return)
-              stock:
-                typeof item.stockInHand === "number"
-                  ? item.stockInHand
-                  : Array.isArray(item.stocks)
-                    ? item.stocks.reduce((sum, row) => sum + (Number(row.qty) || 0), 0)
-                    : 0,
-            })
-          )
-        );
-      } catch (err: unknown) {
-        if (cancelled) return;
-        const apiError = err as {
-          response?: { status?: number; data?: { message?: string } };
-          message?: string;
-        };
-        const message = apiError.response?.data?.message;
-        setError(
-          message ||
-          (apiError.response?.status
-            ? `Failed to load inventory items (HTTP ${apiError.response.status})`
-            : apiError.message || "Failed to load inventory items")
-        );
-      } finally {
-        if (!cancelled) setIsLoading(false);
-      }
-    };
-
-    void load();
-    return () => {
-      cancelled = true;
-    };
-  }, [isOpen]);
-
   return (
-    <ViewAllModal
-      key={isOpen ? "picker-open" : "picker-closed"}
+    <InfiniteViewAllModal<InventoryPickItem>
       isOpen={isOpen}
       title={title}
-      rows={rows}
+      endpoint={INVENTORY}
+      name="inventory"
       columns={columns}
-      searchKeys={["id", "itemName", "categoryName"]}
-      isLoading={isLoading && rows.length === 0}
-      error={
-        error ||
-        (!isLoading && rows.length === 0
-          ? "No inventory items found. Add items in Master Entries > Inventory."
-          : "")
-      }
+      mapRow={toPickItem}
+      hideActions
+      emptyMessage="No inventory items found. Add items in Master Entries > Inventory."
       onClose={onClose}
       onRowSelect={onSelect}
     />

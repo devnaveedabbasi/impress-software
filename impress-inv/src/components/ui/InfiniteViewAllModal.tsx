@@ -37,6 +37,10 @@ interface InfiniteViewAllModalProps<T extends Record<string, unknown>> {
   mapRow?: (row: T) => T;
   onClose: () => void;
   onRowSelect?: (row: T) => void;
+  // a picker (choose a vendor / item) has no Delete column
+  hideActions?: boolean;
+  // what to say when the list is empty
+  emptyMessage?: string;
 }
 
 // View All with infinite scroll: only the first page is read from the server; the next page is read when the end
@@ -50,6 +54,8 @@ export function InfiniteViewAllModal<T extends Record<string, unknown>>({
   mapRow,
   onClose,
   onRowSelect,
+  hideActions = false,
+  emptyMessage = "No records found.",
 }: InfiniteViewAllModalProps<T>) {
   const [search, setSearch] = useState("");
   const debouncedSearch = useDebounce(search, 350).trim();
@@ -174,7 +180,7 @@ export function InfiniteViewAllModal<T extends Record<string, unknown>>({
           ) : errorMessage ? (
             <p className="p-8 text-center text-sm text-red-500">{errorMessage}</p>
           ) : rows.length === 0 ? (
-            <p className="p-8 text-center text-sm text-zinc-500">No records found.</p>
+            <p className="p-8 text-center text-sm text-zinc-500">{emptyMessage}</p>
           ) : (
             <table className="w-full min-w-[420px] border-collapse text-left text-sm">
               <thead className="sticky top-0 bg-zinc-100 text-zinc-700">
@@ -184,7 +190,9 @@ export function InfiniteViewAllModal<T extends Record<string, unknown>>({
                       {column.header}
                     </th>
                   ))}
-                  <th className="border-b border-zinc-200 px-4 py-3 text-center font-semibold">Actions</th>
+                  {!hideActions && (
+                    <th className="border-b border-zinc-200 px-4 py-3 text-center font-semibold">Actions</th>
+                  )}
                 </tr>
               </thead>
               <tbody className={query.isPlaceholderData ? "opacity-60" : ""}>
@@ -204,23 +212,25 @@ export function InfiniteViewAllModal<T extends Record<string, unknown>>({
                         {cell(row, column)}
                       </td>
                     ))}
-                    <td className="border-b border-zinc-100 px-4 py-3">
-                      <div className="flex items-center justify-center gap-3">
-                        <button
-                          type="button"
-                          title="Delete"
-                          aria-label="Delete"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            // Deleting records is not available yet (the server refuses it as well)
-                            toast("Delete functionality will be added soon", { id: "delete-soon", icon: "🚧" });
-                          }}
-                          className="text-red-500 transition-colors hover:text-red-700"
-                        >
-                          <Icon icon="mdi:trash-can-outline" className="h-5 w-5" />
-                        </button>
-                      </div>
-                    </td>
+                    {!hideActions && (
+                      <td className="border-b border-zinc-100 px-4 py-3">
+                        <div className="flex items-center justify-center gap-3">
+                          <button
+                            type="button"
+                            title="Delete"
+                            aria-label="Delete"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              // Deleting records is not available yet (the server refuses it as well)
+                              toast("Delete functionality will be added soon", { id: "delete-soon", icon: "🚧" });
+                            }}
+                            className="text-red-500 transition-colors hover:text-red-700"
+                          >
+                            <Icon icon="mdi:trash-can-outline" className="h-5 w-5" />
+                          </button>
+                        </div>
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>

@@ -8,7 +8,7 @@ import { LabeledField } from "@/components/ui/LabeledField";
 import { Button } from "@/components/ui/Button";
 import { ExitButton } from "@/components/ui/ExitButton";
 import { LabeledSelect } from "@/components/ui/LabeledSelect";
-import { ViewAllModal, type ViewAllColumn } from "@/components/ui/ViewAllModal";
+import type { ViewAllColumn } from "@/components/ui/ViewAllModal";
 import { InfiniteViewAllModal, useRefreshMasterList } from "@/components/ui/InfiniteViewAllModal";
 import { useMasterRecord } from "@/hooks/useMasterRecord";
 import useDebounce from "@/hooks/useDebounce";
@@ -127,13 +127,11 @@ export default function VendorBillPostingPage() {
     const skipNextIdLookup = useRef(false);
 
     const [isInwardPickerOpen, setIsInwardPickerOpen] = useState(false);
-    const [inwards, setInwards] = useState<InwardRow[]>([]);
-    const [isInwardsLoading, setIsInwardsLoading] = useState(false);
-    const [inwardsError, setInwardsError] = useState("");
     const [isPreviewLoading, setIsPreviewLoading] = useState(false);
 
     const [isViewAllOpen, setIsViewAllOpen] = useState(false);
     const refreshList = useRefreshMasterList("vendor-bills");
+    const refreshBillable = useRefreshMasterList("billable-inwards");
     const { fetchOne, prefetchNear } = useMasterRecord("vendor-bills", VENDOR_BILLS);
 
     const {
@@ -222,19 +220,9 @@ export default function VendorBillPostingPage() {
     }, []);
 
     // The inwards that can still get a bill
-    const openInwardPicker = async () => {
+    const openInwardPicker = () => {
         if (!isEditing || !isNewMode) return;
         setIsInwardPickerOpen(true);
-        setIsInwardsLoading(true);
-        setInwardsError("");
-        try {
-            const { data } = await api.get(`${VENDOR_BILLS}/billable-inwards`, { params: { _ts: Date.now() } });
-            setInwards(data.data || []);
-        } catch (error: unknown) {
-            setInwardsError((error as ApiError).response?.data?.message || "Failed to load the inwards");
-        } finally {
-            setIsInwardsLoading(false);
-        }
     };
 
     // The inward gives the vendor, the PO and the lines with the PO rate
@@ -289,6 +277,7 @@ export default function VendorBillPostingPage() {
                 : await api.put(`${VENDOR_BILLS}/${data.id}`, payload);
             toast.success(response.data.message || "Vendor bill saved successfully");
             void refreshList();
+            void refreshBillable();
             // The saved bill stays on the screen, with the amounts the server calculated (the New button starts the
             // next one). Only the next number is read again, quietly.
             const bill = response.data.data;
@@ -321,6 +310,7 @@ export default function VendorBillPostingPage() {
             setDoc(mapBillToDoc(bill));
             setIsEditing(false);
             void refreshList();
+            void refreshBillable();
         } catch (error: unknown) {
             toast.error((error as ApiError).response?.data?.message || "Failed to approve the vendor bill");
         } finally {
@@ -435,11 +425,11 @@ export default function VendorBillPostingPage() {
                         label="QC #"
                         value={values.inwardId}
                         readOnly
-                        onClick={() => void openInwardPicker()}
+                        onClick={() => openInwardPicker()}
                         onKeyDown={(event) => {
                             if (isEditing && isNewMode && (event.key === "Enter" || event.key === " ")) {
                                 event.preventDefault();
-                                void openInwardPicker();
+                                openInwardPicker();
                             }
                         }}
                         placeholder={isEditing && isNewMode ? "Click to select" : ""}
@@ -624,15 +614,14 @@ export default function VendorBillPostingPage() {
                 </div>
             </form>
 
-            <ViewAllModal
-                key={isInwardPickerOpen ? "inward-open" : "inward-closed"}
+            <InfiniteViewAllModal<InwardRow>
                 isOpen={isInwardPickerOpen}
                 title="Select QC #"
-                rows={inwards}
+                endpoint={`${VENDOR_BILLS}/billable-inwards`}
+                name="billable-inwards"
                 columns={inwardColumns}
-                searchKeys={["id", "purchaseOrderId", "vendorName", "grirNo", "dcNo"]}
-                isLoading={isInwardsLoading}
-                error={inwardsError || (!isInwardsLoading && inwards.length === 0 ? "No inward is waiting for a bill." : "")}
+                hideActions
+                emptyMessage="No inward is waiting for a bill."
                 onClose={() => setIsInwardPickerOpen(false)}
                 onRowSelect={(row) => void handleInwardSelect(row)}
             />

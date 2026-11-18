@@ -155,6 +155,25 @@ const getNextIdVendorBill = asyncHandler(async (req, res) => {
 
 // The inwards that can still get a bill (against a PO, no bill yet), for the "QC #" picker
 const getBillableInwards = asyncHandler(async (req, res) => {
+    if (isPagedRequest(req)) {
+        const page = await findPage(prisma.inward, req, {
+            baseWhere: { Type: "againstPO", purchaseOrderId: { not: null }, vendorBill: { is: null } },
+            numberFields: ["GRIRNo", "DCNo", "purchaseOrderId"],
+            nestedFields: [["purchaseOrder", "vendor", "vendorName"]],
+            dateFields: ["date"],
+            include: { purchaseOrder: { include: { vendor: { select: { vendorName: true } } } } },
+            after: async (inwards) =>
+                inwards.map((inward) => ({
+                    id: inward.id,
+                    date: inward.date,
+                    purchaseOrderId: inward.purchaseOrderId,
+                    vendorName: inward.purchaseOrder?.vendor?.vendorName || "",
+                    grirNo: inward.GRIRNo,
+                    dcNo: inward.DCNo,
+                })),
+        });
+        return res.status(200).json(new ApiResponse(200, page, "Inwards fetched successfully"));
+    }
     const inwards = await prisma.inward.findMany({
         where: { Type: "againstPO", purchaseOrderId: { not: null }, vendorBill: { is: null } },
         orderBy: { id: "asc" },

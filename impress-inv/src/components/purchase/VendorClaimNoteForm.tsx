@@ -964,6 +964,8 @@ export function VendorClaimNoteForm() {
                     { key: "maxQty", header: "Can Return" },
                 ] as ViewAllColumn<ReceivedItem>[]}
                 searchKeys={["inventoryId", "itemName"]}
+                // the rejected items of ONE vendor (a short list): all of it scrolls, no pages of 8
+                pageSize={1000}
                 isLoading={isReceivedLoading}
                 error=""
                 onClose={() => setPickerRowIndex(null)}
