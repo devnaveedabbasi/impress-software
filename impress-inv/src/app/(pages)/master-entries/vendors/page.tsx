@@ -12,6 +12,7 @@ import api from "@/lib/axios";
 import toast from "react-hot-toast";
 import { usePermissions } from "@/hooks/usePermissions";
 import { ViewAllModal, type ViewAllColumn } from "@/components/ui/ViewAllModal";
+import { PrintOptionsModal } from "@/components/print/PrintOptionsModal";
 
 type VendorRow = {
     id: number;
@@ -67,6 +68,7 @@ const formatCNIC = (val: string) => {
 
 export default function VendorPage() {
     const [isNewMode, setIsNewMode] = useState(true);
+    const [isPrintOpen, setIsPrintOpen] = useState(false);
     const [isEditing, setIsEditing] = useState(true);
     const [provinces, setProvinces] = useState<{ label: string; value: string }[]>([]);
     const [cities, setCities] = useState<{ label: string; value: string }[]>([]);
@@ -640,13 +642,23 @@ export default function VendorPage() {
                         type="button"
                         variant="secondary"
                         shape="rounded"
-                        onClick={() => window.open("/print/vendors", "_blank")}
+                        onClick={() => setIsPrintOpen(true)}
                         className="border border-zinc-400 bg-white px-6 hover:bg-zinc-50"
                     >
                         Print
                     </Button>
                 </div>
             </form>
+
+            <PrintOptionsModal
+                isOpen={isPrintOpen}
+                onClose={() => setIsPrintOpen(false)}
+                entityName="Vendors"
+                printPath="/print/vendors"
+                recordId={isNewMode ? null : values.id || null}
+                maxCode={Number(nextId) > 1 ? Number(nextId) - 1 : undefined}
+                totalCount={hasLoadedVendors ? vendors.length : undefined}
+            />
 
             <ViewAllModal
                 key={isViewAllOpen ? "open" : "closed"}

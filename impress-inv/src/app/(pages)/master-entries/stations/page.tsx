@@ -44,7 +44,6 @@ export default function StationPage() {
     const [isStationsLoading, setIsStationsLoading] = useState(false);
     const [stationsError, setStationsError] = useState("");
     const skipNextIdLookup = useRef(false);
-    const refreshNextIdAfterSubmit = useRef(false);
 
     const {
         handleSubmit,
@@ -150,20 +149,23 @@ export default function StationPage() {
                 setHasLoadedStations(false);
                 await fetchAllStations(false, true);
             }
-            refreshNextIdAfterSubmit.current = true;
+            // After Save the record stays on the screen (it does not jump to the next new one: the New button does that).
+            // Only the next number is read again, quietly, so a new record still gets the right number.
+            setIsNewMode(false);
+            setIsEditing(false);
+            skipNextIdLookup.current = true;
+            void api
+                .get(`${STATIONS}/next-id`, { params: { _ts: Date.now() } })
+                .then(({ data }) => setNextId(String(data.data.nextId)))
+                .catch(() => {
+                    skipNextIdLookup.current = false;
+                });
         } catch (error: unknown) {
             const apiError = error as ApiError;
             console.error("Station save failed:", apiError.response?.data || error);
             toast.error(apiError.response?.data?.message || "Failed to save station");
         }
     };
-
-    useEffect(() => {
-        if (!isSubmitting && refreshNextIdAfterSubmit.current) {
-            refreshNextIdAfterSubmit.current = false;
-            void fetchNextId();
-        }
-    }, [isSubmitting]);
 
     const debouncedId = useDebounce(values.id, 500);
     const stationColumns: ViewAllColumn<StationRow>[] = [

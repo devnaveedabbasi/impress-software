@@ -9,6 +9,7 @@ import toast from "react-hot-toast";
 import useDebounce from "@/hooks/useDebounce";
 import { usePermissions } from "@/hooks/usePermissions";
 import { ViewAllModal, type ViewAllColumn } from "@/components/ui/ViewAllModal";
+import { PrintOptionsModal } from "@/components/print/PrintOptionsModal";
 import { Button } from "@/components/ui/Button";
 import { AddRowButton } from "@/components/ui/AddRowButton";
 import { Icon } from "@iconify/react";
@@ -96,6 +97,7 @@ const initialValues: InwardFormValues = {
 
 export default function InwardQualityControlPage() {
     const [isNewMode, setIsNewMode] = useState(true);
+    const [isPrintOpen, setIsPrintOpen] = useState(false);
     const [isEditing, setIsEditing] = useState(true);
     const [purchaseOrders, setPurchaseOrders] = useState<{ label: string; value: string }[]>([]);
 
@@ -118,7 +120,6 @@ export default function InwardQualityControlPage() {
     const [isInwardsLoading, setIsInwardsLoading] = useState(false);
     const [inwardsError, setInwardsError] = useState("");
     const skipNextIdLookup = useRef(false);
-    const refreshNextIdAfterSubmit = useRef(false);
 
     const {
         handleSubmit,
@@ -321,20 +322,27 @@ export default function InwardQualityControlPage() {
                 setHasLoadedInwards(false);
                 await fetchAllInwards(false, true);
             }
-            refreshNextIdAfterSubmit.current = true;
+            // The saved document stays on the screen, so it can be printed right away (it does not jump to the next
+            // new one: the New button does that). Only the next number is read again, quietly.
+            const saved = response.data.data;
+            if (saved?.id) {
+                reset(mapInwardToForm(saved));
+                setIsNewMode(false);
+                setIsEditing(false);
+                skipNextIdLookup.current = true;
+                void api
+                    .get(`${INWARDS}/next-id`, { params: { _ts: Date.now() } })
+                    .then(({ data }) => setNextId(String(data.data.nextId)))
+                    .catch(() => {
+                        skipNextIdLookup.current = false;
+                    });
+            }
         } catch (error: unknown) {
             const apiError = error as ApiError;
             console.error("Inward save failed:", apiError.response?.data || error);
             toast.error(apiError.response?.data?.message || "Failed to save Inward");
         }
     };
-
-    useEffect(() => {
-        if (!isSubmitting && refreshNextIdAfterSubmit.current) {
-            refreshNextIdAfterSubmit.current = false;
-            void fetchNextId();
-        }
-    }, [isSubmitting]);
 
     const debouncedId = useDebounce(values.id, 500);
     const inwardColumns: ViewAllColumn<InwardRow>[] = [
@@ -661,14 +669,6 @@ export default function InwardQualityControlPage() {
     ];
 
     // Print the currently opened (saved) entry as a slip. Filters/reports live on the Report page.
-    const handlePrint = () => {
-        if (isNewMode || !values.id) {
-            toast.error("Open a saved entry first (enter its Q.C No or use View All) to print it");
-            return;
-        }
-        window.open(`/print/inward-quality-control-slip?id=${values.id}`, "_blank");
-    };
-
     return (
         <section className="mx-auto mt-10 w-full max-w-6xl bg-[#f0f0f0] p-8 shadow-sm text-black">
             <h1 className="mb-8 text-center text-4xl text-black tracking-wide">
@@ -1099,15 +1099,25 @@ export default function InwardQualityControlPage() {
                         type="button"
                         variant="secondary"
                         shape="rounded"
-                        onClick={handlePrint}
-                        disabled={isSubmitting || isNewMode || !canView}
-                        title={isNewMode ? "Open a saved entry to print it" : "Print this entry"}
+                        onClick={() => setIsPrintOpen(true)}
+                        disabled={isSubmitting || !canView}
                         className="border border-zinc-400 bg-white px-6 hover:bg-zinc-50"
                     >
                         Print
                     </Button>
                 </div>
             </form>
+
+            <PrintOptionsModal
+                isOpen={isPrintOpen}
+                onClose={() => setIsPrintOpen(false)}
+                entityName="Inward / QC Entries"
+                printPath="/print/inward-quality-control-slip"
+                recordId={isNewMode ? null : values.id || null}
+                maxCode={Number(nextId) > 1 ? Number(nextId) - 1 : undefined}
+                itemWord="entry"
+                codeWord="number"
+            />
 
             <ViewAllModal
                 key={isViewAllOpen ? "open" : "closed"}

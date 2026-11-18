@@ -1,11 +1,11 @@
 "use client";
 
-import { Suspense, useEffect, useState } from "react";
-import { useSearchParams } from "next/navigation";
-import api from "@/lib/axios";
+import { Suspense } from "react";
 import { INWARDS } from "@/utlis/apiRoutes";
-import toast from "react-hot-toast";
 import { usePermissions } from "@/hooks/usePermissions";
+import { usePrintDocuments } from "@/hooks/usePrintDocuments";
+import { PrintStatus } from "@/components/print/PrintStatus";
+import { PrintCompanyName } from "@/components/print/PrintCompanyName";
 
 type SlipItem = {
     id: number;
@@ -39,63 +39,7 @@ const TYPE_LABELS: Record<string, string> = {
     againstDealarRejection: "Against Dealer Rejection",
 };
 
-function InwardSlip() {
-    const searchParams = useSearchParams();
-    const id = searchParams.get("id") || "";
-    const { hasPermission } = usePermissions();
-    const canView = hasPermission("inward_quality_control", "view");
-
-    const [inward, setInward] = useState<SlipInward | null>(null);
-    const [isLoading, setIsLoading] = useState(true);
-    const [loadError, setLoadError] = useState("");
-
-    useEffect(() => {
-        const fetchInward = async () => {
-            if (!canView) {
-                toast.error("You do not have permission to print this entry.");
-                setIsLoading(false);
-                return;
-            }
-            if (!id) {
-                setIsLoading(false);
-                return;
-            }
-
-            try {
-                const { data } = await api.get(`${INWARDS}/${id}`);
-                setInward(data.data || null);
-                // Give React a moment to render before calling print
-                setTimeout(() => window.print(), 500);
-            } catch (error: unknown) {
-                const response = (error as { response?: { status?: number; data?: { message?: string } } }).response;
-                setLoadError(
-                    response?.status === 404
-                        ? "Inward entry not found"
-                        : response?.data?.message ||
-                              (response?.status
-                                  ? `Failed to load entry (server error ${response.status})`
-                                  : "Failed to load entry (cannot reach the server)")
-                );
-            } finally {
-                setIsLoading(false);
-            }
-        };
-
-        void fetchInward();
-    }, [id, canView]);
-
-    if (isLoading) {
-        return <div className="p-10 text-center text-black">Loading entry...</div>;
-    }
-
-    if (!inward) {
-        return (
-            <div className="p-10 text-center text-black">
-                {loadError || (id ? "Entry not found." : "No entry selected to print.")}
-            </div>
-        );
-    }
-
+function InwardSlipBody({ inward }: { inward: SlipInward }) {
     const vendorName =
         inward.purchaseOrder?.vendor?.vendorName || inward.quotation?.vendor?.vendorName || "-";
     const totals = inward.items.reduce(
@@ -108,8 +52,9 @@ function InwardSlip() {
     );
 
     return (
-        <div className="min-h-screen w-full bg-white p-8 text-black">
-            <h2 className="mb-6 text-center text-2xl font-bold uppercase tracking-wider">
+        <div className="mx-auto mb-6 max-w-4xl bg-white p-8 text-black print:mb-0 print:p-0">
+            <PrintCompanyName />
+            <h2 className="mt-1 mb-6 text-center text-xl font-semibold uppercase tracking-wide">
                 Inward / Quality Control
             </h2>
 
@@ -159,6 +104,41 @@ function InwardSlip() {
                 </tbody>
             </table>
         </div>
+    );
+}
+
+function InwardSlip() {
+    const { hasPermission } = usePermissions();
+    const canView = hasPermission("inward_quality_control", "view");
+
+    const { records, label, truncated, total, state, errorMessage, retry } = usePrintDocuments<SlipInward>({
+        basePath: INWARDS,
+        canView,
+    });
+
+    if (state !== "ready") {
+        return <PrintStatus state={state} message={errorMessage} onRetry={retry} />;
+    }
+
+    if (records.length === 0) {
+        return <p className="p-10 text-center text-black">No entries found.</p>;
+    }
+
+    // Every entry starts on a new paper
+    return (
+        <>
+            {label && <p className="p-2 text-center text-xs text-zinc-500 print:hidden">Printing: {label} ({records.length})</p>}
+            {truncated && (
+                <p className="p-2 text-center text-xs text-red-500 print:hidden">
+                    Only the first {records.length.toLocaleString()} of {total.toLocaleString()} entries are shown. Choose a range to print the rest.
+                </p>
+            )}
+            {records.map((inward, index) => (
+                <div key={inward.id} className={index > 0 ? "break-before-page" : undefined}>
+                    <InwardSlipBody inward={inward} />
+                </div>
+            ))}
+        </>
     );
 }
 

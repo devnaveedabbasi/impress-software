@@ -40,7 +40,15 @@ export function DocumentSheet<Row>({
 
     return (
         <div className={cn("text-black", variant === "print" ? "" : "border border-zinc-300 bg-white p-4 sm:p-6")}>
-            <h2 className="mb-5 text-center text-xl font-bold uppercase tracking-wider sm:text-2xl">{title}</h2>
+            <h2
+                className={
+                    variant === "print"
+                        ? "mb-5 mt-1 text-center text-xl font-semibold uppercase tracking-wide"
+                        : "mb-5 text-center text-xl font-bold uppercase tracking-wider sm:text-2xl"
+                }
+            >
+                {title}
+            </h2>
 
             {error ? (
                 <p className="py-10 text-center text-sm text-red-500">

@@ -11,6 +11,7 @@ import api from "@/lib/axios";
 import toast from "react-hot-toast";
 import { usePermissions } from "@/hooks/usePermissions";
 import { ViewAllModal, type ViewAllColumn } from "@/components/ui/ViewAllModal";
+import { PrintOptionsModal } from "@/components/print/PrintOptionsModal";
 import { InventoryPickerModal, type InventoryPickItem } from "@/components/ui/InventoryPickerModal";
 import { VendorPickerModal, type VendorPickItem } from "@/components/ui/VendorPickerModal";
 import { RowDeleteButton, deletableRowClassName } from "@/components/ui/RowDeleteButton";
@@ -71,6 +72,7 @@ const initialValues: SaleGatePassFormValues = {
 // Part Sale Gate Pass (Gate Pass for Sold Item): the parts leaving the store for a customer
 export default function GatePassSoldItemPage() {
     const [isNewMode, setIsNewMode] = useState(true);
+    const [isPrintOpen, setIsPrintOpen] = useState(false);
     const [isEditing, setIsEditing] = useState(true);
     const [isVendorPickerOpen, setIsVendorPickerOpen] = useState(false);
     const [pickerRowIndex, setPickerRowIndex] = useState<number | null>(null);
@@ -90,7 +92,6 @@ export default function GatePassSoldItemPage() {
     const [isGatePassesLoading, setIsGatePassesLoading] = useState(false);
     const [gatePassesError, setGatePassesError] = useState("");
     const skipNextIdLookup = useRef(false);
-    const refreshNextIdAfterSubmit = useRef(false);
 
     const {
         handleSubmit,
@@ -263,20 +264,27 @@ export default function GatePassSoldItemPage() {
                 setHasLoadedGatePasses(false);
                 await fetchAllGatePasses(false, true);
             }
-            refreshNextIdAfterSubmit.current = true;
+            // The saved document stays on the screen, so it can be printed right away (it does not jump to the next
+            // new one: the New button does that). Only the next number is read again, quietly.
+            const saved = response.data.data;
+            if (saved?.id) {
+                reset(mapGatePassToForm(saved));
+                setIsNewMode(false);
+                setIsEditing(false);
+                skipNextIdLookup.current = true;
+                void api
+                    .get(`${SALE_GATE_PASSES}/next-id`, { params: { _ts: Date.now() } })
+                    .then(({ data }) => setNextId(String(data.data.nextId)))
+                    .catch(() => {
+                        skipNextIdLookup.current = false;
+                    });
+            }
         } catch (error: unknown) {
             const apiError = error as ApiError;
             console.error("Gate pass save failed:", apiError.response?.data || error);
             toast.error(apiError.response?.data?.message || "Failed to save gate pass");
         }
     };
-
-    useEffect(() => {
-        if (!isSubmitting && refreshNextIdAfterSubmit.current) {
-            refreshNextIdAfterSubmit.current = false;
-            void fetchNextId();
-        }
-    }, [isSubmitting]);
 
     const debouncedId = useDebounce(values.id, 500);
     const gatePassColumns: ViewAllColumn<GatePassRow>[] = [
@@ -392,14 +400,6 @@ export default function GatePassSoldItemPage() {
     };
 
     const totalQty = values.items.reduce((sum, row) => sum + (Number(row.qty) || 0), 0);
-
-    const handlePrint = () => {
-        if (isNewMode || !values.id) {
-            toast.error("Open a saved gate pass first (enter its number or use View All) to print it");
-            return;
-        }
-        window.open(`/print/sale-gate-pass-slip?id=${values.id}`, "_blank");
-    };
 
     return (
         <section className="mx-auto mt-10 w-full max-w-5xl bg-form-bg p-6 shadow-sm sm:p-8">
@@ -670,9 +670,8 @@ export default function GatePassSoldItemPage() {
                         type="button"
                         variant="secondary"
                         shape="rounded"
-                        onClick={handlePrint}
-                        disabled={isSubmitting || isNewMode || !canView}
-                        title={isNewMode ? "Open a saved gate pass to print it" : "Print this gate pass"}
+                        onClick={() => setIsPrintOpen(true)}
+                        disabled={isSubmitting || !canView}
                         className="border border-zinc-400 bg-white px-6 hover:bg-zinc-50"
                     >
                         Print
@@ -695,6 +694,17 @@ export default function GatePassSoldItemPage() {
                 title={`Select Item${pickerRowIndex !== null ? ` (Row ${pickerRowIndex + 1})` : ""}`}
                 onClose={() => setPickerRowIndex(null)}
                 onSelect={handleItemSelect}
+            />
+
+            <PrintOptionsModal
+                isOpen={isPrintOpen}
+                onClose={() => setIsPrintOpen(false)}
+                entityName="Gate Passes"
+                printPath="/print/sale-gate-pass-slip"
+                recordId={isNewMode ? null : values.id || null}
+                maxCode={Number(nextId) > 1 ? Number(nextId) - 1 : undefined}
+                itemWord="gate pass"
+                codeWord="number"
             />
 
             <ViewAllModal

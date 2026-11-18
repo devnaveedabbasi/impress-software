@@ -83,7 +83,6 @@ export default function AccountCodePage() {
     const [isAccountCodesLoading, setIsAccountCodesLoading] = useState(false);
     const [accountCodesError, setAccountCodesError] = useState("");
     const skipNextIdLookup = useRef(false);
-    const refreshNextIdAfterSubmit = useRef(false);
 
     const {
         handleSubmit,
@@ -238,20 +237,23 @@ export default function AccountCodePage() {
                 setHasLoadedAccountCodes(false);
                 await fetchAllAccountCodes(false, true);
             }
-            refreshNextIdAfterSubmit.current = true;
+            // After Save the record stays on the screen (it does not jump to the next new one: the New button does that).
+            // Only the next number is read again, quietly, so a new record still gets the right number.
+            setIsNewMode(false);
+            setIsEditing(false);
+            skipNextIdLookup.current = true;
+            void api
+                .get(`${ACCOUNT_CODES}/next-id`, { params: { _ts: Date.now() } })
+                .then(({ data }) => setNextId(String(data.data.nextId)))
+                .catch(() => {
+                    skipNextIdLookup.current = false;
+                });
         } catch (error: unknown) {
             const apiError = error as ApiError;
             console.error("Account Form save failed:", apiError.response?.data || error);
             toast.error(apiError.response?.data?.message || "Failed to save Account Form");
         }
     };
-
-    useEffect(() => {
-        if (!isSubmitting && refreshNextIdAfterSubmit.current) {
-            refreshNextIdAfterSubmit.current = false;
-            void fetchNextId();
-        }
-    }, [isSubmitting]);
 
     const debouncedId = useDebounce(values.id, 500);
     const accountCodeColumns: ViewAllColumn<AccountCodeRow>[] = [

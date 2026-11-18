@@ -8,6 +8,7 @@ import { PrintStatus } from "@/components/print/PrintStatus";
 import { GroupedReportTables } from "@/components/reports/GroupedReportTables";
 import { cn } from "@/lib/utils";
 import { PRINT_MAX_ROWS, buildFilterParams, findStoreReport, type StoreReportRow, type StoreReportTotals } from "@/lib/storeReports";
+import { PrintCompanyName } from "@/components/print/PrintCompanyName";
 
 // Prints any Store report (Stock Register, Stock Ledger, Shortage, Issue): ?report=<key>&<the filters>
 function StoreReportPrint() {
@@ -53,9 +54,10 @@ function StoreReportPrint() {
     const summary = meta?.totals ? def.summary(meta.totals as StoreReportTotals) : [];
 
     return (
-        <div className="min-h-screen w-full bg-white p-8 text-black">
+        <div className="mx-auto mb-6 max-w-4xl bg-white p-8 text-black print:mb-0 print:p-0">
+            <PrintCompanyName />
             <div className="mb-5 text-center">
-                <h2 className="text-2xl font-bold uppercase tracking-wider">{def.title}</h2>
+                <h2 className="mt-1 text-center text-xl font-semibold uppercase tracking-wide">{def.title}</h2>
                 {used.length > 0 && <p className="mt-2 text-[13px] font-semibold">{used.join("  |  ")}</p>}
             </div>
 

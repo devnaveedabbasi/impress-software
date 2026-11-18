@@ -25,13 +25,30 @@ interface PrintOptionsModalProps {
   maxCode?: number;
   /** How many records exist, shown for "All records" (optional) */
   totalCount?: number;
+  /** What one record is called, for a document: "slip", "gate pass" (default "record") */
+  itemWord?: string;
+  /** What the number of a record is called (default "code"; for a document "number") */
+  codeWord?: string;
 }
 
 const digits = (value: string) => /^\d*$/.test(value);
 
 // "What do you want to print?" One choice is selected; the boxes of the other choices are switched off, so the
 // dialog always shows exactly what will be printed. The Print button works only when the choice is valid.
-export function PrintOptionsModal({ isOpen, onClose, entityName, printPath, recordId, maxCode, totalCount }: PrintOptionsModalProps) {
+export function PrintOptionsModal({
+  isOpen,
+  onClose,
+  entityName,
+  printPath,
+  recordId,
+  maxCode,
+  totalCount,
+  itemWord = "record",
+  codeWord = "code",
+}: PrintOptionsModalProps) {
+  const plural = `${itemWord}s`;
+  const codeWords = `${codeWord}s`;
+  const cap = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
   const hasRecord = recordId !== null && recordId !== undefined && String(recordId) !== "";
 
   const [mode, setMode] = useState<Mode>("all");
@@ -77,23 +94,23 @@ export function PrintOptionsModal({ isOpen, onClose, entityName, printPath, reco
     if (mode === "range") {
       const fromNumber = Number(from);
       const toNumber = Number(to);
-      if (from === "") found.from = "Enter the first code";
-      else if (fromNumber < 1) found.from = "The code must be 1 or more";
-      else if (maxCode && fromNumber > maxCode) found.from = `The highest code is ${maxCode}`;
+      if (from === "") found.from = `Enter the first ${codeWord}`;
+      else if (fromNumber < 1) found.from = `The ${codeWord} must be 1 or more`;
+      else if (maxCode && fromNumber > maxCode) found.from = `The highest ${codeWord} is ${maxCode}`;
 
-      if (to === "") found.to = "Enter the last code";
-      else if (toNumber < 1) found.to = "The code must be 1 or more";
-      else if (maxCode && toNumber > maxCode) found.to = `The highest code is ${maxCode}`;
-      else if (!found.from && fromNumber > toNumber) found.to = "The last code cannot be less than the first";
+      if (to === "") found.to = `Enter the last ${codeWord}`;
+      else if (toNumber < 1) found.to = `The ${codeWord} must be 1 or more`;
+      else if (maxCode && toNumber > maxCode) found.to = `The highest ${codeWord} is ${maxCode}`;
+      else if (!found.from && fromNumber > toNumber) found.to = `The last ${codeWord} cannot be less than the first`;
       else if (!found.from && toNumber - fromNumber + 1 > PRINT_ALL_MAX) {
-        found.to = `A range can hold ${PRINT_ALL_MAX.toLocaleString()} records at most`;
+        found.to = `A range can hold ${PRINT_ALL_MAX.toLocaleString()} ${plural} at most`;
       }
     }
     if (mode === "last" && lastChoice === "custom") {
       const count = Number(customLast);
-      if (customLast === "") found.custom = "Enter how many records";
+      if (customLast === "") found.custom = `Enter how many ${plural}`;
       else if (count < 1) found.custom = "Enter 1 or more";
-      else if (count > PRINT_ALL_MAX) found.custom = `${PRINT_ALL_MAX.toLocaleString()} records at most`;
+      else if (count > PRINT_ALL_MAX) found.custom = `${PRINT_ALL_MAX.toLocaleString()} ${plural} at most`;
     }
     return found;
   }, [mode, from, to, lastChoice, customLast, maxCode]);
@@ -111,10 +128,10 @@ export function PrintOptionsModal({ isOpen, onClose, entityName, printPath, reco
   // What will be printed, in words
   const summary = (() => {
     if (!selection) return "";
-    if (selection.mode === "record") return `Record ${selection.id} only`;
-    if (selection.mode === "range") return `Codes ${selection.from} to ${selection.to}`;
-    if (selection.mode === "last") return `The last ${selection.count} records`;
-    return totalCount ? `All ${totalCount.toLocaleString()} records` : "All records";
+    if (selection.mode === "record") return `${cap(itemWord)} ${selection.id} only`;
+    if (selection.mode === "range") return `${cap(codeWords)} ${selection.from} to ${selection.to}`;
+    if (selection.mode === "last") return `The last ${selection.count} ${plural}`;
+    return totalCount ? `All ${totalCount.toLocaleString()} ${plural}` : `All ${plural}`;
   })();
 
   const handlePrint = () => {
@@ -171,8 +188,8 @@ export function PrintOptionsModal({ isOpen, onClose, entityName, printPath, reco
           <label className={optionClass(mode === "record", !hasRecord)}>
             <input type="radio" name="print-mode" className="mt-1 accent-primary-600" checked={mode === "record"} disabled={!hasRecord} onChange={() => choose("record")} />
             <span>
-              <span className="block text-sm font-medium text-zinc-900">{hasRecord ? `This record (code ${recordId})` : "This record"}</span>
-              <span className="block text-xs text-zinc-500">{hasRecord ? "Only the record that is open now." : "Open a saved record first to use this."}</span>
+              <span className="block text-sm font-medium text-zinc-900">{hasRecord ? `This ${itemWord} (${codeWord} ${recordId})` : `This ${itemWord}`}</span>
+              <span className="block text-xs text-zinc-500">{hasRecord ? `Only the ${itemWord} that is open now.` : `Open a saved ${itemWord} first to use this.`}</span>
             </span>
           </label>
 
@@ -180,18 +197,18 @@ export function PrintOptionsModal({ isOpen, onClose, entityName, printPath, reco
           <label className={optionClass(mode === "all")}>
             <input type="radio" name="print-mode" className="mt-1 accent-primary-600" checked={mode === "all"} onChange={() => choose("all")} />
             <span>
-              <span className="block text-sm font-medium text-zinc-900">All records</span>
+              <span className="block text-sm font-medium text-zinc-900">All {plural}</span>
               <span className="block text-xs text-zinc-500">
-                {totalCount ? `${totalCount.toLocaleString()} records. ` : ""}The most that one print holds is {PRINT_ALL_MAX.toLocaleString()}.
+                {totalCount ? `${totalCount.toLocaleString()} ${plural}. ` : ""}The most that one print holds is {PRINT_ALL_MAX.toLocaleString()}.
               </span>
             </span>
           </label>
 
           {/* 3. A range of codes */}
           <div className={optionClass(mode === "range")} onClick={() => mode !== "range" && choose("range")}>
-            <input type="radio" name="print-mode" aria-label="A range of codes" className="mt-1 accent-primary-600" checked={mode === "range"} onChange={() => choose("range")} />
+            <input type="radio" name="print-mode" aria-label={`A range of ${codeWords}`} className="mt-1 accent-primary-600" checked={mode === "range"} onChange={() => choose("range")} />
             <div className="flex-1">
-              <span className="block text-sm font-medium text-zinc-900">A range of codes</span>
+              <span className="block text-sm font-medium text-zinc-900">A range of {codeWords}</span>
               <fieldset disabled={mode !== "range"} className="mt-1.5 flex items-start gap-2 text-sm text-zinc-600">
                 <div>
                   <input
@@ -199,7 +216,7 @@ export function PrintOptionsModal({ isOpen, onClose, entityName, printPath, reco
                     className={boxClass(Boolean(showError("from")))}
                     inputMode="numeric"
                     placeholder="From"
-                    aria-label="From code"
+                    aria-label={`From ${codeWord}`}
                     aria-invalid={Boolean(showError("from"))}
                     value={from}
                     maxLength={9}
@@ -214,7 +231,7 @@ export function PrintOptionsModal({ isOpen, onClose, entityName, printPath, reco
                     className={boxClass(Boolean(showError("to")))}
                     inputMode="numeric"
                     placeholder="To"
-                    aria-label="To code"
+                    aria-label={`To ${codeWord}`}
                     aria-invalid={Boolean(showError("to"))}
                     value={to}
                     maxLength={9}
@@ -229,9 +246,9 @@ export function PrintOptionsModal({ isOpen, onClose, entityName, printPath, reco
 
           {/* 4. The last records */}
           <div className={optionClass(mode === "last")} onClick={() => mode !== "last" && choose("last")}>
-            <input type="radio" name="print-mode" aria-label="The last records" className="mt-1 accent-primary-600" checked={mode === "last"} onChange={() => choose("last")} />
+            <input type="radio" name="print-mode" aria-label={`The last ${plural}`} className="mt-1 accent-primary-600" checked={mode === "last"} onChange={() => choose("last")} />
             <div className="flex-1">
-              <span className="block text-sm font-medium text-zinc-900">The last records</span>
+              <span className="block text-sm font-medium text-zinc-900">The last {plural}</span>
               <fieldset disabled={mode !== "last"} className="mt-1.5">
                 <div className="flex flex-wrap items-center gap-1.5">
                   {[...PRINT_LAST_CHOICES.map(String), "custom"].map((choice) => (
@@ -256,7 +273,7 @@ export function PrintOptionsModal({ isOpen, onClose, entityName, printPath, reco
                       className={boxClass(Boolean(showError("custom")))}
                       inputMode="numeric"
                       placeholder="How many"
-                      aria-label="How many records"
+                      aria-label={`How many ${plural}`}
                       aria-invalid={Boolean(showError("custom"))}
                       value={customLast}
                       maxLength={5}

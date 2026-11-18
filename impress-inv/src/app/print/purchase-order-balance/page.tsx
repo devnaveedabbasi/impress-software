@@ -7,6 +7,7 @@ import { usePermissions } from "@/hooks/usePermissions";
 import { useSearchParams } from "next/navigation";
 import { usePrintReport } from "@/hooks/usePrintReport";
 import { PrintStatus } from "@/components/print/PrintStatus";
+import { PrintCompanyName } from "@/components/print/PrintCompanyName";
 
 export default function PurchaseOrderBalancePrintPage() {
     const searchParams = useSearchParams();
@@ -76,9 +77,10 @@ export default function PurchaseOrderBalancePrintPage() {
     const selectedVendorName = vendorId ? vendors.find(v => v.value === vendorId)?.label : null;
 
     return (
-        <div className="p-8 bg-white min-h-screen text-black w-full">
+        <div className="mx-auto mb-6 max-w-4xl bg-white p-8 text-black print:mb-0 print:p-0">
+            <PrintCompanyName />
             <div className="text-center mb-6">
-                <h2 className="text-2xl font-bold uppercase tracking-wider text-black">Purchase Order Balance Report</h2>
+                <h2 className="mt-1 text-center text-xl font-semibold uppercase tracking-wide">Purchase Order Balance Report</h2>
                 {selectedVendorName && (
                     <p className="text-lg font-bold mt-2 text-black uppercase">Vendor Name: {selectedVendorName}</p>
                 )}

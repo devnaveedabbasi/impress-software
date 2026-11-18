@@ -10,6 +10,7 @@ import { usePrintReport } from "@/hooks/usePrintReport";
 import { PrintStatus } from "@/components/print/PrintStatus";
 import { DocumentSheet } from "@/components/ui/DocumentSheet";
 import { INWARD_DOC_COLUMNS, formatNumber, inwardDocumentEntries } from "@/lib/inwardReport";
+import { PrintCompanyName } from "@/components/print/PrintCompanyName";
 
 export default function InwardQualityControlPrintPage() {
     const searchParams = useSearchParams();
@@ -142,7 +143,8 @@ export default function InwardQualityControlPrintPage() {
 
     if (inwardId) {
         return (
-            <div className="p-8 bg-white min-h-screen text-black w-full">
+            <div className="mx-auto mb-6 max-w-4xl bg-white p-8 text-black print:mb-0 print:p-0">
+                <PrintCompanyName />
                 <DocumentSheet
                     variant="print"
                     title={`Inward Q.C No ${inwardId} Report`}
@@ -163,9 +165,10 @@ export default function InwardQualityControlPrintPage() {
     }
 
     return (
-        <div className="p-8 bg-white min-h-screen text-black w-full">
+        <div className="mx-auto mb-6 max-w-4xl bg-white p-8 text-black print:mb-0 print:p-0">
+            <PrintCompanyName />
             <div className="text-center mb-6">
-                <h2 className="text-2xl font-bold uppercase tracking-wider text-black">{inwardId ? `Inward Q.C No ${inwardId} Report` : vendorId ? 'Vendor-wise Q.C Report' : 'Q.C Report'}</h2>
+                <h2 className="mt-1 text-center text-xl font-semibold uppercase tracking-wide">{inwardId ? `Inward Q.C No ${inwardId} Report` : vendorId ? 'Vendor-wise Q.C Report' : 'Q.C Report'}</h2>
                 {vendorId && (
                     <p className="text-lg font-bold mt-2 text-black uppercase">
                         Vendor Name: {vendors.find(v => v.value === vendorId)?.label}

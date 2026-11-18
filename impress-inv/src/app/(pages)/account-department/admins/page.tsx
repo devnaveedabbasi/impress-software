@@ -61,7 +61,6 @@ export default function AdminsPage() {
     const [isAdminsLoading, setIsAdminsLoading] = useState(false);
     const [adminsError, setAdminsError] = useState("");
     const skipNextIdLookup = useRef(false);
-    const refreshNextIdAfterSubmit = useRef(false);
 
     const [searchQuery, setSearchQuery] = useState("");
     const debouncedSearchQuery = useDebounce(searchQuery, 300);
@@ -265,20 +264,23 @@ export default function AdminsPage() {
             toast.success(response.data.message || "Admin saved successfully");
             setHasLoadedAdmins(false);
             await fetchAllAdmins(false, true);
-            refreshNextIdAfterSubmit.current = true;
+            // After Save the record stays on the screen (it does not jump to the next new one: the New button does that).
+            // Only the next number is read again, quietly, so a new record still gets the right number.
+            setValue("password", ""); // the password is never kept on the screen
+            setIsNewMode(false);
+            setIsEditing(false);
+            skipNextIdLookup.current = true;
+            void api
+                .get(`${ADMINS}/next-id`, { params: { _ts: Date.now() } })
+                .then(({ data }) => setNextId(String(data.data.nextId)))
+                .catch(() => {
+                    skipNextIdLookup.current = false;
+                });
         } catch (error: unknown) {
             const apiError = error as ApiError;
             toast.error(apiError.response?.data?.message || "Failed to save admin");
         }
     };
-
-    useEffect(() => {
-        if (!isSubmitting && refreshNextIdAfterSubmit.current) {
-            refreshNextIdAfterSubmit.current = false;
-            void fetchNextId();
-        }
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [isSubmitting]);
 
     const debouncedId = useDebounce(values.id, 500);
     const adminColumns: ViewAllColumn<AdminRow>[] = [

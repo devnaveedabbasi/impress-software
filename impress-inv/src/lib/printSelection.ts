@@ -28,7 +28,7 @@ export const selectionToQuery = (selection: PrintSelection) => {
 const wholeNumber = (value: string | null) => (value && /^\d+$/.test(value) ? Number(value) : null);
 
 // The records of a print page after the choice. "label" says what was chosen, for the heading of the paper.
-export function selectPrintRecords<T extends PrintRecordLike>(records: T[], params: URLSearchParams) {
+export function selectPrintRecords<T extends PrintRecordLike>(records: T[], params: URLSearchParams, codeWord = "Codes") {
   const sorted = [...records].sort((a, b) => a.id - b.id);
 
   const id = wholeNumber(params.get("id"));
@@ -40,7 +40,7 @@ export function selectPrintRecords<T extends PrintRecordLike>(records: T[], para
   const to = wholeNumber(params.get("to"));
   if (from !== null && to !== null) {
     const rows = sorted.filter((record) => record.id >= from && record.id <= to);
-    return { rows: rows.slice(0, PRINT_ALL_MAX), total: rows.length, truncated: rows.length > PRINT_ALL_MAX, label: `Codes ${from} to ${to}` };
+    return { rows: rows.slice(0, PRINT_ALL_MAX), total: rows.length, truncated: rows.length > PRINT_ALL_MAX, label: `${codeWord} ${from} to ${to}` };
   }
 
   const last = wholeNumber(params.get("last"));

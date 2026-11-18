@@ -12,6 +12,7 @@ import api from "@/lib/axios";
 import toast from "react-hot-toast";
 import { usePermissions } from "@/hooks/usePermissions";
 import { ViewAllModal, type ViewAllColumn } from "@/components/ui/ViewAllModal";
+import { PrintOptionsModal } from "@/components/print/PrintOptionsModal";
 import { InventoryPickerModal, type InventoryPickItem } from "@/components/ui/InventoryPickerModal";
 import { RowDeleteButton, deletableRowClassName } from "@/components/ui/RowDeleteButton";
 import { AddRowButton } from "@/components/ui/AddRowButton";
@@ -81,6 +82,7 @@ const autoIssueQty = (bikeQty: string, upm: string) => {
 // The Requisition Slip No is the automatic id of the slip.
 export default function IssueFromLinePage() {
     const [isNewMode, setIsNewMode] = useState(true);
+    const [isPrintOpen, setIsPrintOpen] = useState(false);
     const [isEditing, setIsEditing] = useState(true);
     const [pickerRowIndex, setPickerRowIndex] = useState<number | null>(null);
     // Problems found in the item rows: which cell of which row is wrong and why
@@ -103,7 +105,6 @@ export default function IssueFromLinePage() {
     const [isIssuesLoading, setIsIssuesLoading] = useState(false);
     const [issuesError, setIssuesError] = useState("");
     const skipNextIdLookup = useRef(false);
-    const refreshNextIdAfterSubmit = useRef(false);
 
     const {
         handleSubmit,
@@ -313,20 +314,27 @@ export default function IssueFromLinePage() {
                 setHasLoadedIssues(false);
                 await fetchAllIssues(false, true);
             }
-            refreshNextIdAfterSubmit.current = true;
+            // The saved document stays on the screen, so it can be printed right away (it does not jump to the next
+            // new one: the New button does that). Only the next number is read again, quietly.
+            const saved = response.data.data;
+            if (saved?.id) {
+                reset(mapIssueToForm(saved));
+                setIsNewMode(false);
+                setIsEditing(false);
+                skipNextIdLookup.current = true;
+                void api
+                    .get(`${STORE_ISSUES}/next-id`, { params: { _ts: Date.now() } })
+                    .then(({ data }) => setNextId(String(data.data.nextId)))
+                    .catch(() => {
+                        skipNextIdLookup.current = false;
+                    });
+            }
         } catch (error: unknown) {
             const apiError = error as ApiError;
             console.error("Issue slip save failed:", apiError.response?.data || error);
             toast.error(apiError.response?.data?.message || "Failed to save issue slip");
         }
     };
-
-    useEffect(() => {
-        if (!isSubmitting && refreshNextIdAfterSubmit.current) {
-            refreshNextIdAfterSubmit.current = false;
-            void fetchNextId();
-        }
-    }, [isSubmitting]);
 
     const debouncedId = useDebounce(values.id, 500);
     const issueColumns: ViewAllColumn<StoreIssueRow>[] = [
@@ -475,14 +483,6 @@ export default function IssueFromLinePage() {
     };
 
     const totalIssueQty = values.items.reduce((sum, row) => sum + (Number(row.issueQty) || 0), 0);
-
-    const handlePrint = () => {
-        if (isNewMode || !values.id) {
-            toast.error("Open a saved slip first (enter its number or use View All) to print it");
-            return;
-        }
-        window.open(`/print/store-issue-slip?id=${values.id}`, "_blank");
-    };
 
     return (
         <section className="mx-auto mt-10 w-full max-w-5xl bg-form-bg p-6 shadow-sm sm:p-8">
@@ -749,9 +749,8 @@ export default function IssueFromLinePage() {
                         type="button"
                         variant="secondary"
                         shape="rounded"
-                        onClick={handlePrint}
-                        disabled={isSubmitting || isNewMode || !canView}
-                        title={isNewMode ? "Open a saved slip to print it" : "Print this slip"}
+                        onClick={() => setIsPrintOpen(true)}
+                        disabled={isSubmitting || !canView}
                         className="border border-zinc-400 bg-white px-6 hover:bg-zinc-50"
                     >
                         Print
@@ -764,6 +763,17 @@ export default function IssueFromLinePage() {
                 title={`Select Item${pickerRowIndex !== null ? ` (Row ${pickerRowIndex + 1})` : ""}`}
                 onClose={() => setPickerRowIndex(null)}
                 onSelect={handleItemSelect}
+            />
+
+            <PrintOptionsModal
+                isOpen={isPrintOpen}
+                onClose={() => setIsPrintOpen(false)}
+                entityName="Requisition Slips"
+                printPath="/print/store-issue-slip"
+                recordId={isNewMode ? null : values.id || null}
+                maxCode={Number(nextId) > 1 ? Number(nextId) - 1 : undefined}
+                itemWord="slip"
+                codeWord="number"
             />
 
             <ViewAllModal

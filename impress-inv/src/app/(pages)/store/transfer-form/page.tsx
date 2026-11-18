@@ -85,7 +85,6 @@ export default function TransferFormPage() {
     const [isTransfersLoading, setIsTransfersLoading] = useState(false);
     const [transfersError, setTransfersError] = useState("");
     const skipNextIdLookup = useRef(false);
-    const refreshNextIdAfterSubmit = useRef(false);
 
     const {
         handleSubmit,
@@ -263,20 +262,23 @@ export default function TransferFormPage() {
                 setHasLoadedTransfers(false);
                 await fetchAllTransfers(false, true);
             }
-            refreshNextIdAfterSubmit.current = true;
+            // After Save the record stays on the screen (it does not jump to the next new one: the New button does that).
+            // Only the next number is read again, quietly, so a new record still gets the right number.
+            setIsNewMode(false);
+            setIsEditing(false);
+            skipNextIdLookup.current = true;
+            void api
+                .get(`${STOCK_TRANSFERS}/next-id`, { params: { _ts: Date.now() } })
+                .then(({ data }) => setNextId(String(data.data.nextId)))
+                .catch(() => {
+                    skipNextIdLookup.current = false;
+                });
         } catch (error: unknown) {
             const apiError = error as ApiError;
             console.error("Transfer save failed:", apiError.response?.data || error);
             toast.error(apiError.response?.data?.message || "Failed to save transfer");
         }
     };
-
-    useEffect(() => {
-        if (!isSubmitting && refreshNextIdAfterSubmit.current) {
-            refreshNextIdAfterSubmit.current = false;
-            void fetchNextId();
-        }
-    }, [isSubmitting]);
 
     const debouncedId = useDebounce(values.id, 500);
     const transferColumns: ViewAllColumn<TransferRow>[] = [

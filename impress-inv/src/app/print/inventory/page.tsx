@@ -7,7 +7,6 @@ import { usePrintableList } from "@/hooks/usePrintableList";
 import { COMPANY_NAME } from "@/lib/company";
 import { selectPrintRecords, PRINT_ALL_MAX } from "@/lib/printSelection";
 import { PrintStatus } from "@/components/print/PrintStatus";
-import { PrintButton } from "@/components/print/PrintButton";
 import { INVENTORY } from "@/utlis/apiRoutes";
 
 
@@ -38,8 +37,7 @@ function InventorySheet() {
     const { rows: items, total, truncated, label } = selectPrintRecords(all, searchParams);
 
     return (
-        <div className="min-h-screen bg-zinc-100 px-4 py-8 print:bg-white print:p-0">
-            <PrintButton />
+        <div>
             <div className="mx-auto max-w-4xl bg-white p-8 text-black print:p-0">
                 <h1 className="text-center text-2xl font-bold uppercase tracking-wide">
                     {COMPANY_NAME}

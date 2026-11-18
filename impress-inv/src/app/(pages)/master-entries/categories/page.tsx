@@ -44,7 +44,6 @@ export default function CategoryPage() {
     const [isCategoriesLoading, setIsCategoriesLoading] = useState(false);
     const [categoriesError, setCategoriesError] = useState("");
     const skipNextIdLookup = useRef(false);
-    const refreshNextIdAfterSubmit = useRef(false);
 
     const {
         handleSubmit,
@@ -150,20 +149,23 @@ export default function CategoryPage() {
                 setHasLoadedCategories(false);
                 await fetchAllCategories(false, true);
             }
-            refreshNextIdAfterSubmit.current = true;
+            // After Save the record stays on the screen (it does not jump to the next new one: the New button does that).
+            // Only the next number is read again, quietly, so a new record still gets the right number.
+            setIsNewMode(false);
+            setIsEditing(false);
+            skipNextIdLookup.current = true;
+            void api
+                .get(`${CATEGORIES}/next-id`, { params: { _ts: Date.now() } })
+                .then(({ data }) => setNextId(String(data.data.nextId)))
+                .catch(() => {
+                    skipNextIdLookup.current = false;
+                });
         } catch (error: unknown) {
             const apiError = error as ApiError;
             console.error("Category save failed:", apiError.response?.data || error);
             toast.error(apiError.response?.data?.message || "Failed to save category");
         }
     };
-
-    useEffect(() => {
-        if (!isSubmitting && refreshNextIdAfterSubmit.current) {
-            refreshNextIdAfterSubmit.current = false;
-            void fetchNextId();
-        }
-    }, [isSubmitting]);
 
     const debouncedId = useDebounce(values.id, 500);
     const categoryColumns: ViewAllColumn<CategoryRow>[] = [

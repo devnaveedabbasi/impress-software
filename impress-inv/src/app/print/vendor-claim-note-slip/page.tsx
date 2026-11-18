@@ -4,8 +4,9 @@ import { Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import { VENDOR_CLAIM_NOTES } from "@/utlis/apiRoutes";
 import { usePermissions } from "@/hooks/usePermissions";
-import { usePrintDocument } from "@/hooks/usePrintDocument";
+import { usePrintDocuments } from "@/hooks/usePrintDocuments";
 import { PrintStatus } from "@/components/print/PrintStatus";
+import { PrintCompanyName } from "@/components/print/PrintCompanyName";
 
 type SlipItem = {
     id: number;
@@ -33,20 +34,7 @@ type SlipClaimNote = {
     items: SlipItem[];
 };
 
-function ClaimNoteSlip() {
-    const searchParams = useSearchParams();
-    const id = searchParams.get("id");
-    const { hasPermission } = usePermissions();
-    const canView = hasPermission("vendor_claim_note", "view");
-
-    const { data: record, state, errorMessage, retry } = usePrintDocument<SlipClaimNote>(
-        id && /^\d+$/.test(id) ? `${VENDOR_CLAIM_NOTES}/${id}` : null,
-        canView
-    );
-
-    if (state !== "ready" || !record) {
-        return <PrintStatus state={state === "ready" ? "error" : state} message={errorMessage} onRetry={retry} />;
-    }
+function ClaimNoteSlipBody({ record }: { record: SlipClaimNote }) {
 
     const totalRej = record.items.reduce((sum, item) => sum + item.rej, 0);
     // Value of the claim: the amount of every row, then the sales tax
@@ -56,8 +44,9 @@ function ClaimNoteSlip() {
     const num = (value: number) => value.toLocaleString();
 
     return (
-        <div className="min-h-screen w-full bg-white p-8 text-black">
-            <h2 className="mb-6 text-center text-2xl font-bold uppercase tracking-wider underline underline-offset-4">
+        <div className="mx-auto mb-6 max-w-4xl bg-white p-8 text-black print:mb-0 print:p-0">
+            <PrintCompanyName />
+            <h2 className="mt-1 mb-6 text-center text-xl font-semibold uppercase tracking-wide">
                 Vendor Claim Note
             </h2>
 
@@ -135,6 +124,41 @@ function ClaimNoteSlip() {
                 ))}
             </div>
         </div>
+    );
+}
+
+function ClaimNoteSlip() {
+    const { hasPermission } = usePermissions();
+    const canView = hasPermission("vendor_claim_note", "view");
+
+    const { records, label, truncated, total, state, errorMessage, retry } = usePrintDocuments<SlipClaimNote>({
+        basePath: VENDOR_CLAIM_NOTES,
+        canView,
+    });
+
+    if (state !== "ready") {
+        return <PrintStatus state={state} message={errorMessage} onRetry={retry} />;
+    }
+
+    if (records.length === 0) {
+        return <p className="p-10 text-center text-black">No documents found.</p>;
+    }
+
+    // Every document starts on a new paper
+    return (
+        <>
+            {label && <p className="p-2 text-center text-xs text-zinc-500 print:hidden">Printing: {label} ({records.length})</p>}
+            {truncated && (
+                <p className="p-2 text-center text-xs text-red-500 print:hidden">
+                    Only the first {records.length.toLocaleString()} of {total.toLocaleString()} documents are shown. Choose a range to print the rest.
+                </p>
+            )}
+            {records.map((record, index) => (
+                <div key={record.id} className={index > 0 ? "break-before-page" : undefined}>
+                    <ClaimNoteSlipBody record={record} />
+                </div>
+            ))}
+        </>
     );
 }
 

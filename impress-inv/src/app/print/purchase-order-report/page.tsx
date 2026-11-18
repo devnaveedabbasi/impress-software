@@ -18,6 +18,7 @@ import {
     poDocumentEntries,
     poDocumentSummary,
 } from "@/lib/purchaseOrderReport";
+import { PrintCompanyName } from "@/components/print/PrintCompanyName";
 
 // Prints the Purchase Order report of the Date-wise, Vendor-wise and Item-wise tabs.
 // (PO Balance has its own print page.)
@@ -79,7 +80,8 @@ function PurchaseOrderReportPrint() {
 
     if (key === "id") {
         return (
-            <div className="min-h-screen w-full bg-white p-8 text-black">
+            <div className="mx-auto mb-6 max-w-4xl bg-white p-8 text-black print:mb-0 print:p-0">
+                <PrintCompanyName />
                 <DocumentSheet
                     variant="print"
                     title={`Purchase Order No ${poId} Report`}
@@ -94,9 +96,10 @@ function PurchaseOrderReportPrint() {
     }
 
     return (
-        <div className="min-h-screen w-full bg-white p-8 text-black">
+        <div className="mx-auto mb-6 max-w-4xl bg-white p-8 text-black print:mb-0 print:p-0">
+            <PrintCompanyName />
             <div className="mb-6 text-center">
-                <h2 className="text-2xl font-bold uppercase tracking-wider">Purchase Order {tab?.label} Report</h2>
+                <h2 className="mt-1 text-center text-xl font-semibold uppercase tracking-wide">Purchase Order {tab?.label} Report</h2>
                 {vendorName && <p className="mt-2 text-lg font-bold uppercase">Vendor Name: {vendorName}</p>}
                 {itemName && <p className="mt-1 text-[14px] font-semibold uppercase">Item: {itemName}</p>}
                 {(fromDate || toDate) && (

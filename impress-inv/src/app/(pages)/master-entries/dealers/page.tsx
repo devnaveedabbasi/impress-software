@@ -9,6 +9,7 @@ import api from "@/lib/axios";
 import toast from "react-hot-toast";
 import { usePermissions } from "@/hooks/usePermissions";
 import { ViewAllModal, type ViewAllColumn } from "@/components/ui/ViewAllModal";
+import { PrintOptionsModal } from "@/components/print/PrintOptionsModal";
 import { LabeledField } from "@/components/ui/LabeledField";
 import { LabeledSelect } from "@/components/ui/LabeledSelect";
 
@@ -64,6 +65,7 @@ const formatCNIC = (val: string) => {
 
 export default function DealerPage() {
     const [isNewMode, setIsNewMode] = useState(true);
+    const [isPrintOpen, setIsPrintOpen] = useState(false);
     const [isEditing, setIsEditing] = useState(true);
     const [provinces, setProvinces] = useState<{ label: string; value: string }[]>([]);
     const [cities, setCities] = useState<{ label: string; value: string }[]>([]);
@@ -487,7 +489,7 @@ export default function DealerPage() {
                         </button>
                         <button
                             type="button"
-                            onClick={() => window.open("/print/dealers", "_blank")}
+                            onClick={() => setIsPrintOpen(true)}
                             className={btnClass}
                         >
                             Print
@@ -614,6 +616,16 @@ export default function DealerPage() {
                     </div>
                 </div>
             </form>
+
+            <PrintOptionsModal
+                isOpen={isPrintOpen}
+                onClose={() => setIsPrintOpen(false)}
+                entityName="Dealers"
+                printPath="/print/dealers"
+                recordId={isNewMode ? null : values.id || null}
+                maxCode={Number(nextId) > 1 ? Number(nextId) - 1 : undefined}
+                totalCount={hasLoadedDealers ? dealers.length : undefined}
+            />
 
             <ViewAllModal
                 key={isViewAllOpen ? "open" : "closed"}

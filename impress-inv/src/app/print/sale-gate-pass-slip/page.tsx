@@ -4,8 +4,9 @@ import { Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import { SALE_GATE_PASSES } from "@/utlis/apiRoutes";
 import { usePermissions } from "@/hooks/usePermissions";
-import { usePrintDocument } from "@/hooks/usePrintDocument";
+import { usePrintDocuments } from "@/hooks/usePrintDocuments";
 import { PrintStatus } from "@/components/print/PrintStatus";
+import { PrintCompanyName } from "@/components/print/PrintCompanyName";
 
 type SlipItem = {
     id: number;
@@ -27,26 +28,14 @@ type SlipGatePass = {
     items: SlipItem[];
 };
 
-function GatePassSlip() {
-    const searchParams = useSearchParams();
-    const id = searchParams.get("id");
-    const { hasPermission } = usePermissions();
-    const canView = hasPermission("sale_gate_pass", "view");
-
-    const { data: gatePass, state, errorMessage, retry } = usePrintDocument<SlipGatePass>(
-        id && /^\d+$/.test(id) ? `${SALE_GATE_PASSES}/${id}` : null,
-        canView
-    );
-
-    if (state !== "ready" || !gatePass) {
-        return <PrintStatus state={state === "ready" ? "error" : state} message={errorMessage} onRetry={retry} />;
-    }
+function GatePassSlipBody({ gatePass }: { gatePass: SlipGatePass }) {
 
     const totalQty = gatePass.items.reduce((sum, item) => sum + item.qty, 0);
 
     return (
-        <div className="min-h-screen w-full bg-white p-8 text-black">
-            <h2 className="mb-6 text-center text-2xl font-bold uppercase tracking-wider underline underline-offset-4">
+        <div className="mx-auto mb-6 max-w-4xl bg-white p-8 text-black print:mb-0 print:p-0">
+            <PrintCompanyName />
+            <h2 className="mt-1 mb-6 text-center text-xl font-semibold uppercase tracking-wide">
                 Part Sale Gate Pass
             </h2>
 
@@ -95,6 +84,41 @@ function GatePassSlip() {
                 ))}
             </div>
         </div>
+    );
+}
+
+function GatePassSlip() {
+    const { hasPermission } = usePermissions();
+    const canView = hasPermission("sale_gate_pass", "view");
+
+    const { records, label, truncated, total, state, errorMessage, retry } = usePrintDocuments<SlipGatePass>({
+        basePath: SALE_GATE_PASSES,
+        canView,
+    });
+
+    if (state !== "ready") {
+        return <PrintStatus state={state} message={errorMessage} onRetry={retry} />;
+    }
+
+    if (records.length === 0) {
+        return <p className="p-10 text-center text-black">No documents found.</p>;
+    }
+
+    // Every document starts on a new paper
+    return (
+        <>
+            {label && <p className="p-2 text-center text-xs text-zinc-500 print:hidden">Printing: {label} ({records.length})</p>}
+            {truncated && (
+                <p className="p-2 text-center text-xs text-red-500 print:hidden">
+                    Only the first {records.length.toLocaleString()} of {total.toLocaleString()} documents are shown. Choose a range to print the rest.
+                </p>
+            )}
+            {records.map((gatePass, index) => (
+                <div key={gatePass.id} className={index > 0 ? "break-before-page" : undefined}>
+                    <GatePassSlipBody gatePass={gatePass} />
+                </div>
+            ))}
+        </>
     );
 }
 

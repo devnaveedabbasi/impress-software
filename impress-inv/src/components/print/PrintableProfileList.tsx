@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect } from "react";
+import { Suspense, useEffect } from "react";
+import { useSearchParams } from "next/navigation";
 import { usePrintableList } from "@/hooks/usePrintableList";
+import { selectPrintRecords, PRINT_ALL_MAX } from "@/lib/printSelection";
 import { COMPANY_NAME } from "@/lib/company";
 import { PrintStatus } from "@/components/print/PrintStatus";
-import { PrintButton } from "@/components/print/PrintButton";
 
 
 export interface PrintableRecord {
@@ -24,13 +25,14 @@ interface PrintableProfileListProps {
     emptyMessage?: string;
 }
 
-export function PrintableProfileList({
+function ProfileListSheet({
     subtitle,
     apiPath,
     mapRecord,
     emptyMessage = "No records found.",
 }: PrintableProfileListProps) {
-    const { rows: records, state, errorMessage, retry } = usePrintableList<PrintableRecord>(apiPath, (raw) => raw.map(mapRecord));
+    const searchParams = useSearchParams();
+    const { rows: all, state, errorMessage, retry } = usePrintableList<PrintableRecord>(apiPath, (raw) => raw.map(mapRecord));
 
     // The title is the suggested name of a saved PDF
     useEffect(() => {
@@ -41,9 +43,11 @@ export function PrintableProfileList({
         return <PrintStatus state={state} message={errorMessage} onRetry={retry} />;
     }
 
+    // Only what was chosen in the Print dialog (this record, a range, the last N, or all)
+    const { rows: records, total, truncated, label } = selectPrintRecords(all, searchParams);
+
     return (
-        <div className="min-h-screen bg-zinc-100 px-4 py-8 print:bg-white print:p-0">
-            <PrintButton />
+        <div>
             <div className="mx-auto max-w-4xl bg-white p-8 text-black print:p-0">
                 <h1 className="text-center text-2xl font-bold uppercase tracking-wide">
                     {COMPANY_NAME}
@@ -51,6 +55,12 @@ export function PrintableProfileList({
                 <h2 className="mt-1 text-center text-xl font-semibold uppercase tracking-wide">
                     {subtitle}
                 </h2>
+                {label !== "All records" && <p className="mt-1 text-center text-sm font-medium text-zinc-600">{label}</p>}
+                {truncated && (
+                    <p className="mt-2 border border-zinc-400 bg-zinc-100 p-2 text-center text-xs">
+                        Showing the first {PRINT_ALL_MAX.toLocaleString()} of {total.toLocaleString()} records. Choose a range to print the rest.
+                    </p>
+                )}
 
                 <div className="mt-6 space-y-4">
                     {records.map((r) => (
@@ -95,5 +105,13 @@ export function PrintableProfileList({
                 </div>
             </div>
         </div>
+    );
+}
+
+export function PrintableProfileList(props: PrintableProfileListProps) {
+    return (
+        <Suspense fallback={null}>
+            <ProfileListSheet {...props} />
+        </Suspense>
     );
 }

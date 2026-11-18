@@ -121,7 +121,6 @@ export default function PurchaseOrderPage() {
     const [isPurchaseOrdersLoading, setIsPurchaseOrdersLoading] = useState(false);
     const [purchaseOrdersError, setPurchaseOrdersError] = useState("");
     const skipNextIdLookup = useRef(false);
-    const refreshNextIdAfterSubmit = useRef(false);
 
     const {
         handleSubmit,
@@ -342,20 +341,23 @@ export default function PurchaseOrderPage() {
                 setHasLoadedPurchaseOrders(false);
                 await fetchAllPurchaseOrders(false, true);
             }
-            refreshNextIdAfterSubmit.current = true;
+            // After Save the record stays on the screen (it does not jump to the next new one: the New button does that).
+            // Only the next number is read again, quietly, so a new record still gets the right number.
+            setIsNewMode(false);
+            setIsEditing(false);
+            skipNextIdLookup.current = true;
+            void api
+                .get(`${PURCHASE_ORDERS}/next-id`, { params: { _ts: Date.now() } })
+                .then(({ data }) => setNextId(String(data.data.nextId)))
+                .catch(() => {
+                    skipNextIdLookup.current = false;
+                });
         } catch (error: unknown) {
             const apiError = error as ApiError;
             console.error("Purchase Order save failed:", apiError.response?.data || error);
             toast.error(apiError.response?.data?.message || "Failed to save Purchase Order");
         }
     };
-
-    useEffect(() => {
-        if (!isSubmitting && refreshNextIdAfterSubmit.current) {
-            refreshNextIdAfterSubmit.current = false;
-            void fetchNextId();
-        }
-    }, [isSubmitting]);
 
     const debouncedId = useDebounce(values.id, 500);
     const purchaseOrderColumns: ViewAllColumn<PurchaseOrderRow>[] = [

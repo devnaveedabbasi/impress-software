@@ -122,7 +122,6 @@ export default function VendorBillPostingPage() {
     const [isIdLoading, setIsIdLoading] = useState(true);
     const [nextId, setNextId] = useState("");
     const skipNextIdLookup = useRef(false);
-    const refreshNextIdAfterSubmit = useRef(false);
 
     const [isInwardPickerOpen, setIsInwardPickerOpen] = useState(false);
     const [inwards, setInwards] = useState<InwardRow[]>([]);
@@ -303,26 +302,24 @@ export default function VendorBillPostingPage() {
                 : await api.put(`${VENDOR_BILLS}/${data.id}`, payload);
             toast.success(response.data.message || "Vendor bill saved successfully");
             setBills([]);
-            refreshNextIdAfterSubmit.current = isNewMode;
-            if (!isNewMode) {
-                // stay on the bill, with the amounts the server calculated
-                const bill = response.data.data;
-                reset(mapBillToForm(bill));
-                setDoc(mapBillToDoc(bill));
-                setIsEditing(false);
-            }
+            // The saved bill stays on the screen, with the amounts the server calculated (the New button starts the
+            // next one). Only the next number is read again, quietly.
+            const bill = response.data.data;
+            reset(mapBillToForm(bill));
+            setDoc(mapBillToDoc(bill));
+            setIsNewMode(false);
+            setIsEditing(false);
+            skipNextIdLookup.current = true;
+            void api
+                .get(`${VENDOR_BILLS}/next-id`, { params: { _ts: Date.now() } })
+                .then(({ data }) => setNextId(String(data.data.nextId)))
+                .catch(() => {
+                    skipNextIdLookup.current = false;
+                });
         } catch (error: unknown) {
             toast.error((error as ApiError).response?.data?.message || "Failed to save the vendor bill");
         }
     };
-
-    useEffect(() => {
-        if (!isSubmitting && refreshNextIdAfterSubmit.current) {
-            refreshNextIdAfterSubmit.current = false;
-            void fetchNextId();
-        }
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [isSubmitting]);
 
     // Approve = post the bill, it is locked afterwards
     const handleApprove = async () => {

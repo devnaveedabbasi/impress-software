@@ -14,6 +14,7 @@ import api from "@/lib/axios";
 import toast from "react-hot-toast";
 import { usePermissions } from "@/hooks/usePermissions";
 import { ViewAllModal, type ViewAllColumn } from "@/components/ui/ViewAllModal";
+import { PrintOptionsModal } from "@/components/print/PrintOptionsModal";
 import { InventoryPickerModal, type InventoryPickItem } from "@/components/ui/InventoryPickerModal";
 import { DealerPickerModal, type DealerPickItem } from "@/components/ui/DealerPickerModal";
 import { RowDeleteButton, deletableRowClassName } from "@/components/ui/RowDeleteButton";
@@ -82,6 +83,7 @@ const initialValues: RejectionReceivedFromDealerFormValues = {
 // The Claim Note No is the automatic id of the gate pass.
 export default function RejectionReceivedFromDealerPage() {
     const [isNewMode, setIsNewMode] = useState(true);
+    const [isPrintOpen, setIsPrintOpen] = useState(false);
     const [isEditing, setIsEditing] = useState(true);
     const [pickerRowIndex, setPickerRowIndex] = useState<number | null>(null);
     // Problems found in the item rows: which cell of which row is wrong and why
@@ -101,7 +103,6 @@ export default function RejectionReceivedFromDealerPage() {
     const [isRejectionReceivedsLoading, setIsRejectionReceivedsLoading] = useState(false);
     const [rejectionReceivedsError, setRejectionReceivedsError] = useState("");
     const skipNextIdLookup = useRef(false);
-    const refreshNextIdAfterSubmit = useRef(false);
 
     const {
         handleSubmit,
@@ -270,20 +271,27 @@ export default function RejectionReceivedFromDealerPage() {
                 setHasLoadedRejectionReceiveds(false);
                 await fetchAllRejectionReceiveds(false, true);
             }
-            refreshNextIdAfterSubmit.current = true;
+            // The saved document stays on the screen, so it can be printed right away (it does not jump to the next
+            // new one: the New button does that). Only the next number is read again, quietly.
+            const saved = response.data.data;
+            if (saved?.id) {
+                reset(mapReturnToForm(saved));
+                setIsNewMode(false);
+                setIsEditing(false);
+                skipNextIdLookup.current = true;
+                void api
+                    .get(`${REJECTION_RECEIVED_FROM_DEALER}/next-id`, { params: { _ts: Date.now() } })
+                    .then(({ data }) => setNextId(String(data.data.nextId)))
+                    .catch(() => {
+                        skipNextIdLookup.current = false;
+                    });
+            }
         } catch (error: unknown) {
             const apiError = error as ApiError;
             console.error("Rejection return save failed:", apiError.response?.data || error);
             toast.error(apiError.response?.data?.message || "Failed to save gate pass");
         }
     };
-
-    useEffect(() => {
-        if (!isSubmitting && refreshNextIdAfterSubmit.current) {
-            refreshNextIdAfterSubmit.current = false;
-            void fetchNextId();
-        }
-    }, [isSubmitting]);
 
     const debouncedId = useDebounce(values.id, 500);
     const returnColumns: ViewAllColumn<RejectionReceivedRow>[] = [
@@ -411,14 +419,6 @@ export default function RejectionReceivedFromDealerPage() {
     };
 
     const totalRej = values.items.reduce((sum, row) => sum + (Number(row.rej) || 0), 0);
-
-    const handlePrint = () => {
-        if (isNewMode || !values.id) {
-            toast.error("Open a saved gate pass first (enter its Claim Note No or use View All) to print it");
-            return;
-        }
-        window.open(`/print/rejection-received-slip?id=${values.id}`, "_blank");
-    };
 
     return (
         <section className="mx-auto mt-10 w-full max-w-5xl bg-form-bg p-6 shadow-sm sm:p-8">
@@ -710,9 +710,8 @@ export default function RejectionReceivedFromDealerPage() {
                         type="button"
                         variant="secondary"
                         shape="rounded"
-                        onClick={handlePrint}
-                        disabled={isSubmitting || isNewMode || !canView}
-                        title={isNewMode ? "Open a saved gate pass to print it" : "Print this gate pass"}
+                        onClick={() => setIsPrintOpen(true)}
+                        disabled={isSubmitting || !canView}
                         className="border border-zinc-400 bg-white px-6 hover:bg-zinc-50"
                     >
                         Print
@@ -731,6 +730,17 @@ export default function RejectionReceivedFromDealerPage() {
                 title={`Select Item${pickerRowIndex !== null ? ` (Row ${pickerRowIndex + 1})` : ""}`}
                 onClose={() => setPickerRowIndex(null)}
                 onSelect={handleItemSelect}
+            />
+
+            <PrintOptionsModal
+                isOpen={isPrintOpen}
+                onClose={() => setIsPrintOpen(false)}
+                entityName="Gate Passes"
+                printPath="/print/rejection-received-slip"
+                recordId={isNewMode ? null : values.id || null}
+                maxCode={Number(nextId) > 1 ? Number(nextId) - 1 : undefined}
+                itemWord="gate pass"
+                codeWord="number"
             />
 
             <ViewAllModal
