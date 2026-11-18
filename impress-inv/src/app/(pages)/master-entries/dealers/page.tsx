@@ -55,7 +55,7 @@ const initialValues: DealerFormValues = {
     provinceId: "",
     cityId: "",
     mobileNo: "",
-    opeaningBalance: "",
+    opeaningBalance: "0",
     dealarType: "single",
     NICNo: "",
 };
