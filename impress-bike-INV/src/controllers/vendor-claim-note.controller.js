@@ -7,7 +7,7 @@ import prisma, {
 } from "../config/prisma.js";
 
 // Vendor Claim Note: the claim of the rejected parts of a vendor. The id of the record is the Claim Note No. Every record is returned with its vendor and item rows.
-import { isPagedRequest, findPage } from "../utils/listQuery.js";
+import { isPagedRequest, findPage, pageOfRows } from "../utils/listQuery.js";
 
 const returnInclude = {
     vendor: { select: { id: true, vendorName: true } },
@@ -72,18 +72,45 @@ const getReceivedFromVendor = async (vendorId, excludeReturnId) => {
     });
     const nameById = new Map(inventories.map((item) => [item.id, item.itemName]));
 
-    // The rate of the claim: the rate of the latest PO of this vendor that has the item
-    const orders = await prisma.purchaseOrder.findMany({
-        where: { vendorId },
-        orderBy: { id: "desc" },
-        select: { code: true, rate: true },
+    // The rate of the claim = the rate the rejected parts were BOUGHT at: the rate of the item in the PO (or the
+    // approved rate of the quotation) of the inward where it was rejected. It does not follow a later price change.
+    // When the rejected quantity of an item comes from several inwards with different rates, the rate is the
+    // average of them, weighted by the rejected quantity (4 pcs at 30 and 6 pcs at 40 -> (4x30 + 6x40) / 10 = 36).
+    const rejectedLines = await prisma.inwardItem.findMany({
+        where: { ...vendorInwardWhere(vendorId), rejQty: { gt: 0 } },
+        select: {
+            inventoryId: true,
+            rejQty: true,
+            inventory: { select: { itemName: true } },
+            inward: {
+                select: {
+                    purchaseOrder: { select: { code: true, itemName: true, rate: true } },
+                    quotation: { select: { itemName: true, approvedRate: true } },
+                },
+            },
+        },
     });
-    const rateByItem = new Map();
-    for (const order of orders) {
-        order.code.forEach((inventoryId, index) => {
-            if (!rateByItem.has(inventoryId)) rateByItem.set(inventoryId, order.rate[index] || 0);
-        });
+    const sameName = (a, b) => String(a || "").trim().toLowerCase() === String(b || "").trim().toLowerCase();
+    const worthByItem = new Map(); // inventoryId -> { worth, qty }
+    for (const line of rejectedLines) {
+        const order = line.inward?.purchaseOrder;
+        const quotation = line.inward?.quotation;
+        let rate;
+        if (order) {
+            let index = order.code.findIndex((code) => code === line.inventoryId);
+            if (index < 0) index = order.itemName.findIndex((name) => sameName(name, line.inventory?.itemName));
+            if (index >= 0) rate = order.rate[index];
+        } else if (quotation) {
+            const index = quotation.itemName.findIndex((name) => sameName(name, line.inventory?.itemName));
+            if (index >= 0) rate = quotation.approvedRate[index];
+        }
+        if (!rate) continue;
+        const entry = worthByItem.get(line.inventoryId) || { worth: 0, qty: 0 };
+        entry.worth += rate * line.rejQty;
+        entry.qty += line.rejQty;
+        worthByItem.set(line.inventoryId, entry);
     }
+    const rateByItem = new Map([...worthByItem].map(([inventoryId, entry]) => [inventoryId, Math.round(entry.worth / entry.qty)]));
 
     return received
         .filter((row) => (row._sum.rejQty || 0) > 0)
@@ -107,7 +134,9 @@ const getReceivedFromVendor = async (vendorId, excludeReturnId) => {
         .sort((a, b) => a.itemName.localeCompare(b.itemName));
 };
 
-const assertReceivedFromVendor = async (vendorId, items, excludeReturnId) => {
+// exact: a new claim is for ALL that is pending of an item (the form fills the qty, it is not typed)
+// Returns what is available per item (with its rate), so the caller can set the rate and amount itself.
+const assertReceivedFromVendor = async (vendorId, items, excludeReturnId, { exact = false } = {}) => {
     const available = new Map((await getReceivedFromVendor(vendorId, excludeReturnId)).map((row) => [row.inventoryId, row]));
     const names = new Map(
         (await prisma.inventory.findMany({ where: { id: { in: items.map((item) => item.inventoryId) } }, select: { id: true, itemName: true } })).map(
@@ -119,12 +148,24 @@ const assertReceivedFromVendor = async (vendorId, items, excludeReturnId) => {
         const name = names.get(item.inventoryId) || `Item #${item.inventoryId}`;
         const row = available.get(item.inventoryId);
         if (!row) problems.push(`"${name}" has no rejected quantity from this vendor`);
-        else if (item.rej > row.maxQty) {
+        else if (exact && item.rej !== row.maxQty) {
+            problems.push(`"${name}": the quantity must be ${row.maxQty} (all the rejected quantity not yet claimed)`);
+        } else if (!row.rate) {
+            problems.push(`"${name}": no purchase rate was found for it in the PO of its inward`);
+        } else if (item.rej > row.maxQty) {
             problems.push(`"${name}": only ${row.maxQty} can be returned (rejected ${row.rejectedQty}, already returned ${row.returnedQty})`);
         }
     }
     if (problems.length > 0) throw new ApiError(400, problems.join(". "));
+    return available;
 };
+
+// The rate and the amount of every row are worked out here (what the form sends for them is not used)
+const withServerRates = (items, available) =>
+    items.map((item) => {
+        const rate = available.get(item.inventoryId).rate;
+        return { ...item, rate, amount: item.rej * rate };
+    });
 
 // Items received from a vendor, for the Vendor Claim Note form
 const getReceivedItems = asyncHandler(async (req, res) => {
@@ -132,6 +173,11 @@ const getReceivedItems = asyncHandler(async (req, res) => {
     if (!Number.isInteger(vendorId) || vendorId < 1) throw new ApiError(400, "Please select a vendor");
     const excludeId = Number(req.query.excludeId);
     const rows = await getReceivedFromVendor(vendorId, Number.isInteger(excludeId) && excludeId > 0 ? excludeId : undefined);
+    if (isPagedRequest(req)) {
+        // the picker: only what is still pending, a page at a time (the row id is the item id)
+        const pending = rows.filter((row) => row.maxQty > 0).map((row) => ({ ...row, id: row.inventoryId }));
+        return res.status(200).json(new ApiResponse(200, pageOfRows(pending, req, (row) => row.itemName), "Received items fetched successfully"));
+    }
     return res.status(200).json(new ApiResponse(200, rows, "Received items fetched successfully"));
 });
 
@@ -176,7 +222,7 @@ const getByIdVendorClaimNote = asyncHandler(async (req, res) => {
 
 const createVendorClaimNote = asyncHandler(async (req, res) => {
     const { date, vendorId, address, contactNo, saleTaxNo, transport, builtyNo, bookNo, receivedBy, saleTaxPercent, stInvNo } = req.body;
-    const items = normalizeItems(req.body.items);
+    let items = normalizeItems(req.body.items);
 
     console.log(
         `[VendorClaimNote] Creating Return for vendor ${vendorId} in ${getActiveDatabaseName().toUpperCase()} database`
@@ -184,7 +230,7 @@ const createVendorClaimNote = asyncHandler(async (req, res) => {
 
     await assertVendorExists(Number(vendorId));
     await assertInventoryExists(items);
-    await assertReceivedFromVendor(Number(vendorId), items);
+    items = withServerRates(items, await assertReceivedFromVendor(Number(vendorId), items, undefined, { exact: true }));
 
     // Sync PostgreSQL auto-increment sequences
     await syncSequence("VendorClaimNote");
@@ -240,10 +286,10 @@ const updateVendorClaimNote = asyncHandler(async (req, res) => {
     }
     if (body.saleTaxPercent !== undefined) data.saleTaxPercent = Number(body.saleTaxPercent);
 
-    const items = body.items !== undefined ? normalizeItems(body.items) : null;
+    let items = body.items !== undefined ? normalizeItems(body.items) : null;
     if (items) {
         await assertInventoryExists(items);
-        await assertReceivedFromVendor(Number(data.vendorId ?? existing.vendorId), items, returnId);
+        items = withServerRates(items, await assertReceivedFromVendor(Number(data.vendorId ?? existing.vendorId), items, returnId));
         await syncSequence("VendorClaimNoteItem");
     }
 

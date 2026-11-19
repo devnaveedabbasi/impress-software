@@ -39,9 +39,10 @@ function ClaimNoteSlipBody({ record }: { record: SlipClaimNote }) {
     const totalRej = record.items.reduce((sum, item) => sum + item.rej, 0);
     // Value of the claim: the amount of every row, then the sales tax
     const valueExcl = record.items.reduce((sum, item) => sum + (item.amount || item.rej * item.rate), 0);
-    const salesTaxValue = Math.round((valueExcl * (record.saleTaxPercent || 0)) / 100);
-    const valueIncl = valueExcl + salesTaxValue;
-    const num = (value: number) => value.toLocaleString();
+    // The exact amount, to the paisa (4% of 20 is 0.8); the whole rupees x the whole percent never have more than two decimals
+    const salesTaxValue = Math.round(valueExcl * (record.saleTaxPercent || 0)) / 100;
+    const valueIncl = Math.round((valueExcl + salesTaxValue) * 100) / 100;
+    const num = (value: number) => value.toLocaleString(undefined, { maximumFractionDigits: 2 });
 
     return (
         <div className="mx-auto mb-6 max-w-4xl bg-white p-8 text-black print:mb-0 print:p-0">

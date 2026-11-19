@@ -61,7 +61,8 @@ export default function AddUserPage() {
     const refreshList = useRefreshMasterList("users");
     const { fetchOne, prefetchNear } = useMasterRecord("users", USERS);
     const [users, setUsers] = useState<UserRow[]>([]);
-    const skipNextIdLookup = useRef(false);
+    // when (a time) the next id lookup should be skipped: set right before the form is filled by itself (after a Save / New)
+    const skipNextIdLookup = useRef(0);
 
     const [searchQuery, setSearchQuery] = useState("");
     const debouncedSearchQuery = useDebounce(searchQuery, 300);
@@ -107,7 +108,7 @@ export default function AddUserPage() {
             });
             const fetchedNextId = String(data.data.nextId);
             setNextId(fetchedNextId);
-            skipNextIdLookup.current = true;
+            skipNextIdLookup.current = Date.now();
             reset({ ...initialValues, id: fetchedNextId });
             setIsNewMode(true);
             setIsEditing(true);
@@ -200,12 +201,12 @@ export default function AddUserPage() {
             setValue("password", ""); // the password is never kept on the screen
             setIsNewMode(false);
             setIsEditing(false);
-            skipNextIdLookup.current = true;
+            skipNextIdLookup.current = Date.now();
             void api
                 .get(`${USERS}/next-id`, { params: { _ts: Date.now() } })
                 .then(({ data }) => setNextId(String(data.data.nextId)))
                 .catch(() => {
-                    skipNextIdLookup.current = false;
+                    skipNextIdLookup.current = 0;
                 });
         } catch (error: unknown) {
             const apiError = error as ApiError;
@@ -225,9 +226,13 @@ export default function AddUserPage() {
     useEffect(() => {
         const fetchDebouncedId = async () => {
             if (!debouncedId) return;
+            // The skip is only for the lookup that follows right after a Save / New. When the id did not change, nothing runs
+            // that lookup and the mark stays: it must not swallow a lookup the user asks for later (going back to the
+            // previous record would show nothing until the second try).
             if (skipNextIdLookup.current) {
-                skipNextIdLookup.current = false;
-                return;
+                const isRecent = Date.now() - skipNextIdLookup.current < 2500;
+                skipNextIdLookup.current = 0;
+                if (isRecent) return;
             }
 
             const resetToNextId = () => {
@@ -263,7 +268,6 @@ export default function AddUserPage() {
                 reset(mapUserToForm(u));
                 setIsNewMode(false);
                 setIsEditing(false);
-                toast.success("User found");
             } catch (error: unknown) {
                 const apiError = error as ApiError;
                 toast.error(
@@ -499,6 +503,7 @@ export default function AddUserPage() {
                         <span className="text-[14px] text-zinc-900 font-normal whitespace-nowrap">
                             Extra Permissions
                         </span>
+                        <span className="text-xs text-zinc-500">(optional)</span>
                         {isSelfUpdate && (
                             <span className="text-xs text-red-500 font-medium ml-2">
                                 (You cannot modify your own role or permissions)

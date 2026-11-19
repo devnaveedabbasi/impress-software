@@ -130,7 +130,9 @@ export const inwardDocumentEntries = (doc: Record<string, string | number | null
 
 export const formatDate = (value: string | number | null | undefined) =>
   value ? new Date(value).toISOString().split("T")[0] : "-";
-export const formatNumber = (value: string | number | null | undefined) => Number(value ?? 0).toLocaleString();
+// A number as it is, up to two decimals (money is shown exactly, to the paisa: 0.8 stays 0.8)
+export const formatNumber = (value: string | number | null | undefined) =>
+  Number(value ?? 0).toLocaleString(undefined, { maximumFractionDigits: 2 });
 
 export type Column = { header: string; align?: "left" | "center"; render: (row: ReportRow) => string };
 

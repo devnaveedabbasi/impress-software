@@ -63,6 +63,48 @@ const writeMovements = (tx, inward, userId) =>
 const toNullableNumber = (value) =>
     value === undefined || value === null || value === "" || Number(value) === 0 ? null : Number(value);
 
+// An inward AGAINST A PO can only receive the items of that PO, and for every item not more than is still to come
+// (ordered - already received in the other inwards of the same PO). The form shows the same limits; the server makes
+// sure of them, because the "PO Bal Qty" of a row is sent by the form and cannot be trusted.
+const assertAgainstPo = async ({ Type, purchaseOrderId }, items, excludeInwardId) => {
+    if (Type !== "againstPO") return;
+    const poId = toNullableNumber(purchaseOrderId);
+    if (!poId) return;
+
+    const po = await prisma.purchaseOrder.findUnique({ where: { id: poId }, select: { id: true, code: true, quantity: true } });
+    if (!po) throw new ApiError(400, `Purchase Order #${poId} not found`);
+
+    const ordered = new Map();
+    po.code.forEach((inventoryId, index) => ordered.set(inventoryId, (ordered.get(inventoryId) || 0) + (po.quantity[index] || 0)));
+
+    const received = await prisma.inwardItem.groupBy({
+        by: ["inventoryId"],
+        where: { inward: { purchaseOrderId: poId, ...(excludeInwardId ? { id: { not: excludeInwardId } } : {}) } },
+        _sum: { recQty: true },
+    });
+    const receivedBy = new Map(received.map((row) => [row.inventoryId, row._sum.recQty || 0]));
+
+    const names = new Map(
+        (await prisma.inventory.findMany({ where: { id: { in: items.map((item) => item.inventoryId) } }, select: { id: true, itemName: true } })).map(
+            (item) => [item.id, item.itemName]
+        )
+    );
+
+    const problems = [];
+    for (const item of items) {
+        const name = names.get(item.inventoryId) || `Item #${item.inventoryId}`;
+        if (!ordered.has(item.inventoryId)) {
+            problems.push(`"${name}" is not in PO #${poId}`);
+            continue;
+        }
+        const balance = Math.max(ordered.get(item.inventoryId) - (receivedBy.get(item.inventoryId) || 0), 0);
+        if (item.recQty > balance) {
+            problems.push(`"${name}": Rec Qty (${item.recQty}) is more than what is left of PO #${poId} (${balance})`);
+        }
+    }
+    if (problems.length > 0) throw new ApiError(400, problems.join(". "));
+};
+
 const getAllInwards = asyncHandler(async (req, res) => {
     if (isPagedRequest(req)) {
         const page = await findPage(prisma.inward, req, {
@@ -106,6 +148,7 @@ const createInward = asyncHandler(async (req, res) => {
     );
 
     await assertInventoryExists(items);
+    await assertAgainstPo({ Type, purchaseOrderId }, items);
 
     const client = getActiveDatabaseClient();
 
@@ -171,7 +214,17 @@ const updateInward = asyncHandler(async (req, res) => {
     if (body.detail !== undefined) data.detail = body.detail;
 
     const items = body.items !== undefined ? normalizeItems(body.items) : null;
-    if (items) await assertInventoryExists(items);
+    if (items) {
+        await assertInventoryExists(items);
+        await assertAgainstPo(
+            {
+                Type: body.Type ?? existingInward.Type,
+                purchaseOrderId: body.purchaseOrderId !== undefined ? body.purchaseOrderId : existingInward.purchaseOrderId,
+            },
+            items,
+            inwardId
+        );
+    }
 
     const inward = await getActiveDatabaseClient().$transaction(async (tx) => {
         await tx.inward.update({ where: { id: inwardId }, data });

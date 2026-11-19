@@ -14,7 +14,7 @@ import { REJECTION_RETURN_TO_VENDOR } from "@/utlis/apiRoutes";
 import api from "@/lib/axios";
 import toast from "react-hot-toast";
 import { usePermissions } from "@/hooks/usePermissions";
-import { ViewAllModal, type ViewAllColumn } from "@/components/ui/ViewAllModal";
+import type { ViewAllColumn } from "@/components/ui/ViewAllModal";
 import { InfiniteViewAllModal, useRefreshMasterList } from "@/components/ui/InfiniteViewAllModal";
 import { useMasterRecord } from "@/hooks/useMasterRecord";
 import { PrintOptionsModal } from "@/components/print/PrintOptionsModal";
@@ -118,7 +118,8 @@ export default function RejectionReturnToVendorPage() {
     const refreshList = useRefreshMasterList("rejection-returns");
     const { fetchOne, prefetchNear } = useMasterRecord("rejection-returns", REJECTION_RETURN_TO_VENDOR);
     const [rejectionReturns, setRejectionReturns] = useState<RejectionReturnRow[]>([]);
-    const skipNextIdLookup = useRef(false);
+    // when (a time) the next id lookup should be skipped: set right before the form is filled by itself (after a Save / New)
+    const skipNextIdLookup = useRef(0);
 
     const {
         handleSubmit,
@@ -155,7 +156,7 @@ export default function RejectionReturnToVendorPage() {
             });
             const fetchedNextId = String(data.data.nextId);
             setNextId(fetchedNextId);
-            skipNextIdLookup.current = true;
+            skipNextIdLookup.current = Date.now();
             reset(freshForm(fetchedNextId));
             setIsNewMode(true);
             setIsEditing(true);
@@ -296,12 +297,12 @@ export default function RejectionReturnToVendorPage() {
                 reset(mapReturnToForm(saved));
                 setIsNewMode(false);
                 setIsEditing(false);
-                skipNextIdLookup.current = true;
+                skipNextIdLookup.current = Date.now();
                 void api
                     .get(`${REJECTION_RETURN_TO_VENDOR}/next-id`, { params: { _ts: Date.now() } })
                     .then(({ data }) => setNextId(String(data.data.nextId)))
                     .catch(() => {
-                        skipNextIdLookup.current = false;
+                        skipNextIdLookup.current = 0;
                     });
             }
         } catch (error: unknown) {
@@ -322,9 +323,13 @@ export default function RejectionReturnToVendorPage() {
     useEffect(() => {
         const fetchDebouncedId = async () => {
             if (!debouncedId) return;
+            // The skip is only for the lookup that follows right after a Save / New. When the id did not change, nothing runs
+            // that lookup and the mark stays: it must not swallow a lookup the user asks for later (going back to the
+            // previous record would show nothing until the second try).
             if (skipNextIdLookup.current) {
-                skipNextIdLookup.current = false;
-                return;
+                const isRecent = Date.now() - skipNextIdLookup.current < 2500;
+                skipNextIdLookup.current = 0;
+                if (isRecent) return;
             }
 
             const resetToNextId = () => {
@@ -506,7 +511,8 @@ export default function RejectionReturnToVendorPage() {
             ...currentItems[pickerRowIndex],
             inventoryId: String(item.inventoryId),
             itemName: item.itemName,
-            rej: currentItems[pickerRowIndex].rej || String(item.maxQty),
+            // the qty is not typed: it is all the rejected quantity of this item that is not returned yet
+            rej: String(item.maxQty),
         };
         setValue("items", currentItems, { shouldDirty: true, shouldValidate: true });
         setPickerRowIndex(null);
@@ -718,12 +724,13 @@ export default function RejectionReturnToVendorPage() {
                                             type="text"
                                             inputMode="numeric"
                                             maxLength={7}
-                                            placeholder="1+"
                                             value={row.rej ?? ""}
-                                            onChange={(e) => updateItemRow(index, "rej", e.target.value)}
+                                            readOnly
+                                            tabIndex={-1}
+                                            title="Qty comes by itself: all the rejected quantity of this item that is not returned yet. It cannot be typed."
                                             disabled={!isEditing}
                                             data-row-error={rowErrors[index]?.field === "rej" ? "true" : undefined}
-                                            className={`w-full bg-transparent px-2 py-1.5 text-center text-[13px] outline-none disabled:bg-[#f3f4f6] ${rowErrors[index]?.field === "rej" ? "ring-2 ring-inset ring-red-400" : ""}`}
+                                            className={`w-full bg-transparent px-2 py-1.5 text-center text-[13px] font-medium text-zinc-600 outline-none disabled:bg-[#f3f4f6] ${rowErrors[index]?.field === "rej" ? "ring-2 ring-inset ring-red-400" : ""}`}
                                         />
                                     </td>
                                     <td className="relative p-0">
@@ -841,11 +848,12 @@ export default function RejectionReturnToVendorPage() {
                 codeWord="number"
             />
 
-            <ViewAllModal
-                key={pickerRowIndex !== null ? "item-open" : "item-closed"}
+            <InfiniteViewAllModal<ReceivedItem>
                 isOpen={pickerRowIndex !== null}
                 title={`Rejected items of ${values.vendorName || "the vendor"}${pickerRowIndex !== null ? ` (Row ${pickerRowIndex + 1})` : ""}`}
-                rows={receivedItems.filter((item) => item.maxQty > 0)}
+                endpoint={`${REJECTION_RETURN_TO_VENDOR}/received-items`}
+                name="rejection-returns"
+                extraParams={{ vendorId: values.vendorId, excludeId: isNewMode ? undefined : values.id }}
                 columns={[
                     { key: "inventoryId", header: "Code" },
                     { key: "itemName", header: "Item Name" },
@@ -853,11 +861,8 @@ export default function RejectionReturnToVendorPage() {
                     { key: "returnedQty", header: "Returned" },
                     { key: "maxQty", header: "Can Return" },
                 ] as ViewAllColumn<ReceivedItem>[]}
-                searchKeys={["inventoryId", "itemName"]}
-                // the rejected items of ONE vendor (a short list): all of it scrolls, no pages of 8
-                pageSize={1000}
-                isLoading={isReceivedLoading}
-                error=""
+                hideActions
+                emptyMessage="No rejected items are pending for this vendor."
                 onClose={() => setPickerRowIndex(null)}
                 onRowSelect={handleItemSelect}
             />

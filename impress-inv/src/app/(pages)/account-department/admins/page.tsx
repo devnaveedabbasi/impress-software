@@ -61,7 +61,8 @@ export default function AdminsPage() {
     const [isViewAllOpen, setIsViewAllOpen] = useState(false);
     const refreshList = useRefreshMasterList("admins");
     const { fetchOne, prefetchNear } = useMasterRecord("admins", ADMINS);
-    const skipNextIdLookup = useRef(false);
+    // when (a time) the next id lookup should be skipped: set right before the form is filled by itself (after a Save / New)
+    const skipNextIdLookup = useRef(0);
 
     const [searchQuery, setSearchQuery] = useState("");
     const debouncedSearchQuery = useDebounce(searchQuery, 300);
@@ -190,7 +191,7 @@ export default function AdminsPage() {
             const { data } = await api.get(`${ADMINS}/next-id`, { params: { _ts: Date.now() } });
             const fetchedNextId = String(data.data.nextId);
             setNextId(fetchedNextId);
-            skipNextIdLookup.current = true;
+            skipNextIdLookup.current = Date.now();
             reset({ ...initialValues, id: fetchedNextId });
             setIsNewMode(true);
             setIsEditing(true);
@@ -250,12 +251,12 @@ export default function AdminsPage() {
             setValue("password", ""); // the password is never kept on the screen
             setIsNewMode(false);
             setIsEditing(false);
-            skipNextIdLookup.current = true;
+            skipNextIdLookup.current = Date.now();
             void api
                 .get(`${ADMINS}/next-id`, { params: { _ts: Date.now() } })
                 .then(({ data }) => setNextId(String(data.data.nextId)))
                 .catch(() => {
-                    skipNextIdLookup.current = false;
+                    skipNextIdLookup.current = 0;
                 });
         } catch (error: unknown) {
             const apiError = error as ApiError;
@@ -274,9 +275,13 @@ export default function AdminsPage() {
     useEffect(() => {
         const lookup = async () => {
             if (!debouncedId || !isSuperAdmin) return;
+            // The skip is only for the lookup that follows right after a Save / New. When the id did not change, nothing runs
+            // that lookup and the mark stays: it must not swallow a lookup the user asks for later (going back to the
+            // previous record would show nothing until the second try).
             if (skipNextIdLookup.current) {
-                skipNextIdLookup.current = false;
-                return;
+                const isRecent = Date.now() - skipNextIdLookup.current < 2500;
+                skipNextIdLookup.current = 0;
+                if (isRecent) return;
             }
 
             const resetToNextId = () => {
@@ -302,7 +307,6 @@ export default function AdminsPage() {
                 reset(mapAdminToForm(found));
                 setIsNewMode(false);
                 setIsEditing(false);
-                toast.success("Admin found");
             } catch {
                 toast.error("Admin not found");
                 resetToNextId();

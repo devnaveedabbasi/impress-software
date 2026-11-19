@@ -9,11 +9,8 @@ export const vendorBillIdSchema = z.object({ params: z.object({ id }) });
 const billFields = {
     stInvNo: codeText("S.Tax Inv No").min(1, "S.Tax Inv No is required"),
     stInvDate: pastOrTodayDate,
-    saleTaxPercent: z.coerce
-        .number({ error: "Sales Tax rate is required" })
-        .int("Sales Tax rate must be a whole number")
-        .min(0, "Sales Tax rate cannot be negative")
-        .max(100, "Sales Tax rate cannot be more than 100"),
+    // The Sale Tax % comes from the PO, the server takes it from there (a value sent here is not used)
+    saleTaxPercent: z.coerce.number().int().min(0).max(100).optional(),
 };
 
 export const createVendorBillSchema = z.object({

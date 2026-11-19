@@ -153,7 +153,10 @@ export function ViewAllModal<T extends Record<string, unknown>>({
                     className={onRowSelect ? "cursor-pointer hover:bg-primary-50" : ""}
                   >
                     {columns.map((column) => (
-                      <td key={column.key} className="border-b border-zinc-100 px-4 py-3 text-zinc-800">
+                      <td
+                        key={column.key}
+                        className={`border-b border-zinc-100 px-4 py-3 text-zinc-800 ${/mail/i.test(column.key) ? "normal-case" : ""}`}
+                      >
                         {column.render ? column.render(row) : String(row[column.key] ?? "-")}
                       </td>
                     ))}

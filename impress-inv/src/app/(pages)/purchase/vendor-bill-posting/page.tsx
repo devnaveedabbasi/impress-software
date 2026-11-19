@@ -80,7 +80,8 @@ const emptyDoc: BillDoc = {
 const today = () => new Date().toISOString().split("T")[0];
 const initialValues: VendorBillFormValues = { id: "", inwardId: "", stInvNo: "", stInvDate: today(), saleTaxPercent: "" };
 
-const fmt = (value: number) => value.toLocaleString();
+// money is shown exactly, to the paisa (0.8 stays 0.8; never more than two decimals)
+const fmt = (value: number) => Number(value).toLocaleString(undefined, { maximumFractionDigits: 2 });
 const fmtDate = (value: string | null) => (value ? new Date(value).toLocaleDateString("en-GB") : "");
 const TYPE_LABELS: Record<string, string> = {
     againstPO: "Against PO",
@@ -94,10 +95,12 @@ const periodLabel = (date: string) => {
     return Number.isNaN(d.getTime()) ? "" : d.toLocaleDateString("en-GB", { month: "short", year: "numeric", timeZone: "UTC" });
 };
 // The same sum the server makes: sales tax of a line = excl amount x rate / 100, rounded
+// Exact to the paisa (4% of 20 is 0.8): the whole rupees x the whole percent never have more than two decimals
+const round2 = (value: number) => Math.round(value * 100) / 100;
 const lineAmounts = (line: BillLine, percent: number) => {
     const excl = line.okQty * line.rate;
-    const gst = Math.round((excl * percent) / 100);
-    return { excl, gst, incl: excl + gst };
+    const gst = round2((excl * percent) / 100);
+    return { excl, gst, incl: round2(excl + gst) };
 };
 
 const MIN_ROWS = 10;
@@ -124,7 +127,8 @@ export default function VendorBillPostingPage() {
 
     const [isIdLoading, setIsIdLoading] = useState(true);
     const [nextId, setNextId] = useState("");
-    const skipNextIdLookup = useRef(false);
+    // when (a time) the next id lookup should be skipped: set right before the form is filled by itself (after a Save / New)
+    const skipNextIdLookup = useRef(0);
 
     const [isInwardPickerOpen, setIsInwardPickerOpen] = useState(false);
     const [isPreviewLoading, setIsPreviewLoading] = useState(false);
@@ -158,7 +162,7 @@ export default function VendorBillPostingPage() {
     const totals = doc.items.reduce(
         (sum, line) => {
             const amounts = lineAmounts(line, percent);
-            return { excl: sum.excl + amounts.excl, gst: sum.gst + amounts.gst, incl: sum.incl + amounts.incl };
+            return { excl: sum.excl + amounts.excl, gst: round2(sum.gst + amounts.gst), incl: round2(sum.incl + amounts.incl) };
         },
         { excl: 0, gst: 0, incl: 0 }
     );
@@ -174,7 +178,7 @@ export default function VendorBillPostingPage() {
             const { data } = await api.get(`${VENDOR_BILLS}/next-id`, { params: { _ts: Date.now() } });
             const fetched = String(data.data.nextId);
             setNextId(fetched);
-            skipNextIdLookup.current = true;
+            skipNextIdLookup.current = Date.now();
             reset(freshForm(fetched));
             setDoc(emptyDoc);
             setIsNewMode(true);
@@ -231,10 +235,12 @@ export default function VendorBillPostingPage() {
         setIsPreviewLoading(true);
         try {
             const { data } = await api.get(`${VENDOR_BILLS}/preview`, {
-                params: { inwardId: inward.id, saleTaxPercent: percent, _ts: Date.now() },
+                params: { inwardId: inward.id, _ts: Date.now() },
             });
             const preview = data.data;
             setValue("inwardId", String(inward.id), { shouldDirty: true, shouldValidate: true });
+            // the Sale Tax % is the one of the PO (decided when the order was made)
+            setValue("saleTaxPercent", String(preview.saleTaxPercent ?? 0), { shouldDirty: true, shouldValidate: true });
             setDoc({ ...mapBillToDoc({ ...preview, status: "" }), status: "" });
         } catch (error: unknown) {
             toast.error((error as ApiError).response?.data?.message || "Failed to load the inward");
@@ -285,12 +291,12 @@ export default function VendorBillPostingPage() {
             setDoc(mapBillToDoc(bill));
             setIsNewMode(false);
             setIsEditing(false);
-            skipNextIdLookup.current = true;
+            skipNextIdLookup.current = Date.now();
             void api
                 .get(`${VENDOR_BILLS}/next-id`, { params: { _ts: Date.now() } })
                 .then(({ data }) => setNextId(String(data.data.nextId)))
                 .catch(() => {
-                    skipNextIdLookup.current = false;
+                    skipNextIdLookup.current = 0;
                 });
         } catch (error: unknown) {
             toast.error((error as ApiError).response?.data?.message || "Failed to save the vendor bill");
@@ -323,9 +329,13 @@ export default function VendorBillPostingPage() {
     useEffect(() => {
         const lookup = async () => {
             if (!debouncedId) return;
+            // The skip is only for the lookup that follows right after a Save / New. When the id did not change, nothing runs
+            // that lookup and the mark stays: it must not swallow a lookup the user asks for later (going back to the
+            // previous record would show nothing until the second try).
             if (skipNextIdLookup.current) {
-                skipNextIdLookup.current = false;
-                return;
+                const isRecent = Date.now() - skipNextIdLookup.current < 2500;
+                skipNextIdLookup.current = 0;
+                if (isRecent) return;
             }
             const resetToNextId = () => {
                 reset(freshForm(nextId));
@@ -406,10 +416,15 @@ export default function VendorBillPostingPage() {
                 noValidate
                 className="space-y-4"
             >
+                <div className="flex items-center gap-3 pt-1">
+                    <span className="whitespace-nowrap text-[14px] font-normal text-zinc-900">Bill</span>
+                    <div className="h-px flex-1 bg-zinc-400" />
+                </div>
                 <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                    {/* The number of this bill (it comes by itself); type a number here to open an old bill */}
                     <LabeledField
                         type={isIdLoading ? "text" : "number"}
-                        label="Head Code"
+                        label="Bill #"
                         value={isIdLoading ? "Loading..." : values.id || ""}
                         onChange={(event) => {
                             if (/^\d*$/.test(event.target.value)) setValue("id", event.target.value, { shouldDirty: true });
@@ -419,8 +434,24 @@ export default function VendorBillPostingPage() {
                         min={1}
                         max={Number(nextId) || 1}
                     />
-                    <LabeledField label="Date" value={fmtDate(doc.date)} readOnly disabled />
-                    {/* Click to choose the inward: only inwards against a PO without a bill are listed */}
+                    {/* The status of the bill. Approved posts it (and locks it), the date of the approval is filled in. */}
+                    <LabeledSelect
+                        label="Status"
+                        options={STATUS_OPTIONS}
+                        value={doc.status || "DRAFT"}
+                        onChange={(value) => setDoc((current) => ({ ...current, status: value as BillDoc["status"] }))}
+                        disabled={!isEditing || isNewMode || isLocked}
+                    />
+                    <LabeledField label="Approved Date" value={fmtDate(doc.approvedDate)} readOnly disabled />
+                </div>
+
+                <div className="flex items-center gap-3 pt-1">
+                    <span className="whitespace-nowrap text-[14px] font-normal text-zinc-900">Inward (from the Quality Control)</span>
+                    <div className="h-px flex-1 bg-zinc-400" />
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                    {/* Click to choose the inward: only inwards against a PO without a bill are listed. The rest of this
+                        group is filled in by itself from the inward. */}
                     <LabeledField
                         label="QC #"
                         value={values.inwardId}
@@ -438,19 +469,25 @@ export default function VendorBillPostingPage() {
                         disabled={!isEditing || !isNewMode || isPreviewLoading}
                         className={isEditing && isNewMode ? "cursor-pointer hover:bg-primary-50" : ""}
                     />
-                    <LabeledField label="PO #" value={doc.purchaseOrderId ?? ""} readOnly disabled />
-                    <LabeledField label="Vendor" value={doc.vendorName} readOnly disabled wrapperClassName="sm:col-span-2" />
-                    <LabeledField label="G.I.R.R #" value={doc.grirNo ?? ""} readOnly disabled />
-                    <LabeledField label="Type" value={TYPE_LABELS[doc.type] ?? ""} readOnly disabled />
-                    <LabeledField label="DC #" value={doc.dcNo ?? ""} readOnly disabled />
-                    {/* The number of this bill document (its id): it is not typed */}
+                    <LabeledField label="Inward Date" value={isPreviewLoading ? "Loading..." : fmtDate(doc.date)} readOnly disabled />
+                    <LabeledField label="Type" value={isPreviewLoading ? "Loading..." : TYPE_LABELS[doc.type] ?? ""} readOnly disabled />
+                    <LabeledField label="PO #" value={isPreviewLoading ? "Loading..." : doc.purchaseOrderId ?? ""} readOnly disabled />
                     <LabeledField
-                        label="Bill #"
-                        value={isIdLoading ? "" : values.id || ""}
+                        label="Vendor"
+                        value={isPreviewLoading ? "Loading..." : doc.vendorName}
                         readOnly
                         disabled
-                        title="The number of this bill (it comes automatically)"
+                        wrapperClassName="sm:col-span-2"
                     />
+                    <LabeledField label="G.R.I.R #" value={isPreviewLoading ? "Loading..." : doc.grirNo ?? ""} readOnly disabled />
+                    <LabeledField label="DC #" value={isPreviewLoading ? "Loading..." : doc.dcNo ?? ""} readOnly disabled />
+                </div>
+
+                <div className="flex items-center gap-3 pt-1">
+                    <span className="whitespace-nowrap text-[14px] font-normal text-zinc-900">Sales Tax Invoice of the vendor</span>
+                    <div className="h-px flex-1 bg-zinc-400" />
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                     <LabeledField
                         label="S.Tax Inv. #"
                         value={values.stInvNo}
@@ -469,44 +506,30 @@ export default function VendorBillPostingPage() {
                         disabled={!isEditing}
                     />
                     <LabeledField
-                        label="STax Rate"
-                        value={values.saleTaxPercent}
-                        onChange={(event) => {
-                            if (/^\d{0,3}$/.test(event.target.value)) {
-                                setValue("saleTaxPercent", event.target.value, { shouldDirty: true, shouldValidate: true });
-                            }
-                        }}
-                        inputMode="numeric"
-                        placeholder="e.g. 18"
+                        label="STax Rate %"
+                        value={isPreviewLoading ? "Loading..." : values.saleTaxPercent}
+                        readOnly
+                        disabled
+                        title="The Sale Tax % of the PO. It comes by itself, it cannot be typed."
                         error={errors.saleTaxPercent?.message}
-                        disabled={!isEditing}
                     />
                     <LabeledField label="Period" value={periodLabel(values.stInvDate)} readOnly disabled title="The month of the S.Tax Inv. Date" />
-                    {/* The status of the bill. Approved posts it (and locks it), the date of the approval is filled in. */}
-                    <LabeledSelect
-                        label="Status"
-                        options={STATUS_OPTIONS}
-                        value={doc.status || "DRAFT"}
-                        onChange={(value) => setDoc((current) => ({ ...current, status: value as BillDoc["status"] }))}
-                        disabled={!isEditing || isNewMode || isLocked}
-                    />
-                    <LabeledField label="Approved Date" value={fmtDate(doc.approvedDate)} readOnly disabled />
                 </div>
 
                 {/* Items: the table of the other pages */}
-                <div className="max-h-100 overflow-y-auto border border-zinc-400 bg-white">
-                    <table className="relative w-full table-fixed border-collapse bg-white text-sm text-black">
+                <div className="max-h-100 overflow-auto border border-zinc-400 bg-white">
+                    <table className="relative w-full min-w-[820px] table-fixed border-collapse bg-white text-sm text-black">
                         <thead className="sticky top-0 z-10 bg-white">
                             <tr className="border-b border-zinc-400">
-                                <th className="w-20 border-r border-zinc-400 px-2 py-1.5 text-center font-medium">Code</th>
+                                <th className="w-16 border-r border-zinc-400 px-2 py-1.5 text-center font-medium">Code</th>
                                 <th className="border-r border-zinc-400 px-2 py-1.5 text-center font-medium">Item Name</th>
-                                <th className="w-24 border-r border-zinc-400 px-2 py-1.5 text-center font-medium">Rec Qty</th>
-                                <th className="w-24 border-r border-zinc-400 px-2 py-1.5 text-center font-medium">Rej Qty</th>
-                                <th className="w-24 border-r border-zinc-400 px-2 py-1.5 text-center font-medium">OK Qty</th>
+                                <th className="w-20 border-r border-zinc-400 px-2 py-1.5 text-center font-medium">Rec Qty</th>
+                                <th className="w-20 border-r border-zinc-400 px-2 py-1.5 text-center font-medium">Rej Qty</th>
+                                <th className="w-20 border-r border-zinc-400 px-2 py-1.5 text-center font-medium">OK Qty</th>
                                 <th className="w-24 border-r border-zinc-400 px-2 py-1.5 text-center font-medium">PO Rate</th>
-                                <th className="w-32 border-r border-zinc-400 px-2 py-1.5 text-center font-medium">Excl. Amount</th>
-                                <th className="w-28 border-r border-zinc-400 px-2 py-1.5 text-center font-medium">GST Amt</th>
-                                <th className="w-32 px-2 py-1.5 text-center font-medium">Incl Amt</th>
+                                <th className="w-28 border-r border-zinc-400 px-2 py-1.5 text-center font-medium">Excl. Amt</th>
+                                <th className="w-24 border-r border-zinc-400 px-2 py-1.5 text-center font-medium">GST Amt</th>
+                                <th className="w-28 px-2 py-1.5 text-center font-medium">Incl Amt</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -524,7 +547,7 @@ export default function VendorBillPostingPage() {
                                     [amounts ? fmt(amounts.incl) : "", true],
                                 ];
                                 return (
-                                    <tr key={index}>
+                                    <tr key={index} className="border-b border-zinc-300 last:border-b-0 hover:bg-zinc-50">
                                         {cells.map(([value, center], column) => (
                                             <td key={column} className={column === cells.length - 1 ? "p-0" : "border-r border-zinc-300 p-0"}>
                                                 <input
@@ -545,16 +568,22 @@ export default function VendorBillPostingPage() {
                     </table>
                 </div>
 
-                <div className="flex flex-wrap items-center justify-end gap-4">
-                    <span className="text-sm text-zinc-700">
-                        Excl. Amount: <span className="font-semibold text-black">{fmt(totals.excl)}</span>
-                    </span>
-                    <span className="text-sm text-zinc-700">
-                        GST Amt: <span className="font-semibold text-black">{fmt(totals.gst)}</span>
-                    </span>
-                    <span className="text-sm text-zinc-700">
-                        Incl Amt: <span className="font-semibold text-black">{fmt(totals.incl)}</span>
-                    </span>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="text-xs text-zinc-500">Qty and rate come from the inward and the PO, they cannot be typed</span>
+                    <div className="flex flex-wrap items-center gap-4">
+                        <span className="text-sm text-zinc-700">
+                            Total OK Qty: <span className="font-semibold text-black">{fmt(doc.items.reduce((sum, line) => sum + line.okQty, 0))}</span>
+                        </span>
+                        <span className="text-sm text-zinc-700">
+                            Excl. Amount: <span className="font-semibold text-black">{fmt(totals.excl)}</span>
+                        </span>
+                        <span className="text-sm text-zinc-700">
+                            GST Amt: <span className="font-semibold text-black">{fmt(totals.gst)}</span>
+                        </span>
+                        <span className="text-sm text-zinc-700">
+                            Incl Amt: <span className="font-semibold text-black">{fmt(totals.incl)}</span>
+                        </span>
+                    </div>
                 </div>
 
                 <div className="flex flex-wrap items-center justify-center gap-3 pt-2">

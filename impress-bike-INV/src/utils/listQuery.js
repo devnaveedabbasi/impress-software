@@ -102,3 +102,17 @@ export const findPrintRows = async (delegate, req, { include } = {}) => {
     ]);
     return { items, total, truncated: total > PRINT_MAX };
 };
+
+// A page of a list that is already in memory (for example the rejected items of one vendor, worked out from several
+// tables). Every row has a numeric "id"; the page goes by id like the tables do. textOf(row) is what the search looks in.
+export const pageOfRows = (rows, req, textOf) => {
+    const { limit, cursor, q } = parseListQuery(req);
+    const needle = q.toLowerCase();
+    const matching = rows
+        .filter((row) => (cursor === null ? true : row.id > cursor))
+        .filter((row) => !needle || textOf(row).toLowerCase().includes(needle) || String(row.id) === needle)
+        .sort((a, b) => a.id - b.id);
+    const hasMore = matching.length > limit;
+    const items = hasMore ? matching.slice(0, limit) : matching;
+    return { items, hasMore, nextCursor: hasMore ? items[items.length - 1].id : null };
+};

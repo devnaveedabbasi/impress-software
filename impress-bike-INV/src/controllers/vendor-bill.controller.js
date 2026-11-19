@@ -41,8 +41,20 @@ const periodOf = (date) => {
     return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
 };
 
+// Money is shown exactly (to the paisa): 4% of 20 is 0.8, not 1. The amounts are whole rupees x a whole percent, so
+// the tax never has more than two decimals; round2 only removes the float noise (0.1 + 0.2).
+const round2 = (value) => Math.round(value * 100) / 100;
+const exactTax = (exclAmount, saleTaxPercent) => round2((exclAmount * saleTaxPercent) / 100);
+
+// The database keeps whole rupees for the tax and the total (its columns are whole numbers); what the screen and the
+// reports show is always worked out exactly from the amount and the percent (see toResponse and buildLines).
+const toStoredLine = (line) => ({ ...line, gstAmount: Math.round(line.gstAmount), inclAmount: Math.round(line.inclAmount) });
+const toStoredTotals = (totals) => ({ ...totals, gstAmount: Math.round(totals.gstAmount), inclAmount: Math.round(totals.inclAmount) });
+
 // The lines of the bill of an inward: OK qty x PO rate, with the sales tax. Only an inward against a PO has a rate.
-const buildLines = async (inwardId, saleTaxPercent) => {
+// saleTaxPercent: the rate to use. When it is not given, it is the Sale Tax % of the PO of the inward (it was decided
+// when the order was made, nobody types it again on the bill).
+const buildLines = async (inwardId, givenSaleTaxPercent) => {
     const inward = await prisma.inward.findUnique({
         where: { id: inwardId },
         include: {
@@ -56,6 +68,7 @@ const buildLines = async (inwardId, saleTaxPercent) => {
     }
 
     const po = inward.purchaseOrder;
+    const saleTaxPercent = givenSaleTaxPercent ?? po.saleTaxPercent ?? 0;
     const lines = inward.items.map((item) => {
         const index = po.code.indexOf(item.inventoryId);
         if (index === -1) {
@@ -63,7 +76,7 @@ const buildLines = async (inwardId, saleTaxPercent) => {
         }
         const rate = po.rate[index] || 0;
         const exclAmount = item.okQty * rate;
-        const gstAmount = Math.round((exclAmount * saleTaxPercent) / 100);
+        const gstAmount = exactTax(exclAmount, saleTaxPercent);
         return {
             inventoryId: item.inventoryId,
             recQty: item.recQty,
@@ -72,22 +85,27 @@ const buildLines = async (inwardId, saleTaxPercent) => {
             rate,
             exclAmount,
             gstAmount,
-            inclAmount: exclAmount + gstAmount,
+            inclAmount: round2(exclAmount + gstAmount),
         };
     });
     const totals = lines.reduce(
         (sum, line) => ({
             exclAmount: sum.exclAmount + line.exclAmount,
-            gstAmount: sum.gstAmount + line.gstAmount,
-            inclAmount: sum.inclAmount + line.inclAmount,
+            gstAmount: round2(sum.gstAmount + line.gstAmount),
+            inclAmount: round2(sum.inclAmount + line.inclAmount),
         }),
         { exclAmount: 0, gstAmount: 0, inclAmount: 0 }
     );
-    return { inward, lines, totals };
+    return { inward, lines, totals, saleTaxPercent };
 };
 
 const toResponse = (bill) => {
     const inward = bill.inward;
+    const lines = (bill.items || []).map((item) => {
+        const gstAmount = exactTax(item.exclAmount, bill.saleTaxPercent);
+        return { ...item, gstAmount, inclAmount: round2(item.exclAmount + gstAmount) };
+    });
+    const gstTotal = round2(lines.reduce((sum, line) => sum + line.gstAmount, 0));
     return {
         id: bill.id,
         inwardId: bill.inwardId,
@@ -106,9 +124,9 @@ const toResponse = (bill) => {
         status: bill.status,
         approvedDate: bill.approvedDate,
         exclAmount: bill.exclAmount,
-        gstAmount: bill.gstAmount,
-        inclAmount: bill.inclAmount,
-        items: (bill.items || []).map((item) => ({
+        gstAmount: gstTotal,
+        inclAmount: round2(bill.exclAmount + gstTotal),
+        items: lines.map((item) => ({
             inventoryId: item.inventoryId,
             itemName: item.inventory?.itemName || "",
             recQty: item.recQty,
@@ -196,8 +214,7 @@ const previewVendorBill = asyncHandler(async (req, res) => {
     const existing = await prisma.vendorBill.findUnique({ where: { inwardId }, select: { id: true } });
     if (existing) throw new ApiError(409, `Inward #${inwardId} already has bill #${existing.id}`);
 
-    const percent = Number(req.query.saleTaxPercent) || 0;
-    const { inward, lines, totals } = await buildLines(inwardId, percent);
+    const { inward, lines, totals, saleTaxPercent } = await buildLines(inwardId);
     const names = new Map(inward.items.map((item) => [item.inventoryId, item.inventory?.itemName || ""]));
     return res.status(200).json(
         new ApiResponse(
@@ -211,6 +228,7 @@ const previewVendorBill = asyncHandler(async (req, res) => {
                 grirNo: inward.GRIRNo,
                 dcNo: inward.DCNo,
                 type: inward.Type,
+                saleTaxPercent,
                 items: lines.map((line) => ({ ...line, itemName: names.get(line.inventoryId) || "" })),
                 ...totals,
             },
@@ -220,7 +238,7 @@ const previewVendorBill = asyncHandler(async (req, res) => {
 });
 
 const createVendorBill = asyncHandler(async (req, res) => {
-    const { inwardId, stInvNo, stInvDate, saleTaxPercent } = req.body;
+    const { inwardId, stInvNo, stInvDate } = req.body;
 
     console.log(
         `[VendorBill] Creating bill for inward ${inwardId} in ${getActiveDatabaseName().toUpperCase()} database`
@@ -229,7 +247,8 @@ const createVendorBill = asyncHandler(async (req, res) => {
     const existing = await prisma.vendorBill.findUnique({ where: { inwardId: Number(inwardId) }, select: { id: true } });
     if (existing) throw new ApiError(409, `Inward #${inwardId} already has bill #${existing.id}`);
 
-    const { lines, totals } = await buildLines(Number(inwardId), Number(saleTaxPercent));
+    // the Sale Tax % is the one of the PO; what the form sends for it is not used
+    const { lines, totals, saleTaxPercent } = await buildLines(Number(inwardId));
 
     await syncSequence("VendorBill");
     await syncSequence("VendorBillItem");
@@ -242,11 +261,11 @@ const createVendorBill = asyncHandler(async (req, res) => {
                 billNo: "",
                 stInvNo,
                 stInvDate: new Date(stInvDate),
-                saleTaxPercent: Number(saleTaxPercent),
+                saleTaxPercent,
                 period: periodOf(stInvDate),
-                ...totals,
+                ...toStoredTotals(totals),
                 createdById: req.user?.id,
-                items: { create: lines },
+                items: { create: lines.map(toStoredLine) },
             },
         });
         await tx.vendorBill.update({ where: { id: created.id }, data: { billNo: String(created.id) } });
@@ -265,7 +284,7 @@ const assertEditable = (bill, user) => {
 
 const updateVendorBill = asyncHandler(async (req, res) => {
     const id = Number(req.params.id);
-    const { stInvNo, stInvDate, saleTaxPercent } = req.body;
+    const { stInvNo, stInvDate } = req.body;
 
     const existing = await prisma.vendorBill.findUnique({ where: { id } });
     if (!existing) throw new ApiError(404, "Vendor bill not found");
@@ -276,7 +295,8 @@ const updateVendorBill = asyncHandler(async (req, res) => {
     const approving = status === "APPROVED";
 
     // The lines are taken again from the inward and the PO
-    const { lines, totals } = await buildLines(existing.inwardId, Number(saleTaxPercent));
+    // the Sale Tax % of the bill stays as it was saved (it came from the PO)
+    const { lines, totals } = await buildLines(existing.inwardId, existing.saleTaxPercent);
 
     await syncSequence("VendorBillItem");
     const bill = await getActiveDatabaseClient().$transaction(async (tx) => {
@@ -286,15 +306,14 @@ const updateVendorBill = asyncHandler(async (req, res) => {
             data: {
                 stInvNo,
                 stInvDate: new Date(stInvDate),
-                saleTaxPercent: Number(saleTaxPercent),
                 period: periodOf(stInvDate),
-                ...totals,
+                ...toStoredTotals(totals),
                 status,
                 // A bill that stays approved keeps the date (and the person) of its approval
                 approvedDate: approving ? (existing.status === "APPROVED" ? existing.approvedDate : new Date()) : null,
                 approvedById: approving ? (existing.status === "APPROVED" ? existing.approvedById : req.user?.id) : null,
                 updatedById: req.user?.id,
-                items: { create: lines },
+                items: { create: lines.map(toStoredLine) },
             },
         });
         return tx.vendorBill.findUnique({ where: { id }, include: billInclude });
@@ -320,12 +339,12 @@ const approveVendorBill = asyncHandler(async (req, res) => {
         await tx.vendorBill.update({
             where: { id },
             data: {
-                ...totals,
+                ...toStoredTotals(totals),
                 status: "APPROVED",
                 approvedDate: new Date(),
                 approvedById: req.user?.id,
                 updatedById: req.user?.id,
-                items: { create: lines },
+                items: { create: lines.map(toStoredLine) },
             },
         });
         return tx.vendorBill.findUnique({ where: { id }, include: billInclude });

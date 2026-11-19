@@ -68,6 +68,10 @@ type ApiError = {
 };
 
 const MIN_ROWS = 10;
+
+// money is shown exactly, to the paisa (0.8 stays 0.8, never more than two decimals)
+const round2 = (value: number) => Math.round(value * 100) / 100;
+const showMoney = (value: number) => value.toLocaleString(undefined, { maximumFractionDigits: 2 });
 const padRows = <T,>(rows: T[], makeRow: () => T): T[] => {
     const padded = [...rows];
     while (padded.length < MIN_ROWS) padded.push(makeRow());
@@ -137,7 +141,8 @@ export default function PurchaseOrderPage() {
     const refreshList = useRefreshMasterList("purchase-orders");
     const { fetchOne, prefetchNear } = useMasterRecord("purchase-orders", PURCHASE_ORDERS);
     const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrderRow[]>([]);
-    const skipNextIdLookup = useRef(false);
+    // when (a time) the next id lookup should be skipped: set right before the form is filled by itself (after a Save / New)
+    const skipNextIdLookup = useRef(0);
 
     const {
         handleSubmit,
@@ -184,7 +189,7 @@ export default function PurchaseOrderPage() {
             });
             const fetchedNextId = String(data.data.nextId);
             setNextId(fetchedNextId);
-            skipNextIdLookup.current = true;
+            skipNextIdLookup.current = Date.now();
             reset({
                 ...initialValues,
                 id: fetchedNextId,
@@ -321,12 +326,12 @@ export default function PurchaseOrderPage() {
             // Only the next number is read again, quietly, so a new record still gets the right number.
             setIsNewMode(false);
             setIsEditing(false);
-            skipNextIdLookup.current = true;
+            skipNextIdLookup.current = Date.now();
             void api
                 .get(`${PURCHASE_ORDERS}/next-id`, { params: { _ts: Date.now() } })
                 .then(({ data }) => setNextId(String(data.data.nextId)))
                 .catch(() => {
-                    skipNextIdLookup.current = false;
+                    skipNextIdLookup.current = 0;
                 });
         } catch (error: unknown) {
             const apiError = error as ApiError;
@@ -346,9 +351,13 @@ export default function PurchaseOrderPage() {
     useEffect(() => {
         const fetchDebouncedId = async () => {
             if (!debouncedId) return;
+            // The skip is only for the lookup that follows right after a Save / New. When the id did not change, nothing runs
+            // that lookup and the mark stays: it must not swallow a lookup the user asks for later (going back to the
+            // previous record would show nothing until the second try).
             if (skipNextIdLookup.current) {
-                skipNextIdLookup.current = false;
-                return;
+                const isRecent = Date.now() - skipNextIdLookup.current < 2500;
+                skipNextIdLookup.current = 0;
+                if (isRecent) return;
             }
 
             const resetToNextId = () => {
@@ -388,7 +397,6 @@ export default function PurchaseOrderPage() {
                 reset(mapPurchaseOrderToForm(po));
                 setIsNewMode(false);
                 setIsEditing(false);
-                toast.success("Purchase Order found");
             } catch (error: unknown) {
                 const apiError = error as ApiError;
                 toast.error(
@@ -547,20 +555,21 @@ export default function PurchaseOrderPage() {
     useEffect(() => {
         const total = (values.items || []).reduce((sum, row) => sum + (Number(row.amount) || 0), 0);
         const saleTaxPercent = Number(values.saleTaxPercent) || 0;
-        const saleTaxAmount = Math.round((total * saleTaxPercent) / 100);
-        const totalWithSaleTax = total + saleTaxAmount;
+        // Exact to the paisa (4% of 20 is 0.8, not 1); never more than two decimals
+        const saleTaxAmount = round2((total * saleTaxPercent) / 100);
+        const totalWithSaleTax = round2(total + saleTaxAmount);
 
         const withHoldingPercent = Number(values.withHoldingPercent) || 0;
-        const withHoldingAmount = Math.round((totalWithSaleTax * withHoldingPercent) / 100);
-        const grandTotal = totalWithSaleTax - withHoldingAmount;
+        const withHoldingAmount = round2((totalWithSaleTax * withHoldingPercent) / 100);
+        const grandTotal = round2(totalWithSaleTax - withHoldingAmount);
 
-        setValue("total", total > 0 ? String(total.toFixed(2)) : "", { shouldDirty: false });
-        setValue("totalWithSaleTax", totalWithSaleTax > 0 ? String(totalWithSaleTax.toFixed(2)) : "", { shouldDirty: false });
-        setValue("withHoldingAmount", withHoldingAmount > 0 ? String(withHoldingAmount.toFixed(2)) : "", { shouldDirty: false });
-        setValue("grandTotal", grandTotal > 0 ? String(grandTotal.toFixed(2)) : "", { shouldDirty: false });
+        setValue("total", total > 0 ? String(total) : "", { shouldDirty: false });
+        setValue("totalWithSaleTax", totalWithSaleTax > 0 ? String(totalWithSaleTax) : "", { shouldDirty: false });
+        setValue("withHoldingAmount", withHoldingAmount > 0 ? String(withHoldingAmount) : "", { shouldDirty: false });
+        setValue("grandTotal", grandTotal > 0 ? String(grandTotal) : "", { shouldDirty: false });
     }, [values.items, values.saleTaxPercent, values.withHoldingPercent, setValue]);
 
-    const saleTaxAmountComputed = Math.round((Number(values.total || 0) * (Number(values.saleTaxPercent) || 0)) / 100);
+    const saleTaxAmountComputed = round2((Number(values.total || 0) * (Number(values.saleTaxPercent) || 0)) / 100);
 
     return (
         <section className="mx-auto mt-10 w-full max-w-5xl bg-form-bg p-8 shadow-sm">
@@ -920,7 +929,7 @@ export default function PurchaseOrderPage() {
                                 </div>
                             </div>
                             <div className="w-[120px] border-l border-zinc-400 text-right px-2 py-1.5 text-sm bg-zinc-50">
-                                {saleTaxAmountComputed > 0 ? saleTaxAmountComputed.toFixed(2) : "0.00"}
+                                {saleTaxAmountComputed > 0 ? showMoney(saleTaxAmountComputed) : "0.00"}
                             </div>
                         </div>
 
@@ -929,7 +938,7 @@ export default function PurchaseOrderPage() {
                                 Total With Sale Tax
                             </div>
                             <div className="w-[120px] border-l border-zinc-400 text-right px-2 py-1.5 text-sm bg-white">
-                                {values.totalWithSaleTax || "0.00"}
+                                {values.totalWithSaleTax ? showMoney(Number(values.totalWithSaleTax)) : "0.00"}
                             </div>
                         </div>
 
@@ -953,7 +962,7 @@ export default function PurchaseOrderPage() {
                                 </div>
                             </div>
                             <div className="w-[120px] border-l border-zinc-400 text-right px-2 py-1.5 text-sm bg-zinc-50">
-                                {values.withHoldingAmount || "0.00"}
+                                {values.withHoldingAmount ? showMoney(Number(values.withHoldingAmount)) : "0.00"}
                             </div>
                         </div>
 
@@ -962,7 +971,7 @@ export default function PurchaseOrderPage() {
                                 Grand Total
                             </div>
                             <div className="w-[120px] border-l border-zinc-400 text-right px-2 py-1.5 text-sm bg-white font-medium">
-                                {values.grandTotal || "0.00"}
+                                {values.grandTotal ? showMoney(Number(values.grandTotal)) : "0.00"}
                             </div>
                         </div>
                     </div>

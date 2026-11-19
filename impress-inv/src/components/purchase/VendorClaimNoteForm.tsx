@@ -14,7 +14,7 @@ import { VENDOR_CLAIM_NOTES } from "@/utlis/apiRoutes";
 import api from "@/lib/axios";
 import toast from "react-hot-toast";
 import { usePermissions } from "@/hooks/usePermissions";
-import { ViewAllModal, type ViewAllColumn } from "@/components/ui/ViewAllModal";
+import type { ViewAllColumn } from "@/components/ui/ViewAllModal";
 import { InfiniteViewAllModal, useRefreshMasterList } from "@/components/ui/InfiniteViewAllModal";
 import { useMasterRecord } from "@/hooks/useMasterRecord";
 import { PrintOptionsModal } from "@/components/print/PrintOptionsModal";
@@ -128,7 +128,8 @@ export function VendorClaimNoteForm() {
     const refreshList = useRefreshMasterList("vendor-claim-notes");
     const { fetchOne, prefetchNear } = useMasterRecord("vendor-claim-notes", VENDOR_CLAIM_NOTES);
     const [rejectionReturns, setRejectionReturns] = useState<VendorClaimNoteRow[]>([]);
-    const skipNextIdLookup = useRef(false);
+    // when (a time) the next id lookup should be skipped: set right before the form is filled by itself (after a Save / New)
+    const skipNextIdLookup = useRef(0);
 
     const {
         handleSubmit,
@@ -165,7 +166,7 @@ export function VendorClaimNoteForm() {
             });
             const fetchedNextId = String(data.data.nextId);
             setNextId(fetchedNextId);
-            skipNextIdLookup.current = true;
+            skipNextIdLookup.current = Date.now();
             reset(freshForm(fetchedNextId));
             setIsNewMode(true);
             setIsEditing(true);
@@ -312,12 +313,12 @@ export function VendorClaimNoteForm() {
                 reset(mapReturnToForm(saved));
                 setIsNewMode(false);
                 setIsEditing(false);
-                skipNextIdLookup.current = true;
+                skipNextIdLookup.current = Date.now();
                 void api
                     .get(`${VENDOR_CLAIM_NOTES}/next-id`, { params: { _ts: Date.now() } })
                     .then(({ data }) => setNextId(String(data.data.nextId)))
                     .catch(() => {
-                        skipNextIdLookup.current = false;
+                        skipNextIdLookup.current = 0;
                     });
             }
         } catch (error: unknown) {
@@ -338,9 +339,13 @@ export function VendorClaimNoteForm() {
     useEffect(() => {
         const fetchDebouncedId = async () => {
             if (!debouncedId) return;
+            // The skip is only for the lookup that follows right after a Save / New. When the id did not change, nothing runs
+            // that lookup and the mark stays: it must not swallow a lookup the user asks for later (going back to the
+            // previous record would show nothing until the second try).
             if (skipNextIdLookup.current) {
-                skipNextIdLookup.current = false;
-                return;
+                const isRecent = Date.now() - skipNextIdLookup.current < 2500;
+                skipNextIdLookup.current = 0;
+                if (isRecent) return;
             }
 
             const resetToNextId = () => {
@@ -534,8 +539,9 @@ export function VendorClaimNoteForm() {
             ...currentItems[pickerRowIndex],
             inventoryId: String(item.inventoryId),
             itemName: item.itemName,
-            rej: currentItems[pickerRowIndex].rej || String(item.maxQty),
-            rate: currentItems[pickerRowIndex].rate || (item.rate ? String(item.rate) : ""),
+            // qty and rate are not typed: all that is pending, at the rate the parts were bought at
+            rej: String(item.maxQty),
+            rate: item.rate ? String(item.rate) : "",
         };
         setValue("items", currentItems, { shouldDirty: true, shouldValidate: true });
         setPickerRowIndex(null);
@@ -552,8 +558,10 @@ export function VendorClaimNoteForm() {
 
     // Value of the claim: rej x rate of every row, then the sales tax
     const valueExcl = values.items.reduce((sum, row) => sum + (Number(row.rej) || 0) * (Number(row.rate) || 0), 0);
-    const salesTaxValue = Math.round((valueExcl * (Number(values.saleTaxPercent) || 0)) / 100);
-    const valueIncl = valueExcl + salesTaxValue;
+    // The exact amount, to the paisa (4% of 20 is 0.8); the whole rupees x the whole percent never have more than two decimals
+    const salesTaxValue = Math.round(valueExcl * (Number(values.saleTaxPercent) || 0)) / 100;
+    const valueIncl = Math.round((valueExcl + salesTaxValue) * 100) / 100;
+    const showMoney = (value: number) => value.toLocaleString(undefined, { maximumFractionDigits: 2 });
 
     const totalRej = values.items.reduce((sum, row) => sum + (Number(row.rej) || 0), 0);
 
@@ -796,12 +804,13 @@ export function VendorClaimNoteForm() {
                                             type="text"
                                             inputMode="numeric"
                                             maxLength={7}
-                                            placeholder="1+"
                                             value={row.rej ?? ""}
-                                            onChange={(e) => updateItemRow(index, "rej", e.target.value)}
+                                            readOnly
+                                            tabIndex={-1}
+                                            title="Qty comes by itself: all the rejected quantity of this item that is not claimed yet. It cannot be typed."
                                             disabled={!isEditing}
                                             data-row-error={rowErrors[index]?.field === "rej" ? "true" : undefined}
-                                            className={`w-full bg-transparent px-2 py-1.5 text-center text-[13px] outline-none disabled:bg-[#f3f4f6] ${rowErrors[index]?.field === "rej" ? "ring-2 ring-inset ring-red-400" : ""}`}
+                                            className={`w-full bg-transparent px-2 py-1.5 text-center text-[13px] font-medium text-zinc-600 outline-none disabled:bg-[#f3f4f6] ${rowErrors[index]?.field === "rej" ? "ring-2 ring-inset ring-red-400" : ""}`}
                                         />
                                     </td>
                                     <td className="border-r border-zinc-300 p-0">
@@ -810,11 +819,12 @@ export function VendorClaimNoteForm() {
                                             inputMode="numeric"
                                             maxLength={8}
                                             value={row.rate ?? ""}
-                                            onChange={(e) => updateItemRow(index, "rate", e.target.value)}
+                                            readOnly
+                                            tabIndex={-1}
                                             disabled={!isEditing}
-                                            title="The rate of the claim (the PO rate), you can change it"
+                                            title="The rate the parts were bought at (from the PO of the inward where they were rejected). It cannot be typed."
                                             data-row-error={rowErrors[index]?.field === "rate" ? "true" : undefined}
-                                            className={`w-full bg-transparent px-2 py-1.5 text-center text-[13px] outline-none disabled:bg-[#f3f4f6] ${rowErrors[index]?.field === "rate" ? "ring-2 ring-inset ring-red-400" : ""}`}
+                                            className={`w-full bg-transparent px-2 py-1.5 text-center text-[13px] font-medium text-zinc-600 outline-none disabled:bg-[#f3f4f6] ${rowErrors[index]?.field === "rate" ? "ring-2 ring-inset ring-red-400" : ""}`}
                                         />
                                     </td>
                                     <td className="border-r border-zinc-300 p-0">
@@ -856,13 +866,13 @@ export function VendorClaimNoteForm() {
                             Total Rej: <span className="font-semibold text-black">{totalRej.toLocaleString()}</span>
                         </span>
                         <span className="text-sm text-zinc-700">
-                            Value Excl. S.Tax: <span className="font-semibold text-black">{valueExcl.toLocaleString()}</span>
+                            Value Excl. S.Tax: <span className="font-semibold text-black">{showMoney(valueExcl)}</span>
                         </span>
                         <span className="text-sm text-zinc-700">
-                            Sales Tax Value: <span className="font-semibold text-black">{salesTaxValue.toLocaleString()}</span>
+                            Sales Tax Value: <span className="font-semibold text-black">{showMoney(salesTaxValue)}</span>
                         </span>
                         <span className="text-sm text-zinc-700">
-                            Value Incl. S.Tax: <span className="font-semibold text-black">{valueIncl.toLocaleString()}</span>
+                            Value Incl. S.Tax: <span className="font-semibold text-black">{showMoney(valueIncl)}</span>
                         </span>
                         <AddRowButton onClick={addRow} disabled={!isEditing} />
                     </div>
@@ -951,11 +961,12 @@ export function VendorClaimNoteForm() {
                 codeWord="number"
             />
 
-            <ViewAllModal
-                key={pickerRowIndex !== null ? "item-open" : "item-closed"}
+            <InfiniteViewAllModal<ReceivedItem>
                 isOpen={pickerRowIndex !== null}
                 title={`Rejected items of ${values.vendorName || "the vendor"}${pickerRowIndex !== null ? ` (Row ${pickerRowIndex + 1})` : ""}`}
-                rows={receivedItems.filter((item) => item.maxQty > 0)}
+                endpoint={`${VENDOR_CLAIM_NOTES}/received-items`}
+                name="vendor-claim-notes"
+                extraParams={{ vendorId: values.vendorId, excludeId: isNewMode ? undefined : values.id }}
                 columns={[
                     { key: "inventoryId", header: "Code" },
                     { key: "itemName", header: "Item Name" },
@@ -963,11 +974,8 @@ export function VendorClaimNoteForm() {
                     { key: "returnedQty", header: "Returned" },
                     { key: "maxQty", header: "Can Return" },
                 ] as ViewAllColumn<ReceivedItem>[]}
-                searchKeys={["inventoryId", "itemName"]}
-                // the rejected items of ONE vendor (a short list): all of it scrolls, no pages of 8
-                pageSize={1000}
-                isLoading={isReceivedLoading}
-                error=""
+                hideActions
+                emptyMessage="No rejected items are pending for this vendor."
                 onClose={() => setPickerRowIndex(null)}
                 onRowSelect={handleItemSelect}
             />

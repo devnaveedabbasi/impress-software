@@ -99,7 +99,8 @@ export default function InventoryPage() {
     const refreshList = useRefreshMasterList("inventory");
     const { fetchOne, prefetchNear } = useMasterRecord("inventory", INVENTORY);
     const [inventories, setInventories] = useState<InventoryRow[]>([]);
-    const skipNextIdLookup = useRef(false);
+    // when (a time) the next id lookup should be skipped: set right before the form is filled by itself (after a Save / New)
+    const skipNextIdLookup = useRef(0);
 
     const {
         handleSubmit,
@@ -168,7 +169,7 @@ export default function InventoryPage() {
             });
             const fetchedNextId = String(data.data.nextId);
             setNextId(fetchedNextId);
-            skipNextIdLookup.current = true;
+            skipNextIdLookup.current = Date.now();
             reset({ ...initialValues, id: fetchedNextId });
             setIsNewMode(true);
             setIsEditing(true);
@@ -293,11 +294,11 @@ export default function InventoryPage() {
             // record). Only the next number is read again, quietly, so a new record still gets the right number.
             setIsNewMode(false);
             setIsEditing(false);
-            skipNextIdLookup.current = true;
+            skipNextIdLookup.current = Date.now();
             void api
                 .get(`${INVENTORY}/next-id`, { params: { _ts: Date.now() } })
                 .then(({ data }) => setNextId(String(data.data.nextId)))
-                .catch(() => { skipNextIdLookup.current = false; });
+                .catch(() => { skipNextIdLookup.current = 0; });
         } catch (error: unknown) {
             const apiError = error as ApiError;
             console.error("Inventory save failed:", apiError.response?.data || error);
@@ -318,9 +319,13 @@ export default function InventoryPage() {
     useEffect(() => {
         const fetchDebouncedId = async () => {
             if (!debouncedId) return;
+            // The skip is only for the lookup that follows right after a Save / New. When the id did not change, nothing runs
+            // that lookup and the mark stays: it must not swallow a lookup the user asks for later (going back to the
+            // previous record would show nothing until the second try).
             if (skipNextIdLookup.current) {
-                skipNextIdLookup.current = false;
-                return;
+                const isRecent = Date.now() - skipNextIdLookup.current < 2500;
+                skipNextIdLookup.current = 0;
+                if (isRecent) return;
             }
 
             const resetToNextId = () => {

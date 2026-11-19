@@ -45,7 +45,8 @@ export default function StationPage() {
     const refreshList = useRefreshMasterList("stations");
     const { fetchOne, prefetchNear } = useMasterRecord("stations", STATIONS);
     const [stations, setStations] = useState<StationRow[]>([]);
-    const skipNextIdLookup = useRef(false);
+    // when (a time) the next id lookup should be skipped: set right before the form is filled by itself (after a Save / New)
+    const skipNextIdLookup = useRef(0);
 
     const {
         handleSubmit,
@@ -75,7 +76,7 @@ export default function StationPage() {
             });
             const fetchedNextId = String(data.data.nextId);
             setNextId(fetchedNextId);
-            skipNextIdLookup.current = true;
+            skipNextIdLookup.current = Date.now();
             reset({ id: fetchedNextId, name: "" });
             setIsNewMode(true);
             setIsEditing(true);
@@ -133,12 +134,12 @@ export default function StationPage() {
             // Only the next number is read again, quietly, so a new record still gets the right number.
             setIsNewMode(false);
             setIsEditing(false);
-            skipNextIdLookup.current = true;
+            skipNextIdLookup.current = Date.now();
             void api
                 .get(`${STATIONS}/next-id`, { params: { _ts: Date.now() } })
                 .then(({ data }) => setNextId(String(data.data.nextId)))
                 .catch(() => {
-                    skipNextIdLookup.current = false;
+                    skipNextIdLookup.current = 0;
                 });
         } catch (error: unknown) {
             const apiError = error as ApiError;
@@ -156,9 +157,13 @@ export default function StationPage() {
     useEffect(() => {
         const fetchDebouncedId = async () => {
             if (!debouncedId) return;
+            // The skip is only for the lookup that follows right after a Save / New. When the id did not change, nothing runs
+            // that lookup and the mark stays: it must not swallow a lookup the user asks for later (going back to the
+            // previous record would show nothing until the second try).
             if (skipNextIdLookup.current) {
-                skipNextIdLookup.current = false;
-                return;
+                const isRecent = Date.now() - skipNextIdLookup.current < 2500;
+                skipNextIdLookup.current = 0;
+                if (isRecent) return;
             }
 
             const resetToNextId = () => {

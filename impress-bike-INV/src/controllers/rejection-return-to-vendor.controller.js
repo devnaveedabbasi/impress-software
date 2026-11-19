@@ -7,7 +7,7 @@ import prisma, {
 } from "../config/prisma.js";
 
 // The id of the record is the Claim Note No. Every record is returned with its vendor and item rows.
-import { isPagedRequest, findPage } from "../utils/listQuery.js";
+import { isPagedRequest, findPage, pageOfRows } from "../utils/listQuery.js";
 
 const returnInclude = {
     vendor: { select: { id: true, vendorName: true } },
@@ -93,7 +93,8 @@ const getReceivedFromVendor = async (vendorId, excludeReturnId) => {
         .sort((a, b) => a.itemName.localeCompare(b.itemName));
 };
 
-const assertReceivedFromVendor = async (vendorId, items, excludeReturnId) => {
+// exact: a new return sends back ALL that is pending for the item (the form fills the qty, it is not typed)
+const assertReceivedFromVendor = async (vendorId, items, excludeReturnId, { exact = false } = {}) => {
     const available = new Map((await getReceivedFromVendor(vendorId, excludeReturnId)).map((row) => [row.inventoryId, row]));
     const names = new Map(
         (await prisma.inventory.findMany({ where: { id: { in: items.map((item) => item.inventoryId) } }, select: { id: true, itemName: true } })).map(
@@ -105,7 +106,9 @@ const assertReceivedFromVendor = async (vendorId, items, excludeReturnId) => {
         const name = names.get(item.inventoryId) || `Item #${item.inventoryId}`;
         const row = available.get(item.inventoryId);
         if (!row) problems.push(`"${name}" has no rejected quantity from this vendor`);
-        else if (item.rej > row.maxQty) {
+        else if (exact && item.rej !== row.maxQty) {
+            problems.push(`"${name}": the quantity must be ${row.maxQty} (all the rejected quantity not yet returned)`);
+        } else if (item.rej > row.maxQty) {
             problems.push(`"${name}": only ${row.maxQty} can be returned (rejected ${row.rejectedQty}, already returned ${row.returnedQty})`);
         }
     }
@@ -118,6 +121,11 @@ const getReceivedItems = asyncHandler(async (req, res) => {
     if (!Number.isInteger(vendorId) || vendorId < 1) throw new ApiError(400, "Please select a vendor");
     const excludeId = Number(req.query.excludeId);
     const rows = await getReceivedFromVendor(vendorId, Number.isInteger(excludeId) && excludeId > 0 ? excludeId : undefined);
+    if (isPagedRequest(req)) {
+        // the picker: only what is still pending, a page at a time (the row id is the item id)
+        const pending = rows.filter((row) => row.maxQty > 0).map((row) => ({ ...row, id: row.inventoryId }));
+        return res.status(200).json(new ApiResponse(200, pageOfRows(pending, req, (row) => row.itemName), "Received items fetched successfully"));
+    }
     return res.status(200).json(new ApiResponse(200, rows, "Received items fetched successfully"));
 });
 
@@ -168,7 +176,7 @@ const createRejectionReturn = asyncHandler(async (req, res) => {
 
     await assertVendorExists(Number(vendorId));
     await assertInventoryExists(items);
-    await assertReceivedFromVendor(Number(vendorId), items);
+    await assertReceivedFromVendor(Number(vendorId), items, undefined, { exact: true });
 
     // Sync PostgreSQL auto-increment sequences
     await syncSequence("RejectionReturnToVendor");

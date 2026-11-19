@@ -39,3 +39,22 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/*
+  Names that come from the database (category, department, item, vendor, city ... in tables, boxes and lists) are
+  SHOWN with a capital first letter on every word, even when they were typed in small letters ("naveed abbasi" is
+  shown as "Naveed Abbasi"). Only the look changes: what is saved is exactly what was typed.
+  It is in the base layer, so a class can still switch it off (normal-case) or force capitals (uppercase), and emails,
+  passwords and numbers (their own input types) are not touched.
+*/
+@layer base {
+  td,
+  select,
+  option,
+  [role="option"],
+  button[aria-haspopup="listbox"],
+  input[type="text"],
+  input[type="search"] {
+    text-transform: capitalize;
+  }
+}

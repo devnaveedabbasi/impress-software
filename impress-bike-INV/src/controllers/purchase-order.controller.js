@@ -53,6 +53,18 @@ const assertOrderRows = async ({ quotationId, code, itemName, unit, quantity, ra
     });
 };
 
+// The tax amounts are shown EXACTLY (to the paisa, two decimals at most): 4% of 20 is 0.8, not 1.
+// The database keeps whole rupees for them (its columns are whole numbers), so what is saved is rounded, and what is
+// shown is always worked out again from the saved total and the percents (withExactWorth).
+const round2 = (value) => Math.round(value * 100) / 100;
+const exactWorth = ({ total, saleTaxPercent, withHoldingPercent }) => {
+    const saleTaxAmount = round2((Number(total) * Number(saleTaxPercent)) / 100);
+    const totalWithSaleTax = round2(Number(total) + saleTaxAmount);
+    const withHoldingAmount = round2((totalWithSaleTax * Number(withHoldingPercent)) / 100);
+    return { saleTaxAmount, totalWithSaleTax, withHoldingAmount, grandTotal: round2(totalWithSaleTax - withHoldingAmount) };
+};
+const withExactWorth = (po) => (po ? { ...po, ...exactWorth(po) } : po);
+
 const worthOf = ({ quantity, rate, amount, saleTaxPercent, withHoldingPercent }) => {
     quantity.forEach((qty, index) => {
         if (Number(amount[index]) !== Number(qty) * Number(rate[index])) {
@@ -60,9 +72,14 @@ const worthOf = ({ quantity, rate, amount, saleTaxPercent, withHoldingPercent })
         }
     });
     const total = amount.reduce((sum, value) => sum + Number(value), 0);
-    const totalWithSaleTax = total + Math.round((total * Number(saleTaxPercent)) / 100);
-    const withHoldingAmount = Math.round((totalWithSaleTax * Number(withHoldingPercent)) / 100);
-    return { total, totalWithSaleTax, withHoldingAmount, grandTotal: totalWithSaleTax - withHoldingAmount };
+    // what is saved: whole rupees (see above)
+    const exact = exactWorth({ total, saleTaxPercent, withHoldingPercent });
+    return {
+        total,
+        totalWithSaleTax: Math.round(exact.totalWithSaleTax),
+        withHoldingAmount: Math.round(exact.withHoldingAmount),
+        grandTotal: Math.round(exact.grandTotal),
+    };
 };
 
 const getAllPurchaseOrders = asyncHandler(async (req, res) => {
@@ -72,13 +89,13 @@ const getAllPurchaseOrders = asyncHandler(async (req, res) => {
             dateFields: ["date"],
             include: { vendor: true, quotation: true },
         });
-        return res.status(200).json(new ApiResponse(200, page, "Fetched successfully"));
+        return res.status(200).json(new ApiResponse(200, { ...page, items: page.items.map(withExactWorth) }, "Fetched successfully"));
     }
     const purchaseOrders = await prisma.purchaseOrder.findMany({
         include: { vendor: true, quotation: true },
         orderBy: { id: "asc" }
     });
-    return res.status(200).json(new ApiResponse(200, purchaseOrders, "Purchase Orders fetched successfully"));
+    return res.status(200).json(new ApiResponse(200, purchaseOrders.map(withExactWorth), "Purchase Orders fetched successfully"));
 });
 
 const getByIdPurchaseOrder = asyncHandler(async (req, res) => {
@@ -91,7 +108,7 @@ const getByIdPurchaseOrder = asyncHandler(async (req, res) => {
     if (!purchaseOrder) {
         throw new ApiError(404, "Purchase Order not found");
     }
-    return res.status(200).json(new ApiResponse(200, purchaseOrder, "Purchase Order fetched successfully"));
+    return res.status(200).json(new ApiResponse(200, withExactWorth(purchaseOrder), "Purchase Order fetched successfully"));
 });
 
 const createPurchaseOrder = asyncHandler(async (req, res) => {
@@ -137,7 +154,7 @@ const createPurchaseOrder = asyncHandler(async (req, res) => {
         }
     });
 
-    return res.status(201).json(new ApiResponse(201, purchaseOrder, "Purchase Order created successfully"));
+    return res.status(201).json(new ApiResponse(201, withExactWorth(purchaseOrder), "Purchase Order created successfully"));
 });
 
 const updatePurchaseOrder = asyncHandler(async (req, res) => {
@@ -323,6 +340,7 @@ const getPurchaseOrderReport = asyncHandler(async (req, res) => {
         if (!po) throw new ApiError(404, `Purchase Order #${id} not found`);
 
         const vendorName = po.vendor?.vendorName || "Unknown Vendor";
+        const worth = exactWorth(po);
         const lines = (po.itemName || []).map((name, index) => ({
             poId: po.id,
             date: po.date,
@@ -342,7 +360,7 @@ const getPurchaseOrderReport = asyncHandler(async (req, res) => {
                 limit: lines.length || 1,
                 totalPages: 1,
                 lines: lines.length,
-                totals: { total: po.total, grandTotal: po.grandTotal },
+                totals: { total: po.total, grandTotal: worth.grandTotal },
                 document: {
                     poId: po.id,
                     date: po.date,
@@ -352,10 +370,10 @@ const getPurchaseOrderReport = asyncHandler(async (req, res) => {
                     quotationId: po.quotationId,
                     total: po.total,
                     saleTaxPercent: po.saleTaxPercent,
-                    totalWithSaleTax: po.totalWithSaleTax,
+                    totalWithSaleTax: worth.totalWithSaleTax,
                     withHoldingPercent: po.withHoldingPercent,
-                    withHoldingAmount: po.withHoldingAmount,
-                    grandTotal: po.grandTotal,
+                    withHoldingAmount: worth.withHoldingAmount,
+                    grandTotal: worth.grandTotal,
                 },
             },
         });
@@ -371,7 +389,7 @@ const getPurchaseOrderReport = asyncHandler(async (req, res) => {
 
     const [total, sums, purchaseOrders] = await Promise.all([
         prisma.purchaseOrder.count({ where }),
-        item ? Promise.resolve(null) : prisma.purchaseOrder.aggregate({ where, _sum: { total: true, grandTotal: true } }),
+        item ? Promise.resolve(null) : prisma.purchaseOrder.findMany({ where, select: { total: true, saleTaxPercent: true, withHoldingPercent: true } }),
         prisma.purchaseOrder.findMany({
             where,
             include: { vendor: { select: { vendorName: true } } },
@@ -395,7 +413,7 @@ const getPurchaseOrderReport = asyncHandler(async (req, res) => {
                 itemsCount: Array.isArray(po.itemName) ? po.itemName.length : 0,
                 total: po.total,
                 saleTaxPercent: po.saleTaxPercent,
-                grandTotal: po.grandTotal,
+                grandTotal: exactWorth(po).grandTotal,
             });
             continue;
         }
@@ -418,7 +436,14 @@ const getPurchaseOrderReport = asyncHandler(async (req, res) => {
         ...new ApiResponse(200, rows, "Purchase Order report fetched successfully"),
         meta: {
             ...pagingMeta(total, paging),
-            ...(sums ? { totals: { total: sums._sum.total || 0, grandTotal: sums._sum.grandTotal || 0 } } : {}),
+            ...(sums
+                ? {
+                      totals: {
+                          total: sums.reduce((sum, po) => sum + po.total, 0),
+                          grandTotal: round2(sums.reduce((sum, po) => sum + exactWorth(po).grandTotal, 0)),
+                      },
+                  }
+                : {}),
         },
     });
 });

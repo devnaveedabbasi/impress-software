@@ -122,7 +122,8 @@ export default function InwardQualityControlPage() {
     const refreshList = useRefreshMasterList("inwards");
     const { fetchOne, prefetchNear } = useMasterRecord("inwards", INWARDS);
     const [inwards, setInwards] = useState<InwardRow[]>([]);
-    const skipNextIdLookup = useRef(false);
+    // when (a time) the next id lookup should be skipped: set right before the form is filled by itself (after a Save / New)
+    const skipNextIdLookup = useRef(0);
 
     const {
         handleSubmit,
@@ -187,7 +188,7 @@ export default function InwardQualityControlPage() {
             });
             const fetchedNextId = String(data.data.nextId);
             setNextId(fetchedNextId);
-            skipNextIdLookup.current = true;
+            skipNextIdLookup.current = Date.now();
             reset({
                 ...initialValues,
                 id: fetchedNextId,
@@ -305,12 +306,12 @@ export default function InwardQualityControlPage() {
                 reset(mapInwardToForm(saved));
                 setIsNewMode(false);
                 setIsEditing(false);
-                skipNextIdLookup.current = true;
+                skipNextIdLookup.current = Date.now();
                 void api
                     .get(`${INWARDS}/next-id`, { params: { _ts: Date.now() } })
                     .then(({ data }) => setNextId(String(data.data.nextId)))
                     .catch(() => {
-                        skipNextIdLookup.current = false;
+                        skipNextIdLookup.current = 0;
                     });
             }
         } catch (error: unknown) {
@@ -331,9 +332,13 @@ export default function InwardQualityControlPage() {
     useEffect(() => {
         const fetchDebouncedId = async () => {
             if (!debouncedId) return;
+            // The skip is only for the lookup that follows right after a Save / New. When the id did not change, nothing runs
+            // that lookup and the mark stays: it must not swallow a lookup the user asks for later (going back to the
+            // previous record would show nothing until the second try).
             if (skipNextIdLookup.current) {
-                skipNextIdLookup.current = false;
-                return;
+                const isRecent = Date.now() - skipNextIdLookup.current < 2500;
+                skipNextIdLookup.current = 0;
+                if (isRecent) return;
             }
 
             const resetToNextId = () => {
@@ -600,6 +605,12 @@ export default function InwardQualityControlPage() {
 
     // PO Bal Qty comes from the PO when an "Against PO" inward has a PO selected; otherwise the user enters it
     const isPoBalLocked = values.Type === "againstPO" && !!values.purchaseOrderId;
+
+    // With a PO chosen, ONLY the items of that PO can be received: a row that came from the PO keeps its item, and a
+    // row that did not (an empty one) is switched off. (A PO row that has no inventory item yet can still be linked.)
+    const isBlockedByPo = (row: (typeof values.items)[number]) => isPoBalLocked && !row.itemName;
+    const canPickItem = (row: (typeof values.items)[number]) =>
+        isEditing && (!isPoBalLocked || (!!row.itemName && !row.inventoryId));
 
     const rowHasData = (row: (typeof values.items)[number]) =>
         !!(row.inventoryId || row.itemName || row.recQty || row.rejQty || row.packingDetail);
@@ -895,7 +906,7 @@ export default function InwardQualityControlPage() {
                                                     ? "Not linked to inventory, click Item Name to select it"
                                                     : "Inventory item code (set by selecting Item Name)"
                                             }
-                                            disabled={!isEditing}
+                                            disabled={!isEditing || isBlockedByPo(row)}
                                             className="w-full bg-transparent px-2 py-1 text-center outline-none disabled:bg-[#f3f4f6]"
                                         />
                                         {row.itemName && !row.inventoryId && (
@@ -910,17 +921,27 @@ export default function InwardQualityControlPage() {
                                             type="text"
                                             value={row.itemName}
                                             readOnly
-                                            onClick={() => isEditing && setPickerRowIndex(index)}
+                                            onClick={() => canPickItem(row) && setPickerRowIndex(index)}
                                             onKeyDown={(e) => {
-                                                if (isEditing && (e.key === "Enter" || e.key === " ")) {
+                                                if (canPickItem(row) && (e.key === "Enter" || e.key === " ")) {
                                                     e.preventDefault();
                                                     setPickerRowIndex(index);
                                                 }
                                             }}
-                                            placeholder={isEditing ? "Click to select item" : ""}
-                                            disabled={!isEditing}
-                                            title={isEditing ? "Click to select item from inventory" : undefined}
-                                            className="w-full cursor-pointer bg-transparent px-2 py-1 outline-none placeholder:text-zinc-400 hover:bg-primary-50 disabled:cursor-default disabled:bg-[#f3f4f6]"
+                                            placeholder={isEditing && !isPoBalLocked ? "Click to select item" : ""}
+                                            disabled={!isEditing || isBlockedByPo(row)}
+                                            title={
+                                                isPoBalLocked
+                                                    ? canPickItem(row)
+                                                        ? "Click to link this PO item to the inventory"
+                                                        : "The items of the selected PO cannot be changed"
+                                                    : isEditing
+                                                      ? "Click to select item from inventory"
+                                                      : undefined
+                                            }
+                                            className={`w-full bg-transparent px-2 py-1 outline-none placeholder:text-zinc-400 disabled:cursor-default disabled:bg-[#f3f4f6] ${
+                                                canPickItem(row) ? "cursor-pointer hover:bg-primary-50" : "cursor-default"
+                                            }`}
                                         />
                                     </td>
                                     <td className="border-r border-zinc-200 p-0">
@@ -936,7 +957,7 @@ export default function InwardQualityControlPage() {
                                                     ? "Loaded from the selected PO (remaining quantity)"
                                                     : "Enter the expected / balance quantity"
                                             }
-                                            disabled={!isEditing}
+                                            disabled={!isEditing || isBlockedByPo(row)}
                                             className="w-full bg-transparent px-2 py-1 text-center outline-none disabled:bg-[#f3f4f6]"
                                         />
                                     </td>
@@ -946,7 +967,7 @@ export default function InwardQualityControlPage() {
                                             inputMode="numeric"
                                             value={row.recQty}
                                             onChange={(e) => updateItemRow(index, "recQty", e.target.value)}
-                                            disabled={!isEditing}
+                                            disabled={!isEditing || isBlockedByPo(row)}
                                             title={
                                                 !row.inventoryId
                                                     ? "Select Item Name first"
@@ -963,7 +984,7 @@ export default function InwardQualityControlPage() {
                                             inputMode="numeric"
                                             value={row.rejQty}
                                             onChange={(e) => updateItemRow(index, "rejQty", e.target.value)}
-                                            disabled={!isEditing}
+                                            disabled={!isEditing || isBlockedByPo(row)}
                                             title={row.recQty ? `Max ${row.recQty} (Rec Qty)` : "Enter Rec Qty first"}
                                             className="w-full bg-transparent px-2 py-1 text-center outline-none disabled:bg-[#f3f4f6]"
                                         />
@@ -975,7 +996,7 @@ export default function InwardQualityControlPage() {
                                             readOnly
                                             tabIndex={-1}
                                             title="Auto calculated: Rec Qty - REJ Qty"
-                                            disabled={!isEditing}
+                                            disabled={!isEditing || isBlockedByPo(row)}
                                             className="w-full bg-transparent px-2 py-1 text-center outline-none disabled:bg-[#f3f4f6] text-black font-medium"
                                         />
                                     </td>
@@ -984,12 +1005,12 @@ export default function InwardQualityControlPage() {
                                         <button
                                             type="button"
                                             onClick={() => openPackingModal(index)}
-                                            disabled={!isEditing && !row.packingDetail}
+                                            disabled={(!isEditing && !row.packingDetail) || isBlockedByPo(row)}
                                             title={row.packingDetail || (isEditing ? "Click to add packing detail" : undefined)}
                                             className={`block w-full truncate px-2 py-1 text-left outline-none disabled:cursor-default ${
                                                 isEditing && rowHasData(row) ? "pr-8" : ""
                                             } ${row.packingDetail ? "text-black" : "text-zinc-400"} ${
-                                                isEditing ? "hover:bg-primary-50 focus-visible:bg-primary-50" : "bg-[#f3f4f6]"
+                                                isEditing && !isBlockedByPo(row) ? "hover:bg-primary-50 focus-visible:bg-primary-50" : "bg-[#f3f4f6]"
                                             }`}
                                         >
                                             {previewText(row.packingDetail ?? "") || (isEditing ? "Click to add" :" ")}
@@ -1017,7 +1038,8 @@ export default function InwardQualityControlPage() {
                     <span className="text-xs text-zinc-500">
                         {isEditing ? "Tip: hover a row and click the trash icon to remove it" : ""}
                     </span>
-                    <AddRowButton onClick={addItemRow} disabled={!isEditing} />
+                    {/* With a PO chosen only its items can be received, so no row is added */}
+                    <AddRowButton onClick={addItemRow} disabled={!isEditing || isPoBalLocked} />
                 </div>
                 {errors.items && (
                     <p className="mb-4 text-xs text-red-500 text-center">{errors.items.message}</p>
@@ -1108,7 +1130,7 @@ export default function InwardQualityControlPage() {
 
             <InventoryPickerModal
                 isOpen={pickerRowIndex !== null}
-                title={`Select Inventory Item${pickerRowIndex !== null ? ` (Row ${pickerRowIndex + 1})` : ""}`}
+                title={`Select Inventory Item`}
                 onClose={() => setPickerRowIndex(null)}
                 onSelect={handleInventorySelect}
             />

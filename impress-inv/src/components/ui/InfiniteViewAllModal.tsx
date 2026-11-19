@@ -41,6 +41,8 @@ interface InfiniteViewAllModalProps<T extends Record<string, unknown>> {
   hideActions?: boolean;
   // what to say when the list is empty
   emptyMessage?: string;
+  // extra filters sent with every request (for example the vendor). The list is read fresh each time it is opened.
+  extraParams?: Record<string, string | number | undefined>;
 }
 
 // View All with infinite scroll: only the first page is read from the server; the next page is read when the end
@@ -56,6 +58,7 @@ export function InfiniteViewAllModal<T extends Record<string, unknown>>({
   onRowSelect,
   hideActions = false,
   emptyMessage = "No records found.",
+  extraParams,
 }: InfiniteViewAllModalProps<T>) {
   const [search, setSearch] = useState("");
   const debouncedSearch = useDebounce(search, 350).trim();
@@ -68,23 +71,30 @@ export function InfiniteViewAllModal<T extends Record<string, unknown>>({
   const queryClient = useQueryClient();
 
   const query = useInfiniteQuery({
-    queryKey: [...masterListKey(name), debouncedSearch],
+    queryKey: extraParams
+      ? [...masterListKey(name), "filtered", JSON.stringify(extraParams), debouncedSearch]
+      : [...masterListKey(name), debouncedSearch],
     enabled: isOpen,
     initialPageParam: null as number | null,
     queryFn: async ({ pageParam }): Promise<PageResult<T>> => {
       const { data } = await api.get(endpoint, {
-        params: { limit: PAGE_SIZE, cursor: pageParam ?? undefined, q: debouncedSearch || undefined, _ts: Date.now() },
+        params: { ...extraParams, limit: PAGE_SIZE, cursor: pageParam ?? undefined, q: debouncedSearch || undefined, _ts: Date.now() },
       });
-      return data.data as PageResult<T>;
+      // A server that does not page this list yet (an older version) sends the whole list as an array: it is one
+      // page that has no more. A page without rows is an empty page. (The screen never gets an empty row.)
+      const payload = data.data;
+      if (Array.isArray(payload)) return { items: payload as T[], hasMore: false, nextCursor: null };
+      return { items: (payload?.items ?? []) as T[], hasMore: Boolean(payload?.hasMore), nextCursor: payload?.nextCursor ?? null };
     },
     getNextPageParam: (lastPage) => (lastPage.hasMore ? lastPage.nextCursor : undefined),
-    staleTime: 30_000,
+    // a list that depends on other documents (what is still pending) is read again each time it is opened
+    staleTime: extraParams ? 0 : 30_000,
     placeholderData: (previous) => previous,
   });
 
   const { hasNextPage, isFetchingNextPage, fetchNextPage } = query;
   const rawRows = new Map<T, T>();
-  const allRows = (query.data?.pages.flatMap((page) => page.items) ?? []).map((raw) => {
+  const allRows = (query.data?.pages.flatMap((page) => page.items ?? []) ?? []).filter(Boolean).map((raw) => {
     const row = mapRow ? mapRow(raw) : raw;
     rawRows.set(row, raw);
     return row;
@@ -201,14 +211,21 @@ export function InfiniteViewAllModal<T extends Record<string, unknown>>({
                     key={String(row.id ?? rowIndex)}
                     ref={rowIndex === triggerIndex ? setTrigger : undefined}
                     onClick={() => {
-                      // the row is the record itself: the page that opens it does not need to read it again
-                      queryClient.setQueryData([...masterListKey(name), "item", String(row.id)], rawRows.get(row));
+                      // The row is the record itself: the page that opens it does not need to read it again.
+                      // Not for a list with extra filters: its rows are something else (for example the rejected
+                      // items of a vendor, whose "id" is the item), and must never be taken for the record.
+                      if (!extraParams) {
+                        queryClient.setQueryData([...masterListKey(name), "item", String(row.id)], rawRows.get(row));
+                      }
                       onRowSelect?.(row);
                     }}
                     className={onRowSelect ? "cursor-pointer hover:bg-primary-50" : ""}
                   >
                     {columns.map((column) => (
-                      <td key={column.key} className="border-b border-zinc-100 px-4 py-3 text-zinc-800">
+                      <td
+                        key={column.key}
+                        className={`border-b border-zinc-100 px-4 py-3 text-zinc-800 ${/mail/i.test(column.key) ? "normal-case" : ""}`}
+                      >
                         {cell(row, column)}
                       </td>
                     ))}
