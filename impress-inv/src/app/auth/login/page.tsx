@@ -71,6 +71,7 @@ export default function LoginPage() {
           type="text"
           placeholder="Email or phone number"
           icon={<Icon icon="mdi:email-outline" className="h-5 w-5" />}
+          inputClassName="normal-case"
           value={values.email}
           onChange={handleInputChange("email")}
           error={errors.email}

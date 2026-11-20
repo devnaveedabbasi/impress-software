@@ -7,11 +7,12 @@ export interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
   icon?: ReactNode;
   error?: string;
   wrapperClassName?: string;
+  inputClassName?: string;
   theme?: "default" | "primary";
 }
 
 export const Input = forwardRef<HTMLInputElement, InputProps>(function Input(
-  { label, icon, error, theme = "default", type = "text", className, wrapperClassName, id, ...props },
+  { label, icon, error, theme = "default", type = "text", className, wrapperClassName, inputClassName, id, ...props },
   ref
 ) {
   const generatedId = useId();
@@ -45,7 +46,8 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(function Input(
           aria-invalid={!!error}
           className={cn(
             "w-full bg-transparent text-sm outline-none",
-            theme === "primary" ? "text-white placeholder:text-primary-200" : "text-zinc-900 placeholder:text-zinc-400"
+            theme === "primary" ? "text-white placeholder:text-primary-200" : "text-zinc-900 placeholder:text-zinc-400",
+            inputClassName
           )}
           {...props}
         />
