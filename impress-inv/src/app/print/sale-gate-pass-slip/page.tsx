@@ -55,7 +55,6 @@ function GatePassSlipBody({ gatePass }: { gatePass: SlipGatePass }) {
                         <th className="w-16 border border-zinc-400 p-2 text-center">Code</th>
                         <th className="border border-zinc-400 p-2 text-left">Item Name</th>
                         <th className="w-24 border border-zinc-400 p-2 text-center">Unit</th>
-                        <th className="w-28 border border-zinc-400 p-2 text-center">Stock in Hand</th>
                         <th className="w-20 border border-zinc-400 p-2 text-center">Qty</th>
                     </tr>
                 </thead>
@@ -65,12 +64,11 @@ function GatePassSlipBody({ gatePass }: { gatePass: SlipGatePass }) {
                             <td className="border border-zinc-400 p-1 text-center">{item.inventoryId}</td>
                             <td className="border border-zinc-400 p-1 pl-2">{item.inventory?.itemName || "-"}</td>
                             <td className="border border-zinc-400 p-1 text-center">{item.unit || "-"}</td>
-                            <td className="border border-zinc-400 p-1 text-center">{item.stockInHand}</td>
                             <td className="border border-zinc-400 p-1 text-center">{item.qty}</td>
                         </tr>
                     ))}
                     <tr className="bg-form-bg text-[13px] font-semibold">
-                        <td colSpan={4} className="border border-zinc-400 p-1 text-right">Total Qty</td>
+                        <td colSpan={3} className="border border-zinc-400 p-1 text-right">Total Qty</td>
                         <td className="border border-zinc-400 p-1 text-center">{totalQty}</td>
                     </tr>
                 </tbody>

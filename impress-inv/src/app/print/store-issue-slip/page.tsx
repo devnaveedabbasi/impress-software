@@ -52,7 +52,6 @@ function IssueSlipBody({ issue }: { issue: SlipIssue }) {
                         <th className="w-16 border border-zinc-400 p-2 text-center">Code</th>
                         <th className="border border-zinc-400 p-2 text-left">Item Description</th>
                         <th className="w-20 border border-zinc-400 p-2 text-center">Upm Unit</th>
-                        <th className="w-24 border border-zinc-400 p-2 text-center">Hand Stock</th>
                         <th className="w-24 border border-zinc-400 p-2 text-center">Issue Qty</th>
                         <th className="border border-zinc-400 p-2 text-left">Purpose</th>
                     </tr>
@@ -63,13 +62,12 @@ function IssueSlipBody({ issue }: { issue: SlipIssue }) {
                             <td className="border border-zinc-400 p-1 text-center">{item.inventoryId}</td>
                             <td className="border border-zinc-400 p-1 pl-2">{item.inventory?.itemName || "-"}</td>
                             <td className="border border-zinc-400 p-1 text-center">{item.upm}</td>
-                            <td className="border border-zinc-400 p-1 text-center">{item.handStock.toLocaleString()}</td>
                             <td className="border border-zinc-400 p-1 text-center">{item.issueQty.toLocaleString()}</td>
                             <td className="border border-zinc-400 p-1 pl-2">{item.purpose || "-"}</td>
                         </tr>
                     ))}
                     <tr className="bg-form-bg text-[13px] font-semibold">
-                        <td colSpan={4} className="border border-zinc-400 p-1 text-right">Total Issue Qty</td>
+                        <td colSpan={3} className="border border-zinc-400 p-1 text-right">Total Issue Qty</td>
                         <td className="border border-zinc-400 p-1 text-center">{totalIssueQty.toLocaleString()}</td>
                         <td className="border border-zinc-400 p-1"></td>
                     </tr>

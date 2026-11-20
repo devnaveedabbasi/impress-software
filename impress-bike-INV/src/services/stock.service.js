@@ -60,12 +60,12 @@ export async function replaceMovements(tx, { sourceType, sourceId, date, rows, u
             sourceId,
             note: note || "",
             createdById: userId ?? null,
-        }));
+        })); 
 
     if (data.length > 0) await tx.stockMovement.createMany({ data });
 }
 
 // Remove the ledger lines of a deleted document
 export async function removeMovements(tx, sourceType, sourceId) {
-    await tx.stockMovement.deleteMany({ where: { sourceType, sourceId } });
+    await tx.stockMovement.deleteMany({ where: { sourceType, sourceId  } });
 }

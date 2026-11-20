@@ -72,6 +72,8 @@ export default function TransferFormPage() {
     const [isNewMode, setIsNewMode] = useState(true);
     const [isEditing, setIsEditing] = useState(true);
     const [picker, setPicker] = useState<PickerTarget>(null);
+    // the stock the NEW item has right now (read when it is chosen), to show what it will be after the transfer
+    const [newItemStock, setNewItemStock] = useState<number | null>(null);
     // Problems found in the old item rows: which cell of which row is wrong and why
     const [rowErrors, setRowErrors] = useState<Record<number, { field: string; message: string }>>({});
 
@@ -369,6 +371,7 @@ export default function TransferFormPage() {
             }
             setValue("newInventoryId", String(item.id), { shouldDirty: true, shouldValidate: true });
             setValue("newItemName", item.itemName, { shouldDirty: true });
+            setNewItemStock(Number(item.stock) || 0);
             setPicker(null);
             return;
         }
@@ -479,7 +482,7 @@ export default function TransferFormPage() {
                         />
                     </div>
                     <div>
-                        <label className="mb-1 block text-sm text-zinc-600">Qty (total of the old items)</label>
+                        <label className="mb-1 block text-sm text-zinc-600">Qty to add (total of the old items)</label>
                         <input
                             type="text"
                             value={totalQty.toLocaleString()}
@@ -490,6 +493,15 @@ export default function TransferFormPage() {
                             className={`${readOnlyInput} text-right font-semibold`}
                         />
                     </div>
+                    {/* The new item already has some stock: this transfer ADDS to it, it does not replace it */}
+                    {isNewMode && isEditing && values.newInventoryId && newItemStock !== null && (
+                        <p className="text-sm text-zinc-600 md:col-span-2">
+                            Stock of the new item now: <span className="font-semibold text-black">{newItemStock.toLocaleString()}</span>
+                            {" "}→ after this transfer:{" "}
+                            <span className="font-semibold text-black">{(newItemStock + totalQty).toLocaleString()}</span>
+                            <span className="text-zinc-500"> (the old items add {totalQty.toLocaleString()} to it)</span>
+                        </p>
+                    )}
                 </div>
 
                 <div>

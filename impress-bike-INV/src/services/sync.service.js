@@ -80,6 +80,10 @@ export const SYNC_MODELS = [
   "vendorClaimNoteItem", // must come after "vendorClaimNote" and "inventory" (foreign keys)
 ];
 
+// Tables that have no updatedAt column (the link tables and the bill lines), so "changed since the last sync" cannot be
+// asked for them: they are always read in full (they are small). Asking anyway only fills the console with errors.
+const NO_UPDATED_AT = new Set(["rolePermission", "userPermission", "adminPermission", "vendorBillItem"]);
+
 const COMPOSITE_KEYS = {
   rolePermission: ["roleId", "permissionId"],
   userPermission: ["userId", "permissionId"],
@@ -134,7 +138,7 @@ function comparable(item, modelName) {
   delete result.updatedAt;
   return JSON.stringify(result);
 }
-
+  
 function updatedAt(item) {
   return item.updatedAt ? new Date(item.updatedAt).getTime() : 0;
 }
@@ -158,7 +162,7 @@ async function repairSequence(client, modelName) {
 
 // Model comparison: Supports Incremental (Delta) Sync & Full Deep Scan
 export async function getModelComparison(modelName, options = { fullScan: false }) {
-  const hasUpdatedAt = !COMPOSITE_KEYS[modelName];
+  const hasUpdatedAt = !NO_UPDATED_AT.has(modelName);
   const isIncremental = !options.fullScan && Boolean(lastSyncAt) && hasUpdatedAt;
 
   // Ultra-fast counts without loading full tables into RAM
